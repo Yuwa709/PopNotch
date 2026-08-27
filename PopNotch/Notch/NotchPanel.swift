@@ -41,7 +41,16 @@ final class NotchPanel: NSPanel {
         // this background agent resigns active — it must stay up permanently.
         hidesOnDeactivate = false
 
+        contentView = NotchHoverView()
+
         setFrame(notchRect, display: false)
+    }
+
+    /// Debounced hover state from the tracking view. Task 7 wires
+    /// expand/collapse here.
+    var onHoverChange: ((Bool) -> Void)? {
+        get { (contentView as? NotchHoverView)?.onHoverChange }
+        set { (contentView as? NotchHoverView)?.onHoverChange = newValue }
     }
 
     /// The notch's frame in screen coordinates, derived from the gap between
