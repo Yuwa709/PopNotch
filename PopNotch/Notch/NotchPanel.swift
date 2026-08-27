@@ -1,0 +1,71 @@
+import AppKit
+import os
+
+/// A borderless panel that sits directly over the camera notch.
+///
+/// The three properties that make the overlay work at all:
+/// - `styleMask` includes `.nonactivatingPanel` so interacting with the panel
+///   never pulls focus from the frontmost app
+/// - `level` is one step above the main menu bar so the panel draws over it
+/// - `canBecomeKey` is false so the panel can never become the key window
+@MainActor
+final class NotchPanel: NSPanel {
+
+    private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "NotchPanel")
+
+    override var canBecomeKey: Bool { false }
+
+    init(screen: NSScreen) {
+        let notchRect = Self.notchRect(on: screen)
+        super.init(
+            contentRect: notchRect,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 1)
+
+        isOpaque = true
+        backgroundColor = .red
+        hasShadow = false
+        isMovable = false
+        // NSPanel defaults this to true, which would hide the overlay whenever
+        // this background agent resigns active — it must stay up permanently.
+        hidesOnDeactivate = false
+
+        setFrame(notchRect, display: false)
+    }
+
+    /// The notch's frame in screen coordinates, derived from the gap between
+    /// the auxiliary top-left and top-right areas. Falls back to a centered
+    /// strip on screens without a notch so development on external displays
+    /// still shows something.
+    static func notchRect(on screen: NSScreen) -> NSRect {
+        let topInset = screen.safeAreaInsets.top
+
+        guard topInset > 0,
+              let leftArea = screen.auxiliaryTopLeftArea,
+              let rightArea = screen.auxiliaryTopRightArea
+        else {
+            let fallbackSize = NSSize(width: 200, height: 32)
+            let fallbackRect = NSRect(
+                x: screen.frame.midX - fallbackSize.width / 2,
+                y: screen.frame.maxY - fallbackSize.height,
+                width: fallbackSize.width,
+                height: fallbackSize.height
+            )
+            logger.info("No notch on screen \(screen.localizedName, privacy: .public); using fallback rect \(NSStringFromRect(fallbackRect), privacy: .public)")
+            return fallbackRect
+        }
+
+        let notchRect = NSRect(
+            x: leftArea.maxX,
+            y: screen.frame.maxY - topInset,
+            width: rightArea.minX - leftArea.maxX,
+            height: topInset
+        )
+        logger.info("Computed notch rect \(NSStringFromRect(notchRect), privacy: .public) on screen \(screen.localizedName, privacy: .public) (safeAreaInsets.top: \(topInset, privacy: .public))")
+        return notchRect
+    }
+}
