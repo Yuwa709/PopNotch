@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// that fits it perfectly is invisible on a real MacBook. Extending the
     /// frame this many points below the menu bar leaves a visible red lip —
     /// the only way the user can confirm position before hover exists.
-    private static let verificationLip: CGFloat = 8
+    private static let verificationLip: CGFloat = 4
 
     private var notchPanel: NotchPanel?
 

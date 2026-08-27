@@ -66,13 +66,19 @@ final class NotchPanel: NSPanel {
             return fallbackRect
         }
 
+        // The gap between the auxiliary areas is not guaranteed symmetric —
+        // on a 15" Air it measures 1pt wider on the right, which is visible
+        // as a 2px overhang on Retina. The camera housing itself is always
+        // centered, so symmetrize around midX using the tighter side.
+        let center = screen.frame.midX
+        let halfWidth = min(center - leftArea.maxX, rightArea.minX - center)
         let notchRect = NSRect(
-            x: leftArea.maxX,
+            x: center - halfWidth,
             y: screen.frame.maxY - topInset,
-            width: rightArea.minX - leftArea.maxX,
+            width: halfWidth * 2,
             height: topInset
         )
-        logger.info("Computed notch rect \(NSStringFromRect(notchRect), privacy: .public) on screen \(screen.localizedName, privacy: .public) (safeAreaInsets.top: \(topInset, privacy: .public))")
+        logger.info("Computed notch rect \(NSStringFromRect(notchRect), privacy: .public) on screen \(screen.localizedName, privacy: .public) (auxiliary gap: \(leftArea.maxX, privacy: .public)...\(rightArea.minX, privacy: .public), safeAreaInsets.top: \(topInset, privacy: .public))")
         return notchRect
     }
 }
