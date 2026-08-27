@@ -8,11 +8,15 @@
 
 /* Begin PBXBuildFile section */
 		C6F40DE030402E2900F801FD /* CLAUDE.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DDF30402E2900F801FD /* CLAUDE.md */; };
+		C6F40DE53040B8FF00F801FD /* ROADMAP.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DE43040B8FF00F801FD /* ROADMAP.md */; };
+		C6F40DE73040B91000F801FD /* PROJECT-CONTEXT.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		C6F40DC730402B2F00F801FD /* PopNotch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = PopNotch.app; path = /Users/thangpham/PopNotch/build/Debug/PopNotch.app; sourceTree = "<absolute>"; };
 		C6F40DDF30402E2900F801FD /* CLAUDE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CLAUDE.md; sourceTree = "<group>"; };
+		C6F40DE43040B8FF00F801FD /* ROADMAP.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ROADMAP.md; sourceTree = "<group>"; };
+		C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "PROJECT-CONTEXT.md"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -39,6 +43,8 @@
 			children = (
 				C6F40DC930402B2F00F801FD /* PopNotch */,
 				C6F40DDF30402E2900F801FD /* CLAUDE.md */,
+				C6F40DE43040B8FF00F801FD /* ROADMAP.md */,
+				C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -107,6 +113,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				C6F40DE030402E2900F801FD /* CLAUDE.md in Resources */,
+				C6F40DE53040B8FF00F801FD /* ROADMAP.md in Resources */,
+				C6F40DE73040B91000F801FD /* PROJECT-CONTEXT.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
