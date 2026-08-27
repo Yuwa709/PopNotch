@@ -20,12 +20,12 @@ enum ScreenPolicy {
         }
 
         if let builtIn {
-            logger.info("Target screen: built-in \(builtIn.localizedName, privacy: .public)")
+            logger.notice("Target screen: built-in \(builtIn.localizedName, privacy: .public)")
             return builtIn
         }
 
         if let main = NSScreen.main {
-            logger.info("No built-in display; falling back to main screen \(main.localizedName, privacy: .public)")
+            logger.notice("No built-in display; falling back to main screen \(main.localizedName, privacy: .public)")
             return main
         }
 

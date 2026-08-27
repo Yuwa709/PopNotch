@@ -75,6 +75,8 @@ For anything visual, make the change, build it, then explicitly ask the user wha
 
 To compensate, add `os.Logger` output at every state transition (panel expand, collapse, screen change, module activation). Then read it back with the `log show` command above. That gives you evidence instead of guesses.
 
+**Log state transitions at `.notice`, never `.info`.** Learned the hard way: `.info` is memory-only — it lives in a ring buffer and is evicted within minutes, so by the time the user finishes a hardware test the evidence is gone. `.notice` persists to disk and survives. Use `.info`/`.debug` only for chatter that has no forensic value.
+
 ---
 
 ## Hard rules

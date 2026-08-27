@@ -10,11 +10,10 @@ Read this when starting a new phase. Do not read it for routine tasks.
 
 - **Phase 0:** complete (project created, git initialized, CLAUDE.md in place)
 - **Phase 0.5:** complete — project converted to Mac-only, sandbox off, `LSUIElement` set, usage strings in place
-- **Phase 1:** in progress — tasks 1–4 done, task 5 code-complete
-  - Panel instantiates at launch on the built-in display, orders front with a temporary red verification lip, logs its geometry
-  - Geometry user-certified on hardware: symmetrized around center, 1pt inset per side (undershoot rule), integral coordinates only
-  - Repositions on every `didChangeScreenParametersNotification`; hides and returns if the target screen vanishes mid-reconfiguration
-  - Task 5 still needs its hardware test: plug/unplug external monitor, resolution change, lid close/open
+- **Phase 1:** in progress — tasks 1–5 done and hardware-verified
+  - Geometry user-certified: symmetrized around center, 1pt inset per side (undershoot rule), integral coordinates only
+  - Monitor attach, clamshell fallback, and lid-reopen all verified on hardware
+  - State transitions log at `.notice` — `.info` proved to be memory-only and evicted before test evidence could be read back
   - Next: task 6, hover detection
 - **Phases 2 and beyond:** not started
 
@@ -58,7 +57,7 @@ Update this section at the end of each phase.
 2. **Geometry.** Notch rect is the gap between `auxiliaryTopLeftArea.maxX` and `auxiliaryTopRightArea.minX`, height `safeAreaInsets.top`, anchored to `screen.frame.maxY`. Fallback strip for screens without a notch. **Done.**
 3. **Instantiate and display.** Create one panel at launch, `orderFrontRegardless`. Set `collectionBehavior` to include `.canJoinAllSpaces`, `.fullScreenAuxiliary`, `.stationary`. Without these it vanishes on space switch and in fullscreen. **Done** — a temporary 8pt red lip below the menu bar makes the panel visible until hover exists; remove it with task 7.
 4. **Screen ownership policy.** Decide *before* writing the code: the notch panel lives on the built-in display, always, even when an external monitor is primary. Only if the lid is closed does it move or hide. Write the rule down in code as a single function, `targetScreen()`, so it is one place to change. **Done** — `ScreenPolicy.targetScreen()`, selecting via `CGDisplayIsBuiltin`.
-5. **Screen change resilience.** Subscribe to `NSApplication.didChangeScreenParametersNotification`, recompute and reposition on every fire. Test: plug in external monitor, unplug, change resolution, close and open lid, hot-plug while the panel is expanded. This is where most notch apps break.
+5. **Screen change resilience.** Subscribe to `NSApplication.didChangeScreenParametersNotification`, recompute and reposition on every fire. Test: plug in external monitor, unplug, change resolution, close and open lid, hot-plug while the panel is expanded. This is where most notch apps break. **Done** — hardware-verified: panel stays on the built-in display with a monitor attached, falls back to the external screen in clamshell, returns on lid-open. Re-test hot-plug-while-expanded once task 7 exists.
 6. **Hover detection.** `NSTrackingArea` with `.mouseEnteredAndExited` and `.activeAlways`. Debounce 150 to 250ms before expanding, or dragging the cursor across the top of the screen fires it constantly. Rebuild the tracking area on every geometry change — a stale one is the classic "hover stopped working after I unplugged my monitor" bug.
 7. **Expand and collapse animation.** Resize the panel, not the inner view. Spring curve, not linear. Inverse-rounded corners where the shape meets the notch, as a custom SwiftUI `Shape` with Bezier curves. **Honor Reduce Motion** — check `accessibilityDisplayShouldReduceMotion` and snap instead of spring.
 8. **Bezel black matching.** The expanded panel must read as an extension of the physical bezel. This is not `Color.black`. On an XDR display the panel's black and the bezel's black are different blacks, and the mismatch is visible at the seam. Expect to tune this by eye against a real machine, and expect it to differ between the built-in display and any external one. **User-verified only — the assistant cannot see this.**

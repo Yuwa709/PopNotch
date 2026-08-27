@@ -62,7 +62,7 @@ final class NotchPanel: NSPanel {
                 width: fallbackSize.width,
                 height: fallbackSize.height
             )
-            logger.info("No notch on screen \(screen.localizedName, privacy: .public); using fallback rect \(NSStringFromRect(fallbackRect), privacy: .public)")
+            logger.notice("No notch on screen \(screen.localizedName, privacy: .public); using fallback rect \(NSStringFromRect(fallbackRect), privacy: .public)")
             return fallbackRect
         }
 
@@ -86,7 +86,7 @@ final class NotchPanel: NSPanel {
             width: halfWidth * 2,
             height: topInset
         )
-        logger.info("Computed notch rect \(NSStringFromRect(notchRect), privacy: .public) on screen \(screen.localizedName, privacy: .public) (auxiliary gap: \(leftArea.maxX, privacy: .public)...\(rightArea.minX, privacy: .public), safeAreaInsets.top: \(topInset, privacy: .public))")
+        logger.notice("Computed notch rect \(NSStringFromRect(notchRect), privacy: .public) on screen \(screen.localizedName, privacy: .public) (auxiliary gap: \(leftArea.maxX, privacy: .public)...\(rightArea.minX, privacy: .public), safeAreaInsets.top: \(topInset, privacy: .public))")
         return notchRect
     }
 }
