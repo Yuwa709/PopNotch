@@ -12,7 +12,18 @@
 		C6F40DE73040B91000F801FD /* PROJECT-CONTEXT.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		C68E1E9D3040F191009A6579 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C6F40DBF30402B2F00F801FD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C6F40DC630402B2F00F801FD;
+			remoteInfo = PopNotch;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		C68E1E993040F191009A6579 /* PopNotchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PopNotchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C6F40DDF30402E2900F801FD /* CLAUDE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CLAUDE.md; sourceTree = "<group>"; };
 		C6F40DE43040B8FF00F801FD /* ROADMAP.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ROADMAP.md; sourceTree = "<group>"; };
 		C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "PROJECT-CONTEXT.md"; sourceTree = "<group>"; };
@@ -20,6 +31,11 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		C68E1E9A3040F191009A6579 /* PopNotchTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PopNotchTests;
+			sourceTree = "<group>";
+		};
 		C6F40DC930402B2F00F801FD /* PopNotch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PopNotch;
@@ -28,6 +44,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		C68E1E963040F191009A6579 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C6F40DC430402B2F00F801FD /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -46,12 +69,37 @@
 				C6F40DE43040B8FF00F801FD /* ROADMAP.md */,
 				C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */,
 				C6F40E2E3040DB3900F801FD /* PopNotch.app */,
+				C68E1E993040F191009A6579 /* PopNotchTests.xctest */,
+				C68E1E9A3040F191009A6579 /* PopNotchTests */,
 			);
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		C68E1E983040F191009A6579 /* PopNotchTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C68E1E9F3040F191009A6579 /* Build configuration list for PBXNativeTarget "PopNotchTests" */;
+			buildPhases = (
+				C68E1E953040F191009A6579 /* Sources */,
+				C68E1E963040F191009A6579 /* Frameworks */,
+				C68E1E973040F191009A6579 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C68E1E9E3040F191009A6579 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C68E1E9A3040F191009A6579 /* PopNotchTests */,
+			);
+			name = PopNotchTests;
+			packageProductDependencies = (
+			);
+			productName = PopNotchTests;
+			productReference = C68E1E993040F191009A6579 /* PopNotchTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		C6F40DC630402B2F00F801FD /* PopNotch */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = C6F40DD230402B3000F801FD /* Build configuration list for PBXNativeTarget "PopNotch" */;
@@ -84,6 +132,10 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					C68E1E983040F191009A6579 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = C6F40DC630402B2F00F801FD;
+					};
 					C6F40DC630402B2F00F801FD = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -104,11 +156,19 @@
 			projectRoot = "";
 			targets = (
 				C6F40DC630402B2F00F801FD /* PopNotch */,
+				C68E1E983040F191009A6579 /* PopNotchTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		C68E1E973040F191009A6579 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C6F40DC530402B2F00F801FD /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -122,6 +182,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		C68E1E953040F191009A6579 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C6F40DC330402B2F00F801FD /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -131,7 +198,59 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		C68E1E9E3040F191009A6579 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C6F40DC630402B2F00F801FD /* PopNotch */;
+			targetProxy = C68E1E9D3040F191009A6579 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		C68E1EA03040F191009A6579 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4KUMGQ48T9;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Techie.PopNotchTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PopNotch.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PopNotch";
+			};
+			name = Debug;
+		};
+		C68E1EA13040F191009A6579 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4KUMGQ48T9;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Techie.PopNotchTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PopNotch.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PopNotch";
+			};
+			name = Release;
+		};
 		C6F40DD030402B3000F801FD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -317,6 +436,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		C68E1E9F3040F191009A6579 /* Build configuration list for PBXNativeTarget "PopNotchTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C68E1EA03040F191009A6579 /* Debug */,
+				C68E1EA13040F191009A6579 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		C6F40DC230402B2F00F801FD /* Build configuration list for PBXProject "PopNotch" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
