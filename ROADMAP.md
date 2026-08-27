@@ -10,10 +10,12 @@ Read this when starting a new phase. Do not read it for routine tasks.
 
 - **Phase 0:** complete (project created, git initialized, CLAUDE.md in place)
 - **Phase 0.5:** complete — project converted to Mac-only, sandbox off, `LSUIElement` set, usage strings in place
-- **Phase 1:** in progress — tasks 1–4 done
+- **Phase 1:** in progress — tasks 1–4 done, task 5 code-complete
   - Panel instantiates at launch on the built-in display, orders front with a temporary red verification lip, logs its geometry
-  - Template `WindowGroup`/`ContentView` replaced with `AppDelegate` + empty `Settings` scene
-  - Next: task 5, screen change resilience
+  - Geometry user-certified on hardware: symmetrized around center, 1pt inset per side (undershoot rule), integral coordinates only
+  - Repositions on every `didChangeScreenParametersNotification`; hides and returns if the target screen vanishes mid-reconfiguration
+  - Task 5 still needs its hardware test: plug/unplug external monitor, resolution change, lid close/open
+  - Next: task 6, hover detection
 - **Phases 2 and beyond:** not started
 
 Update this section at the end of each phase.
