@@ -107,12 +107,14 @@ final class NotchPanel: NSPanel {
         return notchRect
     }
 
-    /// The hovered frame: the notch rect grown sideways and downward, top
-    /// edge still flush with the screen top. Placeholder proportions until
-    /// modules exist and dictate real content size.
+    /// The hovered frame: anchored at the notch corners, growing downward.
+    /// The panel widens only by the shape's top fillet radius per side, so
+    /// the shape's body sits exactly on the notch's edges — expansion never
+    /// slides sideways along the menu bar. Height is a placeholder until
+    /// modules dictate real content size.
     static func expandedRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
-        let sideExtra: CGFloat = 32
+        let sideExtra = NotchShape.defaultTopRadius
         let bottomExtra: CGFloat = 40
         return NSRect(
             x: base.minX - sideExtra,

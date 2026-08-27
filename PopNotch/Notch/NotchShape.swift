@@ -9,8 +9,16 @@ import SwiftUI
 /// stays drawable without artifacts.
 struct NotchShape: Shape {
 
-    var topRadius: CGFloat = 8
-    var bottomRadius: CGFloat = 12
+    /// Shared with NotchPanel.expandedRect: the panel widens beyond the
+    /// notch by exactly this much per side, so the shape's body (inset by
+    /// this radius) lands precisely on the notch's own edges. The corners
+    /// stay anchored at the notch corners and expansion reads as downward
+    /// growth, not sideways growth from the center.
+    static let defaultTopRadius: CGFloat = 8
+    static let defaultBottomRadius: CGFloat = 12
+
+    var topRadius: CGFloat = NotchShape.defaultTopRadius
+    var bottomRadius: CGFloat = NotchShape.defaultBottomRadius
 
     func path(in rect: CGRect) -> Path {
         let topR = min(topRadius, rect.width / 4, rect.height / 2)
