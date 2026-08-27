@@ -152,3 +152,12 @@ Do not change these without asking.
 4. Build and fix errors until clean
 5. State plainly what the user needs to look at to verify it, since you cannot see it
 6. Do not commit unless asked
+
+
+## Model selection
+
+At the start of each session, state which model is running and
+whether it fits the task. Recommend Fable for notch geometry,
+window management, architecture, and the media adapter. Recommend
+Sonnet for routine edits, small fixes, and straightforward API
+plumbing. Say so before starting work, then wait for confirmation.
