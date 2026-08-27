@@ -10,11 +10,15 @@ Read this when starting a new phase. Do not read it for routine tasks.
 
 - **Phase 0:** complete (project created, git initialized, CLAUDE.md in place)
 - **Phase 0.5:** complete — project converted to Mac-only, sandbox off, `LSUIElement` set, usage strings in place
-- **Phase 1:** in progress — tasks 1–5 done and hardware-verified
+- **Phase 1:** all tasks implemented — awaiting the reboot test
   - Geometry user-certified: symmetrized around center, 1pt inset per side (undershoot rule), integral coordinates only
   - Monitor attach, clamshell fallback, and lid-reopen all verified on hardware
   - State transitions log at `.notice` — `.info` proved to be memory-only and evicted before test evidence could be read back
-  - Next: task 6, hover detection
+  - Hover: 350ms enter debounce (user-tuned), exits verified with 100ms grace against mid-animation spurious exits
+  - Expanded silhouette: original task 7 shape at ±48pt/side, 64pt down — a placeholder sized by eye; the media module dictates real dimensions in Phase 4
+  - Bezel black: fill measured #000000 at the window buffer; residual mismatch is LCD backlight, not fixable in software
+  - Menu bar item (Settings/Quit) and launch-at-login toggle in place
+  - **Done when** still pending: reboot, app comes up silently, hover works, monitor plug survives
 - **Phases 2 and beyond:** not started
 
 Update this section at the end of each phase.
