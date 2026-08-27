@@ -45,7 +45,7 @@ final class NotchPanel: NSPanel {
         hidesOnDeactivate = false
 
         let hoverView = NotchHoverView()
-        let hostingView = NSHostingView(rootView: NotchOverlayView())
+        let hostingView = NSHostingView(rootView: NotchOverlayView(neckHeight: notchRect.height))
         hostingView.frame = hoverView.bounds
         hostingView.autoresizingMask = [.width, .height]
         hoverView.addSubview(hostingView)
@@ -107,15 +107,15 @@ final class NotchPanel: NSPanel {
         return notchRect
     }
 
-    /// The hovered frame: anchored at the notch corners, growing downward.
-    /// The panel widens only by the shape's top fillet radius per side, so
-    /// the shape's body sits exactly on the notch's edges — expansion never
-    /// slides sideways along the menu bar. Height is a placeholder until
+    /// The hovered frame: anchored at the notch corners. Through the menu
+    /// bar band the shape stays notch-width (the neck); the extra width per
+    /// side — fillet radius + flare — is used only below the menu bar,
+    /// where the body spreads outward. Height is a placeholder until
     /// modules dictate real content size.
     static func expandedRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
-        let sideExtra = NotchShape.defaultTopRadius
-        let bottomExtra: CGFloat = 40
+        let sideExtra = NotchShape.defaultTopRadius + NotchShape.defaultFlare
+        let bottomExtra: CGFloat = 48
         return NSRect(
             x: base.minX - sideExtra,
             y: base.minY - bottomExtra,
