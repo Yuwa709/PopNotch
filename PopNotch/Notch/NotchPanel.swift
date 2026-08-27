@@ -114,8 +114,8 @@ final class NotchPanel: NSPanel {
     /// modules dictate real content size.
     static func expandedRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
-        let sideExtra: CGFloat = 32
-        let bottomExtra: CGFloat = 40
+        let sideExtra: CGFloat = 48
+        let bottomExtra: CGFloat = 64
         return NSRect(
             x: base.minX - sideExtra,
             y: base.minY - bottomExtra,
