@@ -70,8 +70,16 @@ final class NotchPanel: NSPanel {
         // on a 15" Air it measures 1pt wider on the right, which is visible
         // as a 2px overhang on Retina. The camera housing itself is always
         // centered, so symmetrize around midX using the tighter side.
+        //
+        // Then inset per side: user-verified on hardware that even the
+        // symmetrized rect overhangs the housing by a pixel. Rule: always
+        // undershoot — an edge inside the housing sits in the deadzone and
+        // is invisible, an edge outside paints live pixels. A full point,
+        // not half: AppKit snaps fractional window origins to integers,
+        // which silently shifts the panel off the computed rect.
+        let horizontalInset: CGFloat = 1.0
         let center = screen.frame.midX
-        let halfWidth = min(center - leftArea.maxX, rightArea.minX - center)
+        let halfWidth = min(center - leftArea.maxX, rightArea.minX - center) - horizontalInset
         let notchRect = NSRect(
             x: center - halfWidth,
             y: screen.frame.maxY - topInset,
