@@ -14,30 +14,52 @@ Decisions already made, and why. Read this before proposing an alternative appro
 
 The bundle identifier is baked into code signing, the UserDefaults suite, Keychain access, and the future update feed. Changing it after release destroys user settings. Treat it as permanent.
 
-**It is currently wrong in the project file.** See the drift table below. Fix it now, while "destroys user settings" is hypothetical.
+Set correctly in the project file as of Phase 0.5.
 
 ---
 
-## Configuration drift
+## Build configuration
 
-The Xcode project was scaffolded from the iOS multiplatform template and never converted to a Mac-only app. Everything in this repo's docs describes the intended state; the project file describes something else.
+Resolved in Phase 0.5, commits `dbd88ec` and `0a06545`. The project had been scaffolded from the iOS multiplatform template and never converted.
 
-| Setting | Intended | Actual in `project.pbxproj` |
+| Setting | Value | Why |
 |---|---|---|
-| `PRODUCT_BUNDLE_IDENTIFIER` | `com.techie.PopNotch` | `Techie.PopNotch` |
-| `MACOSX_DEPLOYMENT_TARGET` | `14.0` | `26.5` |
-| `SWIFT_VERSION` | `5.9` | `5.0` |
-| `SUPPORTED_PLATFORMS` | `macosx` | `iphoneos iphonesimulator macosx xros xrsimulator` |
-| `TARGETED_DEVICE_FAMILY` | unset (macOS) | `1,2,7` |
-| `ARCHS` | `arm64` | unset |
-| `LSUIElement` | `YES` | absent — no Info.plist exists |
-| Info.plist | present, with four usage strings | `GENERATE_INFOPLIST_FILE = YES`, no file |
+| `PRODUCT_BUNDLE_IDENTIFIER` | `com.techie.PopNotch` | Permanent. See Identity above |
+| `MACOSX_DEPLOYMENT_TARGET` | `14.0` | The floor, not the ceiling. Every notch Mac runs it, and `@Observable` needs 14 |
+| `SDKROOT` / `SUPPORTED_PLATFORMS` | `macosx` | Not iOS, not visionOS |
+| `ARCHS` | `arm64` | No Intel Mac has a notch |
+| `SWIFT_VERSION` | `5.0` | Language mode, not compiler version. Valid values are 4.0, 4.2, 5.0, 6.0 — there is no 5.9 |
+| `ENABLE_HARDENED_RUNTIME` | `YES` | Required if notarization is ever added |
+| `ENABLE_APP_SANDBOX` | `NO` | Sandbox is App Store only, and would block Apple Events to Music and Spotify — the primary feature |
+| `INFOPLIST_KEY_LSUIElement` | `YES` | Background agent, no Dock icon |
 
-`ENABLE_HARDENED_RUNTIME = YES` is already correct.
+Usage strings for Calendar, Location, and Apple Events are set as `INFOPLIST_KEY_*` build settings. There is no Info.plist file; `GENERATE_INFOPLIST_FILE = YES` synthesizes one at build time.
 
-**The assistant cannot fix any of this.** Hard rule 1 forbids hand-editing `project.pbxproj`. The assistant's job is to detect the drift, report it, and hand over an exact Xcode checklist. Until this table is empty, treat every doc claim about build configuration as a claim to verify, not a fact.
+**Verify, do not assume.** The table above is a claim about `project.pbxproj`, not a fact guaranteed by this document:
 
-The `26.5` deployment target is the most quietly dangerous entry: it silently makes every "does this API exist on macOS 14?" question moot, so availability bugs will not surface until the target is corrected.
+```
+grep -n "PRODUCT_BUNDLE_IDENTIFIER\|MACOSX_DEPLOYMENT_TARGET\|SUPPORTED_PLATFORMS\|ARCHS\|ENABLE_APP_SANDBOX" PopNotch.xcodeproj/project.pbxproj
+```
+
+Hard rule 1 normally forbids editing `project.pbxproj`. It was waived once, explicitly, for the Phase 0.5 conversion. It is back in force.
+
+---
+
+## Distribution
+
+Settled. These replace what used to be open questions.
+
+| Decision | Detail |
+|---|---|
+| Channel | Public GitHub repository, compiled builds attached to GitHub Releases |
+| Not the Mac App Store | Which is why App Sandbox is off |
+| License | MIT. `LICENSE` is in the repo |
+| Source | Public. For a background agent touching clipboard, location, and calendar, visible source is most of the trust story |
+| Notarization | **No**, for now |
+| Signing | Ad-hoc. Apple Silicon requires a signature to run at all, and a Development certificate is valid only on machines registered to the developer's account |
+| Updates | Sparkle, appcast in the repo. Its EdDSA signing is independent of Apple code signing and works un-notarized |
+
+**On not notarizing:** the $99/year Apple Developer Program is not worth paying before anyone has asked for the app. The cost is that every user hits a Gatekeeper block and must approve PopNotch in System Settings → Privacy & Security. Because `LSUIElement` means no Dock icon and no window, a blocked launch looks like nothing happening at all — the README has to say so explicitly, or every first-time user concludes the app is broken. Revisit when downloads justify the cost; no code changes when that day comes.
 
 ---
 
@@ -160,6 +182,7 @@ Each needs an owner and a trigger, or it is not a question, it is a wish.
 |---|---|---|
 | Is MediaRemote reachable on the current macOS version? | Before Phase 4 design is finalized | Determines whether Pandora and YouTube Music are ever possible |
 | Which stock data provider, and does its license permit redistribution? | Start of Phase 6 | A provider that forbids redistribution blocks public release, not just the feature |
-| Does PopNotch ever become a paid product? | Before Phase 5 licensing is chosen | Affects license file only. Clean-room discipline keeps both options open either way |
-| What license ships with the public release? | Phase 5 | No `LICENSE` file exists yet. Shipping without one is its own problem |
-| Is a privacy policy needed? | Phase 5 | Clipboard history, location, and calendar access all read as invasive without one, even though nothing leaves the machine |
+| At what download count does notarization become worth $99/year? | Revisit after first public release | Pick a number now so the decision is a trigger rather than a mood |
+| Does PopNotch ever become a paid product? | Open | MIT permits it. Anyone may also fork the free version, which is the tradeoff MIT was chosen with |
+
+Resolved and moved into the Distribution and Build Configuration sections above: license (MIT), source visibility (public), notarization (no, for now), and the full Phase 0.5 configuration drift.

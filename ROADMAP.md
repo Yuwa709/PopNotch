@@ -172,15 +172,36 @@ Music plays, the notch shows the right artwork and title, transport buttons work
 
 Do this once Phase 4 is stable, even if later phases are unfinished.
 
-1. Apple Developer Program, $99/year
-2. Developer ID Application certificate (Xcode, Settings then Accounts)
-3. Notarize: `xcrun notarytool submit`, then `xcrun stapler staple`
-4. `scripts/release.sh` doing archive, export, notarize, staple, DMG in one command
-5. **Choose and add a `LICENSE` file.** None exists. This is a decision, not a formality — see the open questions in `PROJECT-CONTEXT.md`
-6. Sparkle for auto-updates, configured **before** the first public release. Note that Sparkle ships XPC services and needs specific Hardened Runtime entitlements; budget time for the notarization round-trip
-7. Crash reporting — local only, or an explicit opt-in. Hard rule 6 forbids silent telemetry
-8. Privacy note covering clipboard, location, and calendar, even though nothing leaves the machine. Especially because nothing leaves the machine; say so plainly
-9. Landing page and support channel
+**Distribution model: public GitHub repository, MIT licensed, compiled builds attached to GitHub Releases.** Not the Mac App Store. This is why App Sandbox is off.
+
+### Not notarizing, for now
+
+**Decided: no Apple Developer Program until real download demand exists.** $99/year is not worth paying before anyone has asked for the app.
+
+Consequences, to be stated plainly in the README rather than discovered by users:
+
+- macOS quarantines anything downloaded from a browser. An un-notarized app is **blocked on first launch**, with a dialog saying Apple cannot verify it is free of malware.
+- On macOS 15 and later the right-click → Open shortcut no longer works. The user must go to **System Settings → Privacy & Security**, find the message about PopNotch, and click **Open Anyway**.
+- Because `LSUIElement = YES` means no Dock icon and no window, a blocked launch looks like **nothing happening at all**. The README must say so, or every first-time user thinks the app is broken.
+- Approval is a one-time action per download. Updates through Sparkle do not re-trigger it.
+
+**Sign ad-hoc, not with a Development certificate.** Apple Silicon requires some signature for a binary to run, so unsigned is not an option — but a Development certificate is valid only on machines registered to the developer's account and fails more confusingly than ad-hoc on someone else's Mac.
+
+Revisit notarization when downloads justify the cost. Nothing in the codebase changes when that day comes; Hardened Runtime is already enabled, which is the part that matters.
+
+### Tasks
+
+1. **`LICENSE`** — MIT. **Done.**
+2. **README** with a screenshot, hardware requirement (MacBook Pro 2021+ / Air 2022+), and the Gatekeeper walkthrough above, written for someone who has never bypassed Gatekeeper before.
+3. **`scripts/release.sh`** doing archive, export, ad-hoc sign, and DMG in one command. Add notarize and staple steps later, behind a flag.
+4. **Sparkle for auto-updates**, configured **before** the first public release — retrofitting updates onto already-installed copies is painful. Appcast hosted in the repo, pointing at Release assets. Sparkle signs updates with its own EdDSA key, which is independent of Apple code signing and works fine un-notarized. Note that Sparkle ships XPC services with their own signing requirements.
+5. **Crash reporting** — local only, or explicit opt-in. Hard rule 6 forbids silent telemetry.
+6. **Privacy note** covering clipboard, location, and calendar. Nothing leaves the machine; say that plainly, because a background agent asking for those permissions with a closed mouth looks worse than one that explains itself.
+7. **Support channel** — GitHub Issues is enough to start.
+
+### Architecture note
+
+`ARCHS = arm64` means Intel Macs cannot run PopNotch at all, which makes the no-notch fallback strip unreachable for anyone but Apple Silicon users on external displays. That is accepted: the app is about the notch, and the fallback is a don't-crash measure rather than a supported mode. Revisit only if Intel users actually ask.
 
 ---
 
