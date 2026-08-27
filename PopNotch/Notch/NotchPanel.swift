@@ -26,6 +26,13 @@ final class NotchPanel: NSPanel {
 
         level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 1)
 
+        // The third property the overlay depends on, alongside level and
+        // styleMask. Without these the panel vanishes on Space switch
+        // (.canJoinAllSpaces), disappears under fullscreen apps
+        // (.fullScreenAuxiliary), and moves during Exposé transitions
+        // (.stationary).
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+
         isOpaque = true
         backgroundColor = .red
         hasShadow = false

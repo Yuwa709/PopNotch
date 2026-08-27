@@ -9,10 +9,11 @@ Read this when starting a new phase. Do not read it for routine tasks.
 ## Current status
 
 - **Phase 0:** complete (project created, git initialized, CLAUDE.md in place)
-- **Phase 0.5:** not started — **blocking.** The Xcode project is still configured as an iOS multiplatform template
-- **Phase 1:** in progress
-  - `NotchPanel` class created, geometry computed, logging in place, builds clean
-  - Not yet instantiated or displayed
+- **Phase 0.5:** complete — project converted to Mac-only, sandbox off, `LSUIElement` set, usage strings in place
+- **Phase 1:** in progress — tasks 1–4 done
+  - Panel instantiates at launch on the built-in display, orders front with a temporary red verification lip, logs its geometry
+  - Template `WindowGroup`/`ContentView` replaced with `AppDelegate` + empty `Settings` scene
+  - Next: task 5, screen change resilience
 - **Phases 2 and beyond:** not started
 
 Update this section at the end of each phase.
@@ -53,8 +54,8 @@ Update this section at the end of each phase.
 
 1. **NotchPanel class.** `NSPanel` subclass. `isOpaque = false`, clear background, no shadow, `styleMask = [.borderless, .nonactivatingPanel]`, `canBecomeKey` returns false, `hidesOnDeactivate = false`. Level one above `CGWindowLevelForKey(.mainMenuWindow)`. **Done.**
 2. **Geometry.** Notch rect is the gap between `auxiliaryTopLeftArea.maxX` and `auxiliaryTopRightArea.minX`, height `safeAreaInsets.top`, anchored to `screen.frame.maxY`. Fallback strip for screens without a notch. **Done.**
-3. **Instantiate and display.** Create one panel at launch, `orderFront`. Set `collectionBehavior` to include `.canJoinAllSpaces`, `.fullScreenAuxiliary`, `.stationary`. Without these it vanishes on space switch and in fullscreen.
-4. **Screen ownership policy.** Decide *before* writing the code: the notch panel lives on the built-in display, always, even when an external monitor is primary. Only if the lid is closed does it move or hide. Write the rule down in code as a single function, `targetScreen()`, so it is one place to change.
+3. **Instantiate and display.** Create one panel at launch, `orderFrontRegardless`. Set `collectionBehavior` to include `.canJoinAllSpaces`, `.fullScreenAuxiliary`, `.stationary`. Without these it vanishes on space switch and in fullscreen. **Done** — a temporary 8pt red lip below the menu bar makes the panel visible until hover exists; remove it with task 7.
+4. **Screen ownership policy.** Decide *before* writing the code: the notch panel lives on the built-in display, always, even when an external monitor is primary. Only if the lid is closed does it move or hide. Write the rule down in code as a single function, `targetScreen()`, so it is one place to change. **Done** — `ScreenPolicy.targetScreen()`, selecting via `CGDisplayIsBuiltin`.
 5. **Screen change resilience.** Subscribe to `NSApplication.didChangeScreenParametersNotification`, recompute and reposition on every fire. Test: plug in external monitor, unplug, change resolution, close and open lid, hot-plug while the panel is expanded. This is where most notch apps break.
 6. **Hover detection.** `NSTrackingArea` with `.mouseEnteredAndExited` and `.activeAlways`. Debounce 150 to 250ms before expanding, or dragging the cursor across the top of the screen fires it constantly. Rebuild the tracking area on every geometry change — a stale one is the classic "hover stopped working after I unplugged my monitor" bug.
 7. **Expand and collapse animation.** Resize the panel, not the inner view. Spring curve, not linear. Inverse-rounded corners where the shape meets the notch, as a custom SwiftUI `Shape` with Bezier curves. **Honor Reduce Motion** — check `accessibilityDisplayShouldReduceMotion` and snap instead of spring.

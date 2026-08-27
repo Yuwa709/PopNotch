@@ -13,10 +13,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		C6F40DC730402B2F00F801FD /* PopNotch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = PopNotch.app; path = /Users/thangpham/PopNotch/build/Debug/PopNotch.app; sourceTree = "<absolute>"; };
 		C6F40DDF30402E2900F801FD /* CLAUDE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CLAUDE.md; sourceTree = "<group>"; };
 		C6F40DE43040B8FF00F801FD /* ROADMAP.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ROADMAP.md; sourceTree = "<group>"; };
 		C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "PROJECT-CONTEXT.md"; sourceTree = "<group>"; };
+		C6F40E2E3040DB3900F801FD /* PopNotch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PopNotch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -45,6 +45,7 @@
 				C6F40DDF30402E2900F801FD /* CLAUDE.md */,
 				C6F40DE43040B8FF00F801FD /* ROADMAP.md */,
 				C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */,
+				C6F40E2E3040DB3900F801FD /* PopNotch.app */,
 			);
 			sourceTree = "<group>";
 		};
@@ -70,7 +71,7 @@
 			packageProductDependencies = (
 			);
 			productName = PopNotch;
-			productReference = C6F40DC730402B2F00F801FD /* PopNotch.app */;
+			productReference = C6F40E2E3040DB3900F801FD /* PopNotch.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -250,6 +251,7 @@
 		C6F40DD330402B3000F801FD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
@@ -276,13 +278,13 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				ARCHS = arm64;
 			};
 			name = Debug;
 		};
 		C6F40DD430402B3000F801FD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
@@ -309,7 +311,6 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				ARCHS = arm64;
 			};
 			name = Release;
 		};
