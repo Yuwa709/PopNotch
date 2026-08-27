@@ -129,22 +129,14 @@ final class NotchPanel: NSPanel {
         let target = expanded ? Self.expandedRect(on: screen) : Self.notchRect(on: screen)
         guard target != frame else { return }
 
-        // Part of the piano-black treatment: a soft shadow while expanded
-        // makes the shape read as a solid lacquered object rather than a
-        // flat region. Off at rest — a resting shadow would smudge below
-        // the menu bar. Turned on before expanding, off after collapsing.
-        if expanded { hasShadow = true }
-
         // Hard rule 8: with Reduce Motion on, snap instead of animating.
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             setFrame(target, display: true)
-            hasShadow = expanded
-            invalidateShadow()
             Self.logger.notice("\(expanded ? "Expanded" : "Collapsed", privacy: .public) (reduced motion) to \(NSStringFromRect(target), privacy: .public)")
             return
         }
 
-        NSAnimationContext.runAnimationGroup({ context in
+        NSAnimationContext.runAnimationGroup { context in
             // Spring feel, not linear: the expand curve overshoots slightly
             // (control-point y > 1) and settles; collapse eases out with no
             // bounce so leaving feels crisp.
@@ -153,11 +145,7 @@ final class NotchPanel: NSPanel {
                 ? CAMediaTimingFunction(controlPoints: 0.30, 1.35, 0.40, 1.0)
                 : CAMediaTimingFunction(controlPoints: 0.30, 0.90, 0.55, 1.0)
             animator().setFrame(target, display: true)
-        }, completionHandler: { [weak self] in
-            guard let self else { return }
-            if !expanded { self.hasShadow = false }
-            self.invalidateShadow()
-        })
+        }
         Self.logger.notice("\(expanded ? "Expanded" : "Collapsed", privacy: .public) to \(NSStringFromRect(target), privacy: .public)")
     }
 }

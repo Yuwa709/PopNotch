@@ -47,25 +47,15 @@ struct NotchShape: Shape {
     }
 }
 
-/// What the panel hosts: the silhouette in piano black.
+/// What the panel hosts: the silhouette filled black.
 ///
-/// The fill is #000000 — measured at the window buffer, there is nothing
-/// darker to emit. "Piano black" is a finish, not a color: a whisper of
-/// specular gloss along the top edge makes the surface read as deep lacquer
-/// instead of a flat matte hole. User-tuned by eye (task 8); the gloss
-/// opacity and falloff are the knobs.
+/// Pure black for now — matching the physical bezel's black on an XDR panel
+/// is task 8, user-verified by eye. The fill color is the single thing that
+/// task will tune.
 struct NotchOverlayView: View {
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black
-            LinearGradient(
-                colors: [Color.white.opacity(0.10), .clear],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 14)
-        }
-        .mask(NotchShape())
-        .ignoresSafeArea()
+        NotchShape()
+            .fill(Color.black)
+            .ignoresSafeArea()
     }
 }
