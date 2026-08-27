@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import os
 
 /// A borderless panel that sits directly over the camera notch.
@@ -33,15 +34,22 @@ final class NotchPanel: NSPanel {
         // (.stationary).
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
-        isOpaque = true
-        backgroundColor = .red
+        // Transparent panel; the SwiftUI shape draws the visible silhouette.
+        // (The development-era solid red is gone with the verification lip.)
+        isOpaque = false
+        backgroundColor = .clear
         hasShadow = false
         isMovable = false
         // NSPanel defaults this to true, which would hide the overlay whenever
         // this background agent resigns active — it must stay up permanently.
         hidesOnDeactivate = false
 
-        contentView = NotchHoverView()
+        let hoverView = NotchHoverView()
+        let hostingView = NSHostingView(rootView: NotchOverlayView())
+        hostingView.frame = hoverView.bounds
+        hostingView.autoresizingMask = [.width, .height]
+        hoverView.addSubview(hostingView)
+        contentView = hoverView
 
         setFrame(notchRect, display: false)
     }
@@ -97,5 +105,47 @@ final class NotchPanel: NSPanel {
         )
         logger.notice("Computed notch rect \(NSStringFromRect(notchRect), privacy: .public) on screen \(screen.localizedName, privacy: .public) (auxiliary gap: \(leftArea.maxX, privacy: .public)...\(rightArea.minX, privacy: .public), safeAreaInsets.top: \(topInset, privacy: .public))")
         return notchRect
+    }
+
+    /// The hovered frame: the notch rect grown sideways and downward, top
+    /// edge still flush with the screen top. Placeholder proportions until
+    /// modules exist and dictate real content size.
+    static func expandedRect(on screen: NSScreen) -> NSRect {
+        let base = notchRect(on: screen)
+        let sideExtra: CGFloat = 32
+        let bottomExtra: CGFloat = 40
+        return NSRect(
+            x: base.minX - sideExtra,
+            y: base.minY - bottomExtra,
+            width: base.width + sideExtra * 2,
+            height: base.height + bottomExtra
+        )
+    }
+
+    /// Animates the panel frame between the collapsed and expanded rects.
+    /// Resizes the panel itself, not the inner view — the hosting view and
+    /// tracking area follow via autoresizing and updateTrackingAreas.
+    func setExpanded(_ expanded: Bool, on screen: NSScreen) {
+        let target = expanded ? Self.expandedRect(on: screen) : Self.notchRect(on: screen)
+        guard target != frame else { return }
+
+        // Hard rule 8: with Reduce Motion on, snap instead of animating.
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            setFrame(target, display: true)
+            Self.logger.notice("\(expanded ? "Expanded" : "Collapsed", privacy: .public) (reduced motion) to \(NSStringFromRect(target), privacy: .public)")
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            // Spring feel, not linear: the expand curve overshoots slightly
+            // (control-point y > 1) and settles; collapse eases out with no
+            // bounce so leaving feels crisp.
+            context.duration = expanded ? 0.32 : 0.22
+            context.timingFunction = expanded
+                ? CAMediaTimingFunction(controlPoints: 0.30, 1.35, 0.40, 1.0)
+                : CAMediaTimingFunction(controlPoints: 0.30, 0.90, 0.55, 1.0)
+            animator().setFrame(target, display: true)
+        }
+        Self.logger.notice("\(expanded ? "Expanded" : "Collapsed", privacy: .public) to \(NSStringFromRect(target), privacy: .public)")
     }
 }

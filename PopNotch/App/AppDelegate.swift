@@ -6,14 +6,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "AppDelegate")
 
-    /// TEMPORARY, remove with Phase 1 task 7 (expand/collapse animation).
-    /// The notch rect is exactly the camera housing's deadzone, so a panel
-    /// that fits it perfectly is invisible on a real MacBook. Extending the
-    /// frame this many points below the menu bar leaves a visible red lip —
-    /// the only way the user can confirm position before hover exists.
-    private static let verificationLip: CGFloat = 3
-
     private var notchPanel: NotchPanel?
+
+    /// The screen the panel currently lives on. Set by reposition(reason:),
+    /// read by the hover handler so expansion always targets the same screen
+    /// the panel was placed on.
+    private var currentScreen: NSScreen?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let screen = ScreenPolicy.targetScreen() else {
@@ -21,7 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        notchPanel = NotchPanel(screen: screen)
+        let panel = NotchPanel(screen: screen)
+        panel.onHoverChange = { [weak self] hovering in
+            guard let self, let screen = self.currentScreen else { return }
+            panel.setExpanded(hovering, on: screen)
+        }
+        notchPanel = panel
         reposition(reason: "launch")
 
         // Fires on monitor plug/unplug, resolution change, lid close/open,
@@ -44,7 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Recomputes the target screen and notch geometry, then moves the panel
-    /// there. Called at launch and on every screen parameter change.
+    /// there, always in the collapsed state — a display change mid-hover
+    /// invalidates the hover anyway. Called at launch and on every screen
+    /// parameter change.
     private func reposition(reason: String) {
         guard let panel = notchPanel else { return }
 
@@ -53,13 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // leave the panel stranded at coordinates that no longer exist.
             // The next notification re-evaluates and brings it back.
             Self.logger.error("Reposition (\(reason, privacy: .public)): no target screen; hiding panel")
+            currentScreen = nil
             panel.orderOut(nil)
             return
         }
 
-        var frame = NotchPanel.notchRect(on: screen)
-        frame.origin.y -= Self.verificationLip
-        frame.size.height += Self.verificationLip
+        currentScreen = screen
+        let frame = NotchPanel.notchRect(on: screen)
         panel.setFrame(frame, display: true)
 
         // orderFrontRegardless, not orderFront: this background agent is never
