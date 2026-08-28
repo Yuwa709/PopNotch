@@ -38,7 +38,19 @@ struct MediaExpandedView: View {
                 HStack(alignment: .top, spacing: 12) {
                     // Tapping the artwork opens the track in Spotify.
                     Button { module.openInSpotify() } label: {
-                        ArtworkThumb(data: playing.artworkData, side: 52, corner: 10)
+                        if let image = module.artworkImage {
+                            // Ken Burns drift, palette glow, and parallax
+                            // tilt. Slightly larger than the old flat thumb
+                            // so the effects have room to read.
+                            ArtworkVisualizerView(
+                                image: image,
+                                isPlaying: playing.isPlaying,
+                                cornerRadius: 10
+                            )
+                            .frame(width: 60, height: 60)
+                        } else {
+                            ArtworkThumb(data: nil, side: 60, corner: 10)
+                        }
                     }
                     .buttonStyle(.plain)
                     VStack(alignment: .leading, spacing: 2) {

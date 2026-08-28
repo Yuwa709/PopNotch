@@ -42,6 +42,9 @@ final class MediaModule: NotchModule {
     /// Accent pulled from the current artwork; views fall back to the fixed
     /// peach when nil (colorless art, or artwork not yet loaded).
     private(set) var artworkAccent: Color?
+    /// Decoded once per artwork change rather than per render — the
+    /// visualizer needs an NSImage and SwiftUI bodies run often.
+    private(set) var artworkImage: NSImage?
     @ObservationIgnored private var accentSourceData: Data?
 
     /// Account-backed extras (nil until the user connects Spotify).
@@ -92,6 +95,7 @@ final class MediaModule: NotchModule {
         if snapshot?.artworkData != accentSourceData {
             accentSourceData = snapshot?.artworkData
             artworkAccent = snapshot?.artworkData.flatMap(ArtworkColor.dominant(in:))
+            artworkImage = snapshot?.artworkData.flatMap(NSImage.init(data:))
         }
 
         let hasPresence = snapshot?.hasContent == true
