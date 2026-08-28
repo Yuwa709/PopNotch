@@ -92,8 +92,18 @@ final class MediaModule: NotchModule {
 
     var accountConnected: Bool { account?.isConnected == true }
 
+    /// Drives the in-notch "allow Automation" banner, which renders only
+    /// when the widget is empty. Denial explains emptiness only for a player
+    /// that is actually **running**: its pull path is dead, so there is
+    /// nothing to show. A denied-but-closed player is not the reason the
+    /// widget is empty — granting it would display nothing — and belongs to
+    /// the Permissions tab, not this banner.
+    ///
+    /// Was `allSatisfy` when one adapter existed; with two, a never-probed
+    /// MusicAdapter kept its flag false forever and a denied Spotify could
+    /// never surface the banner.
     var permissionDenied: Bool {
-        sources.allSatisfy(\.permissionDenied)
+        sources.contains { $0.isPlayerRunning && $0.permissionDenied }
     }
 
     init(sources: [MediaSource], account: SpotifyAccount? = nil) {
