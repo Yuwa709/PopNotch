@@ -25,7 +25,11 @@ struct PopNotchApp: App {
         }
 
         Settings {
-            SettingsView(coordinator: appDelegate.coordinator, settings: appDelegate.settings)
+            SettingsView(
+                coordinator: appDelegate.coordinator,
+                settings: appDelegate.settings,
+                spotify: appDelegate.spotifyAccount
+            )
         }
     }
 }

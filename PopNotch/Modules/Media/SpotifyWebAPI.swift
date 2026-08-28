@@ -1,0 +1,97 @@
+import Foundation
+import os
+
+/// What the notch shows from the user's queue.
+struct SpotifyUpNext: Equatable {
+    let title: String
+    let artist: String
+}
+
+/// The Web API calls PopNotch makes once the account is connected. Thin by
+/// design: every function is one endpoint, authed via SpotifyAccount.
+@MainActor
+final class SpotifyWebAPI {
+
+    private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "SpotifyAPI")
+
+    private let account: SpotifyAccount
+
+    init(account: SpotifyAccount) {
+        self.account = account
+    }
+
+    /// "spotify:track:4uLU6hMC..." -> "4uLU6hMC...". Nil for non-track URIs
+    /// (episodes, local files), which have no like endpoint.
+    nonisolated static func trackID(fromURI uri: String) -> String? {
+        let parts = uri.split(separator: ":")
+        guard parts.count == 3, parts[0] == "spotify", parts[1] == "track" else { return nil }
+        return String(parts[2])
+    }
+
+    // MARK: - Decoding (internal for tests)
+
+    struct QueueResponse: Decodable {
+        let queue: [QueueTrack]
+    }
+    struct QueueTrack: Decodable {
+        let name: String
+        let artists: [QueueArtist]
+    }
+    struct QueueArtist: Decodable {
+        let name: String
+    }
+
+    nonisolated static func upNext(fromQueueJSON data: Data) -> SpotifyUpNext? {
+        guard let decoded = try? JSONDecoder().decode(QueueResponse.self, from: data),
+              let first = decoded.queue.first else { return nil }
+        return SpotifyUpNext(
+            title: first.name,
+            artist: first.artists.map(\.name).joined(separator: ", ")
+        )
+    }
+
+    // MARK: - Calls
+
+    func fetchUpNext() async -> SpotifyUpNext? {
+        guard let data = await get("https://api.spotify.com/v1/me/player/queue") else { return nil }
+        return Self.upNext(fromQueueJSON: data)
+    }
+
+    func isSaved(trackID: String) async -> Bool? {
+        guard let data = await get("https://api.spotify.com/v1/me/tracks/contains?ids=\(trackID)"),
+              let flags = try? JSONDecoder().decode([Bool].self, from: data)
+        else { return nil }
+        return flags.first
+    }
+
+    /// Returns whether the change was accepted.
+    func setSaved(_ saved: Bool, trackID: String) async -> Bool {
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me/tracks?ids=\(trackID)")!)
+        request.httpMethod = saved ? "PUT" : "DELETE"
+        guard let token = await account.validAccessToken() else { return false }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let status = (response as? HTTPURLResponse)?.statusCode
+        else { return false }
+        return (200..<300).contains(status)
+    }
+
+    private func get(_ urlString: String) async -> Data? {
+        guard let token = await account.validAccessToken(),
+              let url = URL(string: urlString) else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let status = (response as? HTTPURLResponse)?.statusCode
+        else { return nil }
+        guard status == 200 else {
+            // 204: nothing playing on this account. 429: rate limited.
+            // Either way there is nothing to show; stay quiet.
+            if status != 204 {
+                Self.logger.notice("GET \(urlString, privacy: .public) -> \(status, privacy: .public)")
+            }
+            return nil
+        }
+        return data
+    }
+}

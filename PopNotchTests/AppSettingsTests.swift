@@ -113,6 +113,18 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - Migration
 
+    func testV1JSONMigratesToV2WithNothingDropped() {
+        // Exactly what a v1 install persisted. CLAUDE.md requires every
+        // schema bump to load the previous version's JSON and prove nothing
+        // was dropped.
+        write(#"{"schemaVersion":1,"moduleEnablement":{"stats":false},"hoverEnterDelay":0.5}"#)
+        let settings = store().settings
+        XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertEqual(settings.moduleEnablement["stats"], false)
+        XCTAssertEqual(settings.hoverEnterDelay, 0.5)
+        XCTAssertEqual(settings.spotifyClientID, "", "new field defaults to unconfigured")
+    }
+
     func testMigrationStampsCurrentVersion() {
         var old = AppSettings()
         old.schemaVersion = 0

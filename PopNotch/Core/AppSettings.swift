@@ -17,7 +17,8 @@ import Foundation
 struct AppSettings: Codable, Equatable {
 
     /// Bump on every shape change. See the note above.
-    static let currentSchemaVersion = 1
+    /// v2: added spotifyClientID.
+    static let currentSchemaVersion = 2
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -32,10 +33,15 @@ struct AppSettings: Codable, Equatable {
     /// 0.35 on hardware; 0.2 let too much passing traffic through.
     var hoverEnterDelay: TimeInterval = 0.35
 
+    /// The Spotify developer app's Client ID (public information under
+    /// PKCE — there is no secret). Empty until the user pastes theirs in
+    /// Settings; account features stay hidden while empty.
+    var spotifyClientID: String = ""
+
     // MARK: - Decoding
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, moduleEnablement, hoverEnterDelay
+        case schemaVersion, moduleEnablement, hoverEnterDelay, spotifyClientID
     }
 
     init() {}
@@ -52,6 +58,8 @@ struct AppSettings: Codable, Equatable {
             ?? [:]
         hoverEnterDelay = (try? container.decode(TimeInterval.self, forKey: .hoverEnterDelay))
             ?? 0.35
+        spotifyClientID = (try? container.decode(String.self, forKey: .spotifyClientID))
+            ?? ""
     }
 
     // MARK: - Migration
@@ -64,13 +72,15 @@ struct AppSettings: Codable, Equatable {
     static func migrate(_ settings: AppSettings, from version: Int) -> AppSettings {
         var result = settings
 
-        // No migrations yet: version 1 is the first shipped schema. The
-        // switch exists so the next change has an obvious home.
         switch version {
         case ..<1:
             // Pre-versioned JSON, if any ever existed in a dev build: the
             // lenient decoder already filled defaults. Nothing to move.
             result.schemaVersion = 1
+            fallthrough
+        case 1:
+            // v2 added spotifyClientID; the lenient decoder fills "" for v1
+            // JSON, which is exactly the not-configured state. Nothing moves.
             fallthrough
         default:
             break

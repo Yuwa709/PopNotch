@@ -44,17 +44,27 @@ final class MediaModule: NotchModule {
     private(set) var artworkAccent: Color?
     @ObservationIgnored private var accentSourceData: Data?
 
+    /// Account-backed extras (nil until the user connects Spotify).
+    private(set) var upNext: SpotifyUpNext?
+    private(set) var likedCurrent: Bool?
+
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private let lyricsService = LyricsService()
+    @ObservationIgnored private let account: SpotifyAccount?
+    @ObservationIgnored private let webAPI: SpotifyWebAPI?
     @ObservationIgnored private var lastTrackKey: String?
     @ObservationIgnored private var hadPresence = false
+
+    var accountConnected: Bool { account?.isConnected == true }
 
     var permissionDenied: Bool {
         sources.allSatisfy(\.permissionDenied)
     }
 
-    init(sources: [MediaSource]) {
+    init(sources: [MediaSource], account: SpotifyAccount? = nil) {
         self.sources = sources
+        self.account = account
+        self.webAPI = account.map(SpotifyWebAPI.init(account:))
         for source in sources {
             source.onUpdate = { [weak self] snapshot in
                 self?.handleUpdate(snapshot)
@@ -96,6 +106,7 @@ final class MediaModule: NotchModule {
             onContentReflow?()
         }
         fetchLyrics(for: snapshot, trackKey: key)
+        refreshAccountExtras()
     }
 
     func send(_ command: MediaCommand) {
@@ -141,6 +152,37 @@ final class MediaModule: NotchModule {
         // Pull once so the first hover after launch has data and artwork.
         // This is what triggers the one-time Automation permission prompt.
         sources.forEach { $0.refresh() }
+        refreshAccountExtras()
+    }
+
+    // MARK: - Account extras
+
+    /// The current track's Spotify ID, when the URI is a track at all.
+    private var currentTrackID: String? {
+        nowPlaying?.artworkIdentifier.flatMap(SpotifyWebAPI.trackID(fromURI:))
+    }
+
+    /// Event-driven only (track change, panel opening): no polling loop.
+    private func refreshAccountExtras() {
+        guard let webAPI, accountConnected else { return }
+        let trackID = currentTrackID
+        Task { [weak self] in
+            let next = await webAPI.fetchUpNext()
+            let liked: Bool? = if let trackID { await webAPI.isSaved(trackID: trackID) } else { nil }
+            guard let self else { return }
+            self.upNext = next
+            self.likedCurrent = liked
+        }
+    }
+
+    func toggleLike() {
+        guard let webAPI, let trackID = currentTrackID else { return }
+        let target = !(likedCurrent ?? false)
+        likedCurrent = target // optimistic; revert on failure
+        Task { [weak self] in
+            let accepted = await webAPI.setSaved(target, trackID: trackID)
+            if !accepted { self?.likedCurrent = !target }
+        }
     }
 
     func didResignVisible() {

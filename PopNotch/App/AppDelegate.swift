@@ -11,13 +11,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let settings = SettingsStore()
     private(set) lazy var coordinator = NotchCoordinator(settings: settings)
+    private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
     private let statsService = SystemStatsService()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator.start()
 
         // Modules register here, one line each — the Phase 2 goal made real.
-        let media = MediaModule(sources: [SpotifyAdapter()])
+        let media = MediaModule(sources: [SpotifyAdapter()], account: spotifyAccount)
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)
         }

@@ -53,6 +53,20 @@ struct MediaExpandedView: View {
                 }
                 MediaProgressBar(module: module)
                 MediaLyricsView(module: module)
+                if let next = module.upNext {
+                    HStack(spacing: 6) {
+                        Text("UP NEXT")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle((module.artworkAccent ?? .mediaAccent).opacity(0.9))
+                        Text(next.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                        Text(next.artist)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1)
+                    }
+                }
                 controls(isPlaying: playing.isPlaying)
             }
             .frame(width: 368)
@@ -66,13 +80,34 @@ struct MediaExpandedView: View {
     }
 
     private func controls(isPlaying: Bool) -> some View {
-        // Spacing and glyph sizes measured 1:1 off the reference.
-        HStack(spacing: 56) {
-            transportButton("backward.fill", size: 20) { module.send(.previousTrack) }
-            transportButton(isPlaying ? "pause.fill" : "play.fill", size: 26) {
-                module.send(.togglePlayPause)
+        ZStack {
+            // Spacing and glyph sizes measured 1:1 off the reference.
+            HStack(spacing: 56) {
+                transportButton("backward.fill", size: 20) { module.send(.previousTrack) }
+                transportButton(isPlaying ? "pause.fill" : "play.fill", size: 26) {
+                    module.send(.togglePlayPause)
+                }
+                transportButton("forward.fill", size: 20) { module.send(.nextTrack) }
             }
-            transportButton("forward.fill", size: 20) { module.send(.nextTrack) }
+            // Like sits bottom-leading, where the reference keeps its
+            // secondary actions. Only shown with a connected account.
+            if module.accountConnected {
+                HStack {
+                    Button {
+                        module.toggleLike()
+                    } label: {
+                        Image(systemName: module.likedCurrent == true ? "heart.fill" : "heart")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(module.likedCurrent == true
+                                ? (module.artworkAccent ?? .mediaAccent)
+                                : .white.opacity(0.7))
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+            }
         }
     }
 

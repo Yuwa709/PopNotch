@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     let coordinator: NotchCoordinator
     let settings: SettingsStore
+    let spotify: SpotifyAccount
 
     var body: some View {
         TabView {
@@ -14,8 +15,54 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             ModulesSettingsTab(coordinator: coordinator, settings: settings)
                 .tabItem { Label("Modules", systemImage: "square.stack") }
+            SpotifySettingsTab(settings: settings, account: spotify)
+                .tabItem { Label("Spotify", systemImage: "music.note") }
         }
-        .frame(width: 440, height: 250)
+        .frame(width: 440, height: 280)
+    }
+}
+
+/// Connecting a Spotify account for queue and likes: official OAuth with
+/// PKCE. The Client ID is the user's own developer-app registration —
+/// public information under PKCE, no secret involved.
+struct SpotifySettingsTab: View {
+
+    @Bindable var settings: SettingsStore
+    @Bindable var account: SpotifyAccount
+
+    var body: some View {
+        Form {
+            if account.isConnected {
+                LabeledContent("Account") {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        Text("Connected")
+                        Spacer()
+                        Button("Disconnect") { account.disconnect() }
+                    }
+                }
+            } else {
+                TextField("Client ID", text: clientIDBinding, prompt: Text("Spotify app Client ID"))
+                    .textFieldStyle(.roundedBorder)
+                Button("Connect Spotify…") { account.beginAuthorization() }
+                    .disabled(settings.settings.spotifyClientID.trimmingCharacters(in: .whitespaces).isEmpty)
+                Text("Create a free app at developer.spotify.com/dashboard, add the redirect URI \(SpotifyAccount.redirectURI) exactly, then paste its Client ID here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let error = account.lastError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    private var clientIDBinding: Binding<String> {
+        Binding(
+            get: { settings.settings.spotifyClientID },
+            set: { value in settings.update { $0.spotifyClientID = value } }
+        )
     }
 }
 

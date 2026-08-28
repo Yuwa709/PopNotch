@@ -73,6 +73,8 @@ Rule 6 requires every added network call to be an explicit decision recorded her
 
 MediaRemote would have avoided this call entirely (it delivers artwork bytes), but it is caller-gated — see `PopNotch/Modules/Media/FINDINGS.md`.
 
+| accounts.spotify.com (OAuth token endpoints) + api.spotify.com (`/me/player/queue`, `/me/tracks`) | Media: Up Next and liking tracks | 2026-08-28 | **Official** Web API only, authorized by the user via PKCE from Settings; refresh token in the Keychain. The private API Sapphire uses (Canvas, monthly listeners, play counts, free-tier ad skipping) is explicitly declined: it rides on reverse-engineered endpoints with the user's session and risks their account. Requests carry only Spotify's own OAuth tokens and track IDs |
+
 ---
 
 ## What this app is
