@@ -244,28 +244,41 @@ struct MediaFullLyricsView: View {
     let module: MediaModule
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 16) {
+            // Song badge, top-left, matching the Sapphire reference: back
+            // chevron, small artwork, then title / album / artist stacked.
+            // Extra top clearance keeps it fully below the physical notch.
+            HStack(alignment: .center, spacing: 9) {
                 Button { module.toggleFullLyrics() } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .bold))
-                        .frame(width: 22, height: 22)
+                        .frame(width: 24, height: 24)
                         .background(Circle().fill(.white.opacity(0.12)))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                ArtworkThumb(data: module.nowPlaying?.artworkData, side: 26, corner: 6)
-                VStack(alignment: .leading, spacing: 0) {
+                Button { module.openInSpotify() } label: {
+                    ArtworkThumb(data: module.nowPlaying?.artworkData, side: 30, corner: 6)
+                }
+                .buttonStyle(.plain)
+                VStack(alignment: .leading, spacing: 1) {
                     Text(module.nowPlaying?.title ?? "")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .bold))
                         .lineLimit(1)
+                    if let album = module.nowPlaying?.album, !album.isEmpty {
+                        Text(album)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .lineLimit(1)
+                    }
                     Text(module.nowPlaying?.artist ?? "")
                         .font(.system(size: 9))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)
                 }
                 Spacer()
             }
+            .padding(.top, 10)
 
             if let lines = module.lyrics, !lines.isEmpty {
                 TimelineView(.periodic(from: .now, by: 0.5)) { context in
@@ -276,21 +289,20 @@ struct MediaFullLyricsView: View {
                             // Styled to the Sapphire reference: big bold
                             // wrapped lines, current in the accent, the rest
                             // dimmed, generous spacing.
-                            VStack(spacing: 22) {
+                            VStack(spacing: 20) {
                                 ForEach(lines.indices, id: \.self) { index in
                                     Text(lines[index].text)
-                                        .font(.system(size: index == currentIndex ? 24 : 19,
+                                        .font(.system(size: index == currentIndex ? 25 : 20,
                                                       weight: .bold))
                                         .foregroundStyle(index == currentIndex
                                             ? (module.artworkAccent ?? .mediaAccent)
-                                            : .white.opacity(0.30))
+                                            : .white.opacity(0.28))
                                         .multilineTextAlignment(.center)
                                         .frame(maxWidth: .infinity)
                                         .id(index)
                                 }
                             }
-                            .padding(.vertical, 100)
-                            .padding(.horizontal, 4)
+                            .padding(.vertical, 90)
                         }
                         .onChange(of: currentIndex) { _, newIndex in
                             guard let newIndex else { return }
@@ -305,21 +317,21 @@ struct MediaFullLyricsView: View {
                         }
                     }
                 }
-                .frame(height: 260)
+                .frame(height: 250)
                 .mask(
                     // Fade the edges so lines melt in and out, per the
                     // reference screenshot.
                     LinearGradient(
                         stops: [.init(color: .clear, location: 0),
-                                .init(color: .black, location: 0.18),
-                                .init(color: .black, location: 0.82),
+                                .init(color: .black, location: 0.16),
+                                .init(color: .black, location: 0.84),
                                 .init(color: .clear, location: 1)],
                         startPoint: .top, endPoint: .bottom
                     )
                 )
             }
         }
-        .frame(width: 368)
+        .frame(width: 400)
         .foregroundStyle(.white)
     }
 }
