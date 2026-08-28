@@ -41,3 +41,27 @@ code read. Notables: permissions listed plainly with per-row Request
 buttons; wings shown only while a session is active; "private API login"
 for Spotify free-tier features (deliberately not copied — official Web API
 only, if ever).
+
+## Sapphire feature analysis (reviewed 2026-08-28)
+
+A written analysis of Sapphire's advertised feature set was reviewed —
+compiled from its public marketing site, FAQ, changelog, and README.
+**No source code was read**, by the user or by the assistant.
+
+The analysis included a listing of top-level directory names in their
+repository. Directory names are not source, but reading them is the
+closest this project has come to the line, and it is recorded here for
+that reason rather than because anything was taken from it. Nothing in
+PopNotch was written or changed on the strength of it.
+
+What it changed: nothing in the code. It produced a ranked candidate
+list in `ROADMAP.md` and a competitive-position section in
+`PROJECT-CONTEXT.md`, both of which are statements about PopNotch's
+priorities. The analysis file itself is deliberately kept outside this
+repository.
+
+One technique was named and **not adopted**: reading MediaRemote by
+spawning an Apple-signed interpreter, to get around the caller-identity
+gate. It was already independently discovered and documented as "path 2"
+in `PopNotch/Modules/Media/FINDINGS.md` on 2026-08-27, from PopNotch's
+own measurements, before this analysis was read. It remains unchosen.

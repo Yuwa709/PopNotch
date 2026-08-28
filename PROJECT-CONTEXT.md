@@ -71,9 +71,10 @@ Rule 6 requires every added network call to be an explicit decision recorded her
 |---|---|---|---|
 | Spotify's artwork CDN, via the exact URL `artwork url of current track` returns | Media: album art for Spotify | 2026-08-27 | Spotify's scripting interface exposes artwork only as a URL (Apple Music hands over raw bytes; Spotify does not). Without the fetch, Spotify tracks have no thumbnail — the feature's centrepiece. Plain GET of an image Spotify itself designated; https enforced; fetched once per track and cached by URL. Nothing about the user is sent |
 
-MediaRemote would have avoided this call entirely (it delivers artwork bytes), but it is caller-gated — see `PopNotch/Modules/Media/FINDINGS.md`.
+| accounts.spotify.com (`/authorize`, `/api/token`) + api.spotify.com (`/v1/tracks/{id}`, `/v1/artists/{id}`, `/v1/me/player/queue`, `/v1/me/tracks`, `/v1/me/tracks/contains`) | Media: Up Next, like/unlike, official artist metadata | 2026-08-28 | **Official** Web API only, authorized by the user via PKCE from Settings; refresh token in the Keychain. The private API Sapphire uses (Canvas, monthly listeners, play counts, free-tier ad skipping) is explicitly declined: it rides on reverse-engineered endpoints with the user's session and risks their account. Requests carry only Spotify's own OAuth tokens and track IDs. The redirect target is a loopback listener on `127.0.0.1:7391` — local, not a network call |
+| lrclib.net (`/api/get`) | Media: time-synced lyrics | 2026-08-28 | Rule 6 pre-permits lyrics via LRCLIB but the decision was never recorded here; this row closes that gap retroactively. LRCLIB is free, keyless, and needs no account. The query carries artist, title, and track duration — song metadata, nothing identifying the user. Genius and Musixmatch are declined: both would mean scraping, and their lyrics are licensed |
 
-| accounts.spotify.com (OAuth token endpoints) + api.spotify.com (`/me/player/queue`, `/me/tracks`) | Media: Up Next and liking tracks | 2026-08-28 | **Official** Web API only, authorized by the user via PKCE from Settings; refresh token in the Keychain. The private API Sapphire uses (Canvas, monthly listeners, play counts, free-tier ad skipping) is explicitly declined: it rides on reverse-engineered endpoints with the user's session and risks their account. Requests carry only Spotify's own OAuth tokens and track IDs |
+MediaRemote would have avoided this call entirely (it delivers artwork bytes), but it is caller-gated — see `PopNotch/Modules/Media/FINDINGS.md`.
 
 ---
 
@@ -129,7 +130,18 @@ The goal is every service — Spotify, Apple Music, Pandora, YouTube Music. The 
 
 **Decision: v1 ships Apple Music and Spotify via AppleScript.** Pandora and YouTube Music are blocked, not cut. The `MediaSource` protocol exists precisely so that if MediaRemote becomes viable again — or a per-service API path is chosen — it costs one new file rather than a rewrite.
 
-Do not design around MediaRemote until someone has verified it on the actual target OS. That verification is a Phase 4 task, not an assumption.
+### MediaRemote: resolved, not open
+
+Measured on hardware 2026-08-27 and written up in `PopNotch/Modules/Media/FINDINGS.md`. Summary: the framework loads and every symbol resolves inside PopNotch, but `MRMediaRemoteGetNowPlayingInfo` returns an **empty dictionary** to the signed app while the same call from an Apple-signed `swift` CLI returns full data for the same track at the same instant. The macOS 15.4 restriction is caller-identity gating and it is live on 26.5. The gating entitlement is private and not grantable.
+
+This question is closed. Do not reopen it on the strength of another app appearing to have now-playing working — that observation is consistent with the Apple-signed-interpreter loophole (FINDINGS path 2), which is a different mechanism, not evidence that in-process MediaRemote works. Reopen only on a new **measurement** on a newer OS.
+
+### What actually ships today
+
+`SpotifyAdapter` is the only `MediaSource` in the target. **There is no Apple Music adapter yet**, so the sentence above describes the intent, not the build. Two things follow:
+
+- Apple Music is the largest single gap between the plan and the app, and it is a Phase 4 completion task, not a new feature.
+- Multi-source selection is unproven. `MediaModule.send(_:)` picks `sources.first { $0.isPlayerRunning }` and `handleUpdate` is last-writer-wins. With one adapter that is correct by accident. Adding Apple Music is what will expose it, so the rule from Phase 4 task 2 has to be written before the adapter, not after.
 
 ---
 
@@ -166,6 +178,19 @@ Say "solves the same problems as Sapphire," never "replica of Sapphire." The wor
 
 This applies to the assistant too. If asked to "make it work like app X," the answer is to understand what X does and implement it independently — not to go read X's source.
 
+### Competitive position (reviewed 2026-08-28)
+
+A feature-by-feature analysis of Sapphire was compiled from its public marketing site and README. **That file stays out of this repo** — a dossier on another product sitting in the source tree is a bad paper trail for a project that may become commercial. What follows is the conclusion, which is ours, not theirs.
+
+Standing rules that came out of it:
+
+- **Their feature list is not our backlog.** Roughly fifteen advertised features, several marked Beta, one developer. Matching a list is how a solo project stalls. Hard rule 7 (one feature per session) is the defence and it is not negotiable because a competitor shipped something.
+- **Marketing copy is not evidence.** Everything in that analysis is what an app *claims* on its own site. "Sapphire doesn't do X" means X is absent from a landing page, not absent from the app. Never plan around a competitor's gap as though it were measured.
+- **Where PopNotch is actually different, and it is deliberate:** system-resource monitoring (CPU, memory, disk, GPU, battery) is the app's second pillar and is shipped. It does not appear anywhere in Sapphire's public material. Treat that as a likely opening, not a proven one.
+- **Price and licence are a different game, not a worse one.** Sapphire is a subscription. PopNotch is MIT and free. Do not import feature decisions that only make sense with subscription revenue behind them — anything needing paid data feeds or LLM inference is out until PopNotch has a business model, and it does not have one.
+- **Intel support is theirs, not ours.** They run on any Mac; `ARCHS = arm64` is settled here and stays settled. No notch Mac is Intel.
+- **The clean-room line moved closer, so hold it harder.** Studying behaviour is fine and this is how it is done: their demo videos, their UI, their settings screens. Their source is off limits, including the directory structure inspection that analysis contains. Anything learned gets an entry in `REFERENCES.md` the same day.
+
 ---
 
 ## Constraints the assistant cannot work around
@@ -194,9 +219,9 @@ Each needs an owner and a trigger, or it is not a question, it is a wish.
 
 | Question | Resolve by | Why it matters |
 |---|---|---|
-| Is MediaRemote reachable on the current macOS version? | Before Phase 4 design is finalized | Determines whether Pandora and YouTube Music are ever possible |
+| Does an Apple Music adapter ship in v1, or is PopNotch a Spotify-first app that adds Music later? | Before Phase 4 is called done | Every doc here promises both. Only Spotify is built. Either write the adapter or change the promise — leaving it is the drift that made Phase 0.5 necessary |
 | Which stock data provider, and does its license permit redistribution? | Start of Phase 6 | A provider that forbids redistribution blocks public release, not just the feature |
 | At what download count does notarization become worth $99/year? | Revisit after first public release | Pick a number now so the decision is a trigger rather than a mood |
 | Does PopNotch ever become a paid product? | Open | MIT permits it. Anyone may also fork the free version, which is the tradeoff MIT was chosen with |
 
-Resolved and moved into the Distribution and Build Configuration sections above: license (MIT), source visibility (public), notarization (no, for now), and the full Phase 0.5 configuration drift.
+Resolved and moved into the sections above: license (MIT), source visibility (public), notarization (no, for now), the full Phase 0.5 configuration drift, and **whether MediaRemote is reachable** — measured, gated, closed. See the Media section and `PopNotch/Modules/Media/FINDINGS.md`.

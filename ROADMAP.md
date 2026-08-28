@@ -29,7 +29,13 @@ Read this when starting a new phase. Do not read it for routine tasks.
   - Expanded silhouette: original task 7 shape at ±48pt/side, 64pt down — a placeholder sized by eye; the media module dictates real dimensions in Phase 4
   - Bezel black: fill measured #000000 at the window buffer; residual mismatch is LCD backlight, not fixable in software
   - Menu bar item (Settings/Quit) and launch-at-login toggle in place
-- **Phase 4 (media):** not started — the reason the app exists. Switch to Fable for it; MediaRemote's post-15.4 status must be established empirically before any design work
+- **Phase 4 (media):** substantially built, not closed — this entry said "not started" long after the work shipped; do not trust it again without reading the tree
+  - **Task zero answered.** MediaRemote probed on hardware 2026-08-27, macOS 26.5.2: symbols resolve in-app, the data callback returns `{}` while an Apple-signed CLI gets 17 keys for the same track. Caller-identity gating, live. Written up in `PopNotch/Modules/Media/FINDINGS.md`. AppleScript adapters chosen, user-approved
+  - **Shipped:** `SpotifyAdapter` (AppleScript, notification-driven), artwork fetch + cache, artwork-derived accent, draggable scrub bar, LRCLIB time-synced lyrics with a pinned/full-takeover page, Spotify OAuth via PKCE, Up Next, like/unlike, official artist metadata (avatar, followers, popularity)
+  - **Not shipped:** the Apple Music adapter. `SpotifyAdapter` is the only `MediaSource` registered in `AppDelegate`, which means every doc promising "Apple Music and Spotify" is currently ahead of the build
+  - **Untested:** multi-source selection (Phase 4 task 2). `send(_:)` routes to `sources.first { $0.isPlayerRunning }` and `handleUpdate` is last-writer-wins. Correct by accident with one adapter. Write the rule down before the second adapter exists, not after
+  - **Deliberately reverted:** auto-announcing track changes as a 4s live activity. It shipped and read as a glitch. The live-activity plumbing stays for whatever earns it
+  - 83 tests across parsing, metadata, OAuth, lyrics, artwork, settings, arbitration and stats
 - **Phases 5 and 6:** not started
 
 Update this section at the end of each phase.
@@ -161,7 +167,7 @@ Used daily for two weeks and the annoyances that surfaced are fixed. Idle CPU is
 
 The traditional route was the private MediaRemote framework, giving now-playing info and transport control for every app. Apple restricted it in macOS 15.4 behind a private entitlement, breaking most third-party now-playing apps.
 
-**Task zero: verify the current state on the actual target OS before designing anything.** Write down what you find. This area has moved repeatedly and every plan below branches on the answer.
+**Task zero: verify the current state on the actual target OS before designing anything.** **Done, 2026-08-27** — full write-up in `PopNotch/Modules/Media/FINDINGS.md`. The gating is real and enforced on macOS 26.5: MediaRemote loads in-process and every symbol resolves, but the now-playing callback hands a signed PopNotch an empty dictionary while an Apple-signed `swift` CLI gets 17 keys for the same track at the same instant. AppleScript adapters chosen. Do not re-derive this from a competitor appearing to have now-playing working — that is consistent with the Apple-signed-interpreter loophole, which is a different mechanism. Reopen only on a fresh measurement.
 
 ### What ships in v1
 
@@ -171,17 +177,24 @@ The traditional route was the private MediaRemote framework, giving now-playing 
 
 ### Tasks
 
-1. **`MediaSource` protocol.** `isAvailable`, `currentTrack()`, `play`/`pause`/`next`/`previous`, `seek(to:)`. The adapter means an Apple policy change costs one file, not the app.
-2. **Source selection.** More than one player can be running. Decide the rule and write it down: prefer the source that is actively playing; if several are, prefer the most recently started; never silently switch mid-track. This is the media equivalent of Phase 2's arbiter and it needs the same explicitness.
-3. **`AppleScriptMediaSource`** for Music.app and Spotify.app. Needs Automation permission, and the first Apple Event triggers a system prompt. Denied means the module hides itself, not that the app breaks. Apple Events are slow — do not call them on every frame.
-4. **`MediaRemoteSource`** for the universal case, only if task zero says it is available.
-5. **Artwork and accent color.** Extract album art, derive a tint. `CIAreaAverage` is faster than manual averaging. Cache by track identifier — re-deriving a tint on every poll is wasteful and causes visible flicker.
-6. **Scrubbing.** Draggable progress bar that seeks. Interpolate position locally between polls or it stutters.
-7. **Lyrics (optional).** LRCLIB offers free time-synced lyrics with no key. Do not scrape Genius or Musixmatch.
+1. **`MediaSource` protocol.** `isAvailable`, `currentTrack()`, `play`/`pause`/`next`/`previous`, `seek(to:)`. The adapter means an Apple policy change costs one file, not the app. **Done.**
+2. **Source selection.** More than one player can be running. Decide the rule and write it down: prefer the source that is actively playing; if several are, prefer the most recently started; never silently switch mid-track. This is the media equivalent of Phase 2's arbiter and it needs the same explicitness. **Not done** — `send(_:)`/`seek(to:)` take `sources.first { $0.isPlayerRunning }` and `handleUpdate` accepts whichever snapshot arrives last. With one adapter registered that behaves correctly, which is why nothing has caught it. **This is a prerequisite for task 3, not a follow-up to it.**
+3. **`AppleScriptMediaSource`** for Music.app and Spotify.app. Needs Automation permission, and the first Apple Event triggers a system prompt. Denied means the module hides itself, not that the app breaks. Apple Events are slow — do not call them on every frame. **Half done** — `SpotifyAdapter` ships, notification-driven rather than polled. **No Apple Music adapter exists.** Music.app hands over raw artwork bytes instead of a URL, so it is not a copy-paste of the Spotify one.
+4. **`MediaRemoteSource`** for the universal case, only if task zero says it is available. **Closed by task zero.** `MediaRemoteClient.swift` stays in the tree as working, guarded code with an `isAvailable` check that fails safe; it is the slot a future source drops into, not a live path.
+5. **Artwork and accent color.** Extract album art, derive a tint. `CIAreaAverage` is faster than manual averaging. Cache by track identifier — re-deriving a tint on every poll is wasteful and causes visible flicker. **Done** — `ArtworkColor.dominant(in:)` over a 24×24 downsample, recomputed only when the artwork bytes change, never black.
+6. **Scrubbing.** Draggable progress bar that seeks. Interpolate position locally between polls or it stutters. **Done.**
+7. **Lyrics (optional).** LRCLIB offers free time-synced lyrics with no key. Do not scrape Genius or Musixmatch. **Done, and larger than "optional" implied** — timed lyrics, a pinned page, and a full-screen takeover. Endpoint decision now recorded in `PROJECT-CONTEXT.md`, which it was not when this shipped.
+8. **Spotify account features.** OAuth via PKCE from Settings, refresh token in the Keychain, Up Next, like/unlike, official artist metadata. **Done.** Official Web API only — the private API is declined and that decision is recorded.
+
+### Where Phase 4 actually stands
+
+The player is built and in daily use. What is left before the phase can close is not new surface, it is the promise gap: **either write the Apple Music adapter (which forces task 2 first), or change every doc that says "Apple Music and Spotify" to say "Spotify".** Both are honest. Shipping v0.1 with the current docs is not.
 
 ### Done when
 
 Music plays, the notch shows the right artwork and title, transport buttons work in both apps, and switching between Spotify and Music does not confuse the display.
+
+**Unmet as written**, because "both apps" and "switching between Spotify and Music" both require the adapter that does not exist. This criterion is the reason the phase is not closed.
 
 ---
 
@@ -245,6 +258,54 @@ Revisit notarization when downloads justify the cost. Nothing in the codebase ch
 ### Non-goals
 
 No trading, no portfolio tracking, no alerts. This is a glanceable display. Anything that touches an account is a different app with a different threat model.
+
+---
+
+## Feature parity backlog (drafted 2026-08-28)
+
+Written after reviewing a feature analysis of Sapphire. That analysis stays out of this repo — see the competitive-position section in `PROJECT-CONTEXT.md` for why, and for the standing rules that govern this list.
+
+**Read this before using it.** Every "them" column below is what an app claims on its own marketing site, not something measured. This is a list of *candidates*, ranked. It is not a queue, it is not a commitment, and hard rule 7 still applies: one feature per session, large asks get a proposed breakdown first.
+
+**Two claims in that analysis about PopNotch's own roadmap were wrong** and are corrected here: Snap Zones is *not* Phase 5 (Phase 5 is Shipping) and File Shelf is *not* Phase 6 (Phase 6 is Stocks). Neither is scheduled anywhere. Window snapping appears only as a parenthetical in the permissions table in `CLAUDE.md`. Do not treat either as planned work.
+
+### Already ours
+
+| Capability | Status |
+|---|---|
+| Now-playing, artwork, transport, scrubbing | Shipped (Spotify) |
+| Lyrics in the notch | Shipped, timed, with a full-page takeover |
+| Up Next / recommended | Shipped via official Spotify Web API |
+| CPU, memory, disk, GPU, battery monitoring | Shipped. **Absent from Sapphire's public material** — the clearest differentiator PopNotch has, and it already exists |
+
+### Already scheduled
+
+| Capability | Where | Note |
+|---|---|---|
+| Caffeinate | Phase 3, item 6 | ~20 lines via `IOPMAssertionCreateWithName`. The assertion must be released on quit or the Mac never sleeps again |
+| Weather | Phase 3, item 7 | Open-Meteo, keyless. Needs Location |
+| Calendar | Phase 3, item 8 | EventKit. Needs the usage string or the process is killed on request |
+| Clipboard history | Phase 3, item 9 | Still carries its own "consider cutting" note. Nothing here changes that — it is the single feature most likely to make a reviewer distrust a background agent |
+| Stocks / finance | Phase 6 | Theirs is a paid tier. Ours is free, which makes the data licence the whole problem. See Phase 6 |
+
+### Unscheduled candidates, roughly in order of value per unit of pain
+
+1. **Apple Music adapter.** Not on anyone's competitive list, but it is the gap between what the docs promise and what the app does. Closes Phase 4. Do this first.
+2. **20-20-20 eye-break reminders.** A timer and a banner. The live-activity plumbing already exists and is currently unused. Genuinely small, and a real differentiator against a stats-and-media utility.
+3. **Quick notch notes.** Small. Settings already persist as a `Codable` struct — a note field is a `schemaVersion` bump and a migration test.
+4. **Quick mirror camera.** `AVCaptureSession` preview. Small, but it triggers a camera permission prompt on a background agent that has no other reason to want the camera. That is a trust cost, not a code cost.
+5. **File shelf.** Drag files onto the notch, drag them back out. `NSDraggingDestination` on the panel view. Medium, self-contained, no permissions, and it fits the notch metaphor better than most of this list.
+6. **Bluetooth fast connect.** `IOBluetooth`. Medium.
+7. **Snap zones / window tiling.** Accessibility API, and Accessibility is the heaviest permission PopNotch would ask for. Achievable but it is a project, not a session.
+8. **Shortcuts / App Intents.** Medium. Value depends entirely on whether anyone else is using the app yet.
+9. **Notch banner notifications.** Intercepting system notifications is restricted; the routes that exist are fragile. Do not start this without establishing what is actually possible first, the way task zero was done for MediaRemote.
+10. **Menubar customization.** Medium-hard, and it puts PopNotch in a crowded category against dedicated apps.
+
+### Not candidates
+
+These are on their list and stay off ours, on top of everything already in *Deliberately out of scope* below: **Brightness Boost** (undocumented display-pipeline writes), **Face ID unlock**, **per-app volume and EQ**, **battery charge limiting**, **Android Nearby Share**, and every AI feature (**agent, voice, circle-to-search**). The AI ones share one blocker that is not technical: they cost money per user per month, and PopNotch is free and MIT. That is a business-model decision, not an engineering one, and it is not open.
+
+**Spotify's private API stays declined** regardless of what it unlocks. It rides on the user's own session, it risks their account, and the decision is recorded in `PROJECT-CONTEXT.md`.
 
 ---
 
