@@ -39,6 +39,10 @@ final class MediaModule: NotchModule {
     private(set) var nowPlaying: NowPlaying?
     /// Synced lyrics for the current track, nil while absent or unfetched.
     private(set) var lyrics: [LyricsLine]?
+    /// Accent pulled from the current artwork; views fall back to the fixed
+    /// peach when nil (colorless art, or artwork not yet loaded).
+    private(set) var artworkAccent: Color?
+    @ObservationIgnored private var accentSourceData: Data?
 
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private let lyricsService = LyricsService()
@@ -61,6 +65,13 @@ final class MediaModule: NotchModule {
 
     private func handleUpdate(_ snapshot: NowPlaying?) {
         nowPlaying = snapshot
+
+        // Recompute the accent only when the artwork bytes actually change —
+        // a 24x24 downsample pass, cheap, but not worth repeating per tick.
+        if snapshot?.artworkData != accentSourceData {
+            accentSourceData = snapshot?.artworkData
+            artworkAccent = snapshot?.artworkData.flatMap(ArtworkColor.dominant(in:))
+        }
 
         let hasPresence = snapshot?.hasContent == true
         if hasPresence != hadPresence {

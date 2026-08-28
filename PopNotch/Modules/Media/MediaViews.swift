@@ -35,11 +35,6 @@ struct MediaExpandedView: View {
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
                     ArtworkThumb(data: playing.artworkData, side: 52, corner: 10)
-                        // Soft outer glow, expanded state only (the tiny wing
-                        // thumb stays flat). Two shadows: a tight warm halo
-                        // plus a wide faint bloom.
-                        .shadow(color: .mediaAccent.opacity(0.5), radius: 4)
-                        .shadow(color: .mediaAccent.opacity(0.25), radius: 12)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(playing.title ?? "—")
                             .font(.system(size: 14, weight: .semibold))
@@ -97,6 +92,9 @@ struct MediaExpandedView: View {
 private struct MediaProgressBar: View {
     let module: MediaModule
 
+    /// Artwork-derived (never black by construction), peach fallback.
+    private var accent: Color { module.artworkAccent ?? .mediaAccent }
+
     /// Non-nil while the user is dragging: their finger owns the bar and
     /// live updates keep off it until release.
     @State private var scrubFraction: Double?
@@ -129,9 +127,9 @@ private struct MediaProgressBar: View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule().fill(.white.opacity(0.22))
-                Capsule().fill(Color.mediaAccent)
+                Capsule().fill(accent)
                     .frame(width: max(4, geo.size.width * fraction))
-                    .shadow(color: .mediaAccent.opacity(0.6), radius: 4)
+                    .shadow(color: accent.opacity(0.6), radius: 4)
                 // No playhead dot (tried, user-rejected); the whole track
                 // drags, so the handle was decoration.
             }
@@ -178,7 +176,7 @@ private struct MediaLyricsView: View {
                 let current = LyricsParser.currentLine(at: elapsed, in: lines)
                 Text(current?.text ?? "♪")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.mediaAccent)
+                    .foregroundStyle(module.artworkAccent ?? Color.mediaAccent)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
                     .animation(.easeInOut(duration: 0.25), value: current?.time)
@@ -216,27 +214,29 @@ struct MediaWingWaveform: View {
 
     var body: some View {
         let playing = module.nowPlaying?.isPlaying == true
+        let accent = module.artworkAccent ?? .mediaAccent
         HStack(spacing: 2.5) {
             ForEach(0..<4, id: \.self) { index in
-                WaveBar(index: index, playing: playing)
+                WaveBar(index: index, playing: playing, color: accent)
             }
         }
         // Fixed height so bars grow around their center instead of pushing
         // the row's layout; intrinsic width so alignment places it.
         .frame(height: 14)
-        .shadow(color: .mediaAccent.opacity(0.5), radius: 3)
+        .shadow(color: accent.opacity(0.5), radius: 3)
     }
 }
 
 private struct WaveBar: View {
     let index: Int
     let playing: Bool
+    let color: Color
 
     @State private var lifted = false
 
     var body: some View {
         Capsule()
-            .fill(Color.mediaAccent.opacity(0.95))
+            .fill(color.opacity(0.95))
             .frame(width: 2.5, height: playing ? (lifted ? 12 : 5) : 4)
             .onAppear { apply(playing) }
             .onChange(of: playing) { _, nowPlaying in apply(nowPlaying) }
