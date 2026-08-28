@@ -91,7 +91,11 @@ struct MediaWingWaveform: View {
 
     var body: some View {
         let playing = module.nowPlaying?.isPlaying == true
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !playing)) { context in
+        // No minimumInterval: the hint quantized updates to a visible stutter
+        // (user-observed "5 to 10 FPS") in this borderless panel. Native
+        // refresh is smooth, costs nothing measurable for four capsules, and
+        // still pauses completely with playback.
+        TimelineView(.animation(paused: !playing)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             HStack(spacing: 2.5) {
                 ForEach(0..<Self.barCount, id: \.self) { index in
@@ -110,8 +114,8 @@ struct MediaWingWaveform: View {
         // abs(), whose corner at zero reads as a harsh bounce — at gentle
         // frequencies, with a modest swing. 30fps so motion has no visible
         // stepping.
-        let primary = sin(time * (2.4 + Double(index) * 0.55) + Double(index) * 2.1)
-        let secondary = sin(time * 1.6 + Double(index) * 1.1)
+        let primary = sin(time * (3.1 + Double(index) * 0.6) + Double(index) * 2.1)
+        let secondary = sin(time * 2.0 + Double(index) * 1.1)
         let level = 0.5 + 0.35 * primary + 0.15 * secondary   // 0...1, smooth
         return 5 + 7 * level                                   // 5...12pt
     }
