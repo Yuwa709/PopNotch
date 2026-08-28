@@ -164,6 +164,27 @@ final class SpotifyAdapter: MediaSource {
 
     // MARK: - Commands
 
+    func seek(to seconds: TimeInterval) {
+        guard isPlayerRunning else { return }
+        // Integer seconds sidestep locale decimal-separator issues in the
+        // script source; nobody scrubs to sub-second precision by hand.
+        let target = max(0, Int(seconds))
+        if case .failure(let failure) = AppleScriptRunner.run(
+            "tell application \"Spotify\" to set player position to \(target)"
+        ) {
+            if failure.isPermissionDenied { permissionDenied = true }
+            return
+        }
+        // Optimistic: reflect the jump immediately rather than waiting for
+        // Spotify's next notification.
+        if var snapshot = lastSnapshot {
+            snapshot.elapsed = TimeInterval(target)
+            snapshot.capturedAt = Date()
+            lastSnapshot = snapshot
+            onUpdate?(snapshot)
+        }
+    }
+
     func send(_ command: MediaCommand) {
         guard isPlayerRunning else { return }
         let verb: String

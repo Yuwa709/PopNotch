@@ -76,6 +76,10 @@ final class MediaModule: NotchModule {
         sources.first { $0.isPlayerRunning }?.send(command)
     }
 
+    func seek(to seconds: TimeInterval) {
+        sources.first { $0.isPlayerRunning }?.seek(to: seconds)
+    }
+
     // MARK: - NotchModule
 
     func makeCompactView() -> AnyView { AnyView(MediaCompactView(module: self)) }

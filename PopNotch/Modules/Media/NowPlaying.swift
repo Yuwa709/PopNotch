@@ -24,4 +24,32 @@ struct NowPlaying: Equatable {
     var hasContent: Bool {
         title != nil || artist != nil || artworkData != nil
     }
+
+    /// When `elapsed` was captured, so it can be projected forward while
+    /// playing instead of freezing between player updates.
+    var capturedAt: Date = Date()
+
+    /// `elapsed` projected to `date`: advances while playing, holds while
+    /// paused, never runs past the duration.
+    func elapsedNow(at date: Date = Date()) -> TimeInterval? {
+        guard let elapsed else { return nil }
+        guard isPlaying else { return elapsed }
+        let projected = elapsed + date.timeIntervalSince(capturedAt)
+        guard let duration else { return projected }
+        return min(projected, duration)
+    }
+
+    /// capturedAt is bookkeeping, not identity: two snapshots of the same
+    /// player state taken at different moments are equal.
+    static func == (lhs: NowPlaying, rhs: NowPlaying) -> Bool {
+        lhs.title == rhs.title
+            && lhs.artist == rhs.artist
+            && lhs.album == rhs.album
+            && lhs.artworkData == rhs.artworkData
+            && lhs.artworkIdentifier == rhs.artworkIdentifier
+            && lhs.duration == rhs.duration
+            && lhs.elapsed == rhs.elapsed
+            && lhs.isPlaying == rhs.isPlaying
+            && lhs.sourceBundleID == rhs.sourceBundleID
+    }
 }

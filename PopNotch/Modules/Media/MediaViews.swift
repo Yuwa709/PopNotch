@@ -18,28 +18,33 @@ struct MediaCompactView: View {
     }
 }
 
-/// The open-notch view: artwork, title/artist, transport controls.
+/// The open-notch player: artwork and titles up top, a scrubbable progress
+/// bar with elapsed/remaining times, transport controls beneath.
 struct MediaExpandedView: View {
     let module: MediaModule
 
     var body: some View {
         if let playing = module.nowPlaying, playing.hasContent {
-            HStack(spacing: 12) {
-                ArtworkThumb(data: playing.artworkData, side: 48, corner: 8)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(playing.title ?? "—")
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                    Text(playing.artist ?? "")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.6))
-                        .lineLimit(1)
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    ArtworkThumb(data: playing.artworkData, side: 52, corner: 10)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(playing.title ?? "—")
+                            .font(.system(size: 14, weight: .semibold))
+                            .lineLimit(1)
+                        Text(playing.artist ?? "")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .lineLimit(1)
+                    }
+                    // Bounded: the panel sizes itself to measured content;
+                    // an unbounded one-line title would balloon it.
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                // Bounded: the panel sizes itself to measured content, and
-                // an unbounded one-line title would balloon the measurement.
-                .frame(minWidth: 70, maxWidth: 180, alignment: .leading)
+                MediaProgressBar(module: module)
                 controls(isPlaying: playing.isPlaying)
             }
+            .frame(width: 296)
             .foregroundStyle(.white)
         } else if module.permissionDenied {
             // The tested denied path: one line, no re-prompt loop.
@@ -50,12 +55,12 @@ struct MediaExpandedView: View {
     }
 
     private func controls(isPlaying: Bool) -> some View {
-        HStack(spacing: 10) {
-            transportButton("backward.fill", size: 11) { module.send(.previousTrack) }
-            transportButton(isPlaying ? "pause.fill" : "play.fill", size: 15) {
+        HStack(spacing: 26) {
+            transportButton("backward.fill", size: 13) { module.send(.previousTrack) }
+            transportButton(isPlaying ? "pause.fill" : "play.fill", size: 18) {
                 module.send(.togglePlayPause)
             }
-            transportButton("forward.fill", size: 11) { module.send(.nextTrack) }
+            transportButton("forward.fill", size: 13) { module.send(.nextTrack) }
         }
     }
 
@@ -63,11 +68,82 @@ struct MediaExpandedView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .semibold))
-                .frame(width: 24, height: 24)
+                .frame(width: 30, height: 26)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
+}
+
+/// Elapsed — track — remaining. The fill advances once a second while the
+/// panel is open; dragging scrubs and releases into a seek. The 1s tick
+/// exists only while this view does, i.e. only while the notch is expanded.
+private struct MediaProgressBar: View {
+    let module: MediaModule
+
+    /// Non-nil while the user is dragging: their finger owns the bar and
+    /// live updates keep off it until release.
+    @State private var scrubFraction: Double?
+
+    var body: some View {
+        let snapshot = module.nowPlaying
+        let duration = snapshot?.duration ?? 0
+        if duration > 0 {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let elapsed = scrubFraction.map { $0 * duration }
+                    ?? min(snapshot?.elapsedNow(at: context.date) ?? 0, duration)
+                HStack(spacing: 8) {
+                    timeLabel(format(elapsed))
+                    track(fraction: duration > 0 ? elapsed / duration : 0, duration: duration)
+                    timeLabel("-" + format(max(0, duration - elapsed)))
+                }
+            }
+        }
+    }
+
+    private func timeLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .monospacedDigit()
+            .foregroundStyle(.white.opacity(0.65))
+            .frame(width: 34)
+    }
+
+    private func track(fraction: Double, duration: TimeInterval) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.25))
+                Capsule().fill(.white)
+                    .frame(width: max(4, geo.size.width * fraction))
+            }
+            .frame(height: 4)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        scrubFraction = (value.location.x / geo.size.width).clamped01()
+                    }
+                    .onEnded { value in
+                        let f = (value.location.x / geo.size.width).clamped01()
+                        module.seek(to: f * duration)
+                        // The adapter publishes the jump optimistically, so
+                        // the bar holds position on release.
+                        scrubFraction = nil
+                    }
+            )
+        }
+        .frame(height: 14)
+    }
+
+    private func format(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+private extension Double {
+    func clamped01() -> Double { Swift.min(1, Swift.max(0, self)) }
 }
 
 /// Left wing: album art beside the housing.

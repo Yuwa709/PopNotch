@@ -37,6 +37,9 @@ protocol MediaSource: AnyObject {
     func refresh()
 
     func send(_ command: MediaCommand)
+
+    /// Jump playback to an absolute position, for scrubbing.
+    func seek(to seconds: TimeInterval)
 }
 
 /// Runs an AppleScript source and reports the result or the error code.
