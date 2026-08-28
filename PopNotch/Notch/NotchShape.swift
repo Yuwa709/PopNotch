@@ -103,7 +103,7 @@ struct NotchOverlayView: View {
                 // keep in lockstep with the coordinator's measuring probe.
                 content
                     .padding(.top, neckHeight + 4)
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, 52)
                     .padding(.bottom, 14)
             }
         }
