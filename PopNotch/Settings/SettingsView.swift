@@ -10,12 +10,12 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
-            GeneralSettingsTab()
+            GeneralSettingsTab(coordinator: coordinator, settings: settings)
                 .tabItem { Label("General", systemImage: "gearshape") }
             ModulesSettingsTab(coordinator: coordinator, settings: settings)
                 .tabItem { Label("Modules", systemImage: "square.stack") }
         }
-        .frame(width: 420, height: 220)
+        .frame(width: 440, height: 250)
     }
 }
 
@@ -55,6 +55,9 @@ struct GeneralSettingsTab: View {
 
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "Settings")
 
+    let coordinator: NotchCoordinator
+    @Bindable var settings: SettingsStore
+
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var registrationError: String?
 
@@ -69,9 +72,27 @@ struct GeneralSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             }
+
+            LabeledContent("Hover delay") {
+                HStack(spacing: 10) {
+                    Slider(value: hoverDelayBinding, in: 0...1, step: 0.05)
+                    Text("\(Int((settings.settings.hoverEnterDelay * 1000).rounded())) ms")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 58, alignment: .trailing)
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// How long the cursor must dwell before the notch opens. Applies live.
+    private var hoverDelayBinding: Binding<TimeInterval> {
+        Binding(
+            get: { settings.settings.hoverEnterDelay },
+            set: { coordinator.setHoverDelay($0) }
+        )
     }
 
     private func apply(_ enable: Bool) {

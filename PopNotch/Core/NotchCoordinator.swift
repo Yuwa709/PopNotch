@@ -102,6 +102,12 @@ final class NotchCoordinator {
         arbiter.requestLiveActivity(request)
     }
 
+    /// From Settings: persists and applies to the live panel immediately.
+    func setHoverDelay(_ delay: TimeInterval) {
+        settings.update { $0.hoverEnterDelay = delay }
+        panel?.hoverEnterDelay = delay
+    }
+
     // MARK: - Screen placement
 
     @objc private func screenParametersDidChange(_ notification: Notification) {

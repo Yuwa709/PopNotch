@@ -243,15 +243,39 @@ final class NotchPanel: NSPanel {
             return
         }
 
-        NSAnimationContext.runAnimationGroup { context in
-            // Opening gets the spring feel — a slight overshoot that settles
-            // (control-point y > 1). Closing and the idle/compact wing
-            // transitions ease out with no bounce so they read as tidy.
-            context.duration = state == .expanded ? 0.32 : 0.22
-            context.timingFunction = state == .expanded
-                ? CAMediaTimingFunction(controlPoints: 0.30, 1.35, 0.40, 1.0)
-                : CAMediaTimingFunction(controlPoints: 0.30, 0.90, 0.55, 1.0)
-            animator().setFrame(target, display: true)
+        if state == .expanded {
+            // Two-stage bounce: overshoot past the target in BOTH axes, then
+            // settle back. Explicit stages because window-frame animation
+            // clamps overshooting timing curves (control-point y > 1 was
+            // silently flattened — user never felt the bounce it promised).
+            // The sideways component of the overshoot is what makes opening
+            // read as blooming outward, not just dropping down.
+            var overshoot = target
+            overshoot.origin.x -= 7
+            overshoot.size.width += 14
+            overshoot.origin.y -= 9
+            overshoot.size.height += 9
+
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.21
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.90, 0.45, 1.0)
+                self.animator().setFrame(overshoot, display: true)
+            }, completionHandler: { [weak self] in
+                guard let self, self.currentState == .expanded else { return }
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.13
+                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    self.animator().setFrame(target, display: true)
+                }
+            })
+        } else {
+            NSAnimationContext.runAnimationGroup { context in
+                // Closing and wing transitions ease out with no bounce so
+                // they read as tidy.
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.30, 0.90, 0.55, 1.0)
+                animator().setFrame(target, display: true)
+            }
         }
         Self.logger.notice("State \(state.rawValue, privacy: .public) at \(NSStringFromRect(target), privacy: .public)")
     }
