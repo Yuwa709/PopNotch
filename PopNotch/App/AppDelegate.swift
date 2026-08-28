@@ -11,13 +11,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let settings = SettingsStore()
     private(set) lazy var coordinator = NotchCoordinator(settings: settings)
+    private let statsService = SystemStatsService()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator.start()
 
-        // Modules register here, one line each. Phase 3 and 4 add real ones;
-        // until then the notch shows its silhouette and nothing else.
-        Self.logger.notice("Launched with \(0, privacy: .public) modules registered")
+        // Modules register here, one line each — the Phase 2 goal made real.
+        let modules: [any NotchModule] = [
+            SystemStatsModule(service: statsService)
+        ]
+        for module in modules {
+            module.isEnabled = settings.isEnabled(module.id, default: true)
+            coordinator.register(module)
+        }
+
+        Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
     }
 
     func applicationWillTerminate(_ notification: Notification) {

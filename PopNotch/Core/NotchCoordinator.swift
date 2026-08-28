@@ -119,6 +119,9 @@ final class NotchCoordinator {
 
     private func hoverChanged(_ hovering: Bool) {
         isHovered = hovering
+        // Content depends on expansion, not just presentation: an expanded
+        // notch shows each module's richer view.
+        renderContent()
         applyExpansion()
     }
 
@@ -147,13 +150,19 @@ final class NotchCoordinator {
         panel.setContent(content(for: arbiter.presentation), neckHeight: neck)
     }
 
-    /// Builds the SwiftUI content for a presentation. Compact views sit side
-    /// by side in standby; a live activity gets the notch to itself.
+    /// Builds the SwiftUI content for the current state.
+    ///
+    /// In standby the modules sit side by side, showing their compact views
+    /// while collapsed and their expanded views once the notch opens — the
+    /// collapsed panel is exactly notch-sized, so anything drawn there is
+    /// hidden behind the camera housing anyway. A live activity gets the
+    /// notch to itself.
     private func content(for presentation: NotchPresentation) -> AnyView? {
         switch presentation {
         case .standby(let ids):
-            let views = ids.compactMap { arbiter.module(for: $0)?.makeCompactView() }
-            guard !views.isEmpty else { return nil }
+            let modules = ids.compactMap { arbiter.module(for: $0) }
+            guard !modules.isEmpty else { return nil }
+            let views = modules.map { isHovered ? $0.makeExpandedView() : $0.makeCompactView() }
             return AnyView(
                 HStack(spacing: 12) {
                     ForEach(Array(views.enumerated()), id: \.offset) { $0.element }

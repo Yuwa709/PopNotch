@@ -10,6 +10,11 @@ Read this when starting a new phase. Do not read it for routine tasks.
 
 - **Phase 0:** complete (project created, git initialized, CLAUDE.md in place)
 - **Phase 0.5:** complete — project converted to Mac-only, sandbox off, `LSUIElement` set, usage strings in place
+- **Phase 3:** core stats shipped; permission-gated extras (weather, calendar, clipboard, caffeinate) not started
+  - `SystemStatsService` samples CPU, memory, disk, GPU, battery on one 2s timer; all IOKit/Mach interop in one place
+  - Timer runs only while a stats module is on screen, and suspends while the display sleeps
+  - GPU and battery IOKit keys verified against this hardware, not assumed
+  - **Pending:** the two-week daily-use soak and the idle-CPU measurement the phase closes on
 - **Phase 2:** complete — "done when" met
   - `NotchModule` protocol, `AppSettings` + `SettingsStore`, `NotchArbiter`, `NotchCoordinator`, dummy modules, 34 passing tests
   - Arbiter is AppKit-free by design, so arbitration is verifiable without a screen; suite proven non-vacuous by mutation
