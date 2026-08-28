@@ -57,6 +57,7 @@ struct MediaExpandedView: View {
                     MediaWingWaveform(module: module)
                 }
                 MediaProgressBar(module: module)
+                MediaLyricsView(module: module)
                 controls(isPlaying: playing.isPlaying)
             }
             .frame(width: 296)
@@ -162,6 +163,29 @@ private struct MediaProgressBar: View {
 
 private extension Double {
     func clamped01() -> Double { Swift.min(1, Swift.max(0, self)) }
+}
+
+/// The line being sung, under the progress bar in the accent — like the
+/// reference design. Absent entirely (no reserved space) when the track has
+/// no synced lyrics. The half-second tick exists only while this view does.
+private struct MediaLyricsView: View {
+    let module: MediaModule
+
+    var body: some View {
+        if let lines = module.lyrics, !lines.isEmpty {
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                let elapsed = module.nowPlaying?.elapsedNow(at: context.date) ?? 0
+                let current = LyricsParser.currentLine(at: elapsed, in: lines)
+                Text(current?.text ?? "♪")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.mediaAccent)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                    .animation(.easeInOut(duration: 0.25), value: current?.time)
+            }
+            .frame(height: 14)
+        }
+    }
 }
 
 /// Left wing: album art beside the housing.

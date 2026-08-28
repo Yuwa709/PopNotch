@@ -32,8 +32,16 @@ final class MediaModule: NotchModule {
     /// *changes* do not fire it; the wing views observe those themselves.
     @ObservationIgnored var onPresenceChange: (() -> Void)?
 
+    /// Fires when expanded-content height changes shape (lyrics appearing or
+    /// clearing), so the coordinator can re-measure the open panel.
+    @ObservationIgnored var onContentReflow: (() -> Void)?
+
     private(set) var nowPlaying: NowPlaying?
+    /// Synced lyrics for the current track, nil while absent or unfetched.
+    private(set) var lyrics: [LyricsLine]?
+
     @ObservationIgnored private let sources: [MediaSource]
+    @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private var lastTrackKey: String?
     @ObservationIgnored private var hadPresence = false
 
@@ -69,6 +77,14 @@ final class MediaModule: NotchModule {
         // was experienced as a glitch — the notch "expands for a second and
         // goes back" uninvited. Off until it can be a designed banner; the
         // live-activity plumbing stays for whatever earns it next.
+
+        // New track: clear old lyrics (shrinking the open panel if showing)
+        // and fetch this track's. The service caches, misses included.
+        if lyrics != nil {
+            lyrics = nil
+            onContentReflow?()
+        }
+        fetchLyrics(for: snapshot, trackKey: key)
     }
 
     func send(_ command: MediaCommand) {
@@ -78,6 +94,17 @@ final class MediaModule: NotchModule {
 
     func seek(to seconds: TimeInterval) {
         sources.first { $0.isPlayerRunning }?.seek(to: seconds)
+    }
+
+    private func fetchLyrics(for snapshot: NowPlaying, trackKey: String) {
+        guard let artist = snapshot.artist, let title = snapshot.title else { return }
+        lyricsService.fetch(artist: artist, title: title, duration: snapshot.duration, key: trackKey) { [weak self] lines in
+            guard let self, self.lastTrackKey == trackKey else { return } // stale reply
+            self.lyrics = lines
+            if lines != nil {
+                self.onContentReflow?()
+            }
+        }
     }
 
     // MARK: - NotchModule

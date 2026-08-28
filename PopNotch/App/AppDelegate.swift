@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         media.onPresenceChange = { [weak self] in
             self?.coordinator.refreshPresentation()
         }
+        media.onContentReflow = { [weak self] in
+            self?.coordinator.refreshPresentation()
+        }
         let modules: [any NotchModule] = [
             media,
             SystemStatsModule(service: statsService)
