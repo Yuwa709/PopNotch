@@ -204,7 +204,11 @@ final class NotchPanel: NSPanel {
         let minWidth = base.width + (leadingWingWidth + 24) * 2
         let width = (min(max(contentSize.width, minWidth), 540)).rounded(.up)
         let minHeight = base.height + 56
-        let height = (min(max(contentSize.height, minHeight), 300)).rounded(.up)
+        // Ceiling raised from 300: the lyrics takeover needs more, and
+        // clamping below the content's real height compressed it upward
+        // (badge slid under the bezel) and spilled it past the rounded
+        // silhouette, where the square window edge cut it into a hard box.
+        let height = (min(max(contentSize.height, minHeight), 460)).rounded(.up)
         return NSRect(
             x: (screen.frame.midX + opticalCenterOffset - width / 2).rounded(),
             y: base.maxY - height,

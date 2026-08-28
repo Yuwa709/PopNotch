@@ -278,7 +278,6 @@ struct MediaFullLyricsView: View {
                 }
                 Spacer()
             }
-            .padding(.top, 10)
 
             if let lines = module.lyrics, !lines.isEmpty {
                 TimelineView(.periodic(from: .now, by: 0.5)) { context in
@@ -302,7 +301,7 @@ struct MediaFullLyricsView: View {
                                         .id(index)
                                 }
                             }
-                            .padding(.vertical, 90)
+                            .padding(.vertical, 70)
                         }
                         .onChange(of: currentIndex) { _, newIndex in
                             guard let newIndex else { return }
@@ -317,7 +316,9 @@ struct MediaFullLyricsView: View {
                         }
                     }
                 }
-                .frame(height: 250)
+                // Measured off the reference: its lyrics region is roughly
+                // 155pt, giving a ~280pt card rather than a 380pt slab.
+                .frame(height: 160)
                 .mask(
                     // Fade the edges so lines melt in and out, per the
                     // reference screenshot.
