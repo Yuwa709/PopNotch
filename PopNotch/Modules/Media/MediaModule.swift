@@ -1,0 +1,87 @@
+import SwiftUI
+import Observation
+import os
+
+/// Now playing in the notch — the reason the app exists.
+///
+/// Owns the player adapters; the active snapshot is whichever source
+/// reported most recently. Sources observe by push (no timers), so the
+/// module hears track changes even while not displayed and answers them by
+/// requesting a live activity: the notch pops open with the new song.
+@MainActor
+@Observable
+final class MediaModule: NotchModule {
+
+    @ObservationIgnored
+    private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "Media")
+
+    /// Permanent settings key; never rename.
+    @ObservationIgnored let id: ModuleID = "media"
+    @ObservationIgnored let displayName = "Now Playing"
+    @ObservationIgnored let priority: ModulePriority = .elevated
+    @ObservationIgnored var isEnabled = true
+
+    /// Seconds the notch stays open on a track change.
+    @ObservationIgnored static let popDuration: TimeInterval = 4
+
+    /// Wired by AppDelegate to the coordinator.
+    @ObservationIgnored var onLiveActivityRequest: ((LiveActivityRequest) -> Void)?
+
+    private(set) var nowPlaying: NowPlaying?
+    @ObservationIgnored private let sources: [MediaSource]
+    @ObservationIgnored private var lastTrackKey: String?
+
+    var permissionDenied: Bool {
+        sources.allSatisfy(\.permissionDenied)
+    }
+
+    init(sources: [MediaSource]) {
+        self.sources = sources
+        for source in sources {
+            source.onUpdate = { [weak self] snapshot in
+                self?.handleUpdate(snapshot)
+            }
+            source.startObserving()
+        }
+    }
+
+    private func handleUpdate(_ snapshot: NowPlaying?) {
+        nowPlaying = snapshot
+
+        guard let snapshot, snapshot.hasContent else { return }
+        let key = snapshot.artworkIdentifier ?? "\(snapshot.title ?? "")|\(snapshot.artist ?? "")"
+        guard key != lastTrackKey else { return }
+
+        let isFirstSighting = lastTrackKey == nil
+        lastTrackKey = key
+        // The launch-time snapshot is not news; popping the notch for it
+        // would read as random. Only actual changes announce themselves.
+        if !isFirstSighting {
+            Self.logger.notice("Track change; requesting live activity")
+            onLiveActivityRequest?(LiveActivityRequest(
+                moduleID: id, priority: priority, duration: Self.popDuration
+            ))
+        }
+    }
+
+    func send(_ command: MediaCommand) {
+        // v1: one adapter. With several, route to the one that is running.
+        sources.first { $0.isPlayerRunning }?.send(command)
+    }
+
+    // MARK: - NotchModule
+
+    func makeCompactView() -> AnyView { AnyView(MediaCompactView(module: self)) }
+    func makeExpandedView() -> AnyView { AnyView(MediaExpandedView(module: self)) }
+
+    func didBecomeVisible() {
+        // Pull once so the first hover after launch has data and artwork.
+        // This is what triggers the one-time Automation permission prompt.
+        sources.forEach { $0.refresh() }
+    }
+
+    func didResignVisible() {
+        // Observation is push-based with no timers, so it stays on — that is
+        // how track changes can pop the notch while we are off screen.
+    }
+}

@@ -162,7 +162,19 @@ final class NotchCoordinator {
         case .standby(let ids):
             let modules = ids.compactMap { arbiter.module(for: $0) }
             guard !modules.isEmpty else { return nil }
-            let views = modules.map { isHovered ? $0.makeExpandedView() : $0.makeCompactView() }
+            if isHovered {
+                // Stacked, not side by side: several expanded modules in a row
+                // overflow the panel and truncate (observed with media plus
+                // five stats). The notch grows downward, so height is the
+                // dimension there is room in.
+                let views = modules.map { $0.makeExpandedView() }
+                return AnyView(
+                    VStack(spacing: 8) {
+                        ForEach(Array(views.enumerated()), id: \.offset) { $0.element }
+                    }
+                )
+            }
+            let views = modules.map { $0.makeCompactView() }
             return AnyView(
                 HStack(spacing: 12) {
                     ForEach(Array(views.enumerated()), id: \.offset) { $0.element }

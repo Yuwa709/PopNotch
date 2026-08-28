@@ -17,7 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.start()
 
         // Modules register here, one line each — the Phase 2 goal made real.
+        let media = MediaModule(sources: [SpotifyAdapter()])
+        media.onLiveActivityRequest = { [weak self] request in
+            self?.coordinator.requestLiveActivity(request)
+        }
         let modules: [any NotchModule] = [
+            media,
             SystemStatsModule(service: statsService)
         ]
         for module in modules {

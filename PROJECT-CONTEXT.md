@@ -63,6 +63,18 @@ Settled. These replace what used to be open questions.
 
 ---
 
+## Network endpoint decisions (hard rule 6)
+
+Rule 6 requires every added network call to be an explicit decision recorded here.
+
+| Endpoint | Feature | Decided | Rationale |
+|---|---|---|---|
+| Spotify's artwork CDN, via the exact URL `artwork url of current track` returns | Media: album art for Spotify | 2026-08-27 | Spotify's scripting interface exposes artwork only as a URL (Apple Music hands over raw bytes; Spotify does not). Without the fetch, Spotify tracks have no thumbnail — the feature's centrepiece. Plain GET of an image Spotify itself designated; https enforced; fetched once per track and cached by URL. Nothing about the user is sent |
+
+MediaRemote would have avoided this call entirely (it delivers artwork bytes), but it is caller-gated — see `PopNotch/Modules/Media/FINDINGS.md`.
+
+---
+
 ## What this app is
 
 A native macOS background agent that draws an interactive overlay around the MacBook camera notch. It expands on hover to show media controls, system stats, and market data.

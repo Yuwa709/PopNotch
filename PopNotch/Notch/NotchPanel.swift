@@ -130,8 +130,12 @@ final class NotchPanel: NSPanel {
     /// modules dictate real content size.
     static func expandedRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
-        let sideExtra: CGFloat = 48
-        let bottomExtra: CGFloat = 64
+        // Sized to hold the media row (artwork + text + transport controls)
+        // stacked above the stats row. Still a placeholder in the sense that
+        // content dictates it, but now measured against real content rather
+        // than guessed.
+        let sideExtra: CGFloat = 64
+        let bottomExtra: CGFloat = 104
         return NSRect(
             x: base.minX - sideExtra,
             y: base.minY - bottomExtra,
