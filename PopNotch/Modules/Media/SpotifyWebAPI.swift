@@ -55,14 +55,14 @@ final class SpotifyWebAPI {
 
     // MARK: - Decoding (internal for tests)
 
-    struct QueueResponse: Decodable {
+    nonisolated struct QueueResponse: Decodable {
         let queue: [QueueTrack]
     }
-    struct QueueTrack: Decodable {
+    nonisolated struct QueueTrack: Decodable {
         let name: String
         let artists: [QueueArtist]
     }
-    struct QueueArtist: Decodable {
+    nonisolated struct QueueArtist: Decodable {
         let name: String
     }
 
@@ -77,10 +77,10 @@ final class SpotifyWebAPI {
 
     // MARK: - Playback context decoding
 
-    struct PlayerStateResponse: Decodable {
+    nonisolated struct PlayerStateResponse: Decodable {
         let context: PlaybackContext?
     }
-    struct PlaybackContext: Decodable {
+    nonisolated struct PlaybackContext: Decodable {
         let uri: String?
     }
 
@@ -96,21 +96,21 @@ final class SpotifyWebAPI {
 
     // MARK: - Track and artist decoding
 
-    struct TrackResponse: Decodable {
+    nonisolated struct TrackResponse: Decodable {
         let popularity: Int?
         let artists: [TrackArtist]
     }
-    struct TrackArtist: Decodable {
+    nonisolated struct TrackArtist: Decodable {
         let id: String
     }
-    struct ArtistResponse: Decodable {
+    nonisolated struct ArtistResponse: Decodable {
         let name: String
         let followers: Followers?
         let images: [ArtistImage]?
         let genres: [String]?
     }
-    struct Followers: Decodable { let total: Int? }
-    struct ArtistImage: Decodable { let url: String; let width: Int? }
+    nonisolated struct Followers: Decodable { let total: Int? }
+    nonisolated struct ArtistImage: Decodable { let url: String; let width: Int? }
 
     nonisolated static func trackDetail(fromJSON data: Data) -> (popularity: Int?, artistID: String)? {
         guard let decoded = try? JSONDecoder().decode(TrackResponse.self, from: data),
