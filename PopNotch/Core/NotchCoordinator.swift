@@ -298,7 +298,7 @@ final class NotchCoordinator {
 
         guard let remaining = arbiter.timeUntilExpiry else { return }
         expiryTimer = Timer.scheduledTimer(withTimeInterval: remaining, repeats: false) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.arbiter.tick()
                 // tick() may promote a queued activity; if so its own expiry
