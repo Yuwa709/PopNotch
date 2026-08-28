@@ -48,6 +48,10 @@ final class MediaModule: NotchModule {
     private(set) var upNext: SpotifyUpNext?
     private(set) var likedCurrent: Bool?
 
+    /// When true the expanded notch shows full scrolling lyrics instead of
+    /// the player, and stays open regardless of hover until dismissed.
+    private(set) var showFullLyrics = false
+
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private let account: SpotifyAccount?
@@ -99,8 +103,9 @@ final class MediaModule: NotchModule {
         // goes back" uninvited. Off until it can be a designed banner; the
         // live-activity plumbing stays for whatever earns it next.
 
-        // New track: clear old lyrics (shrinking the open panel if showing)
-        // and fetch this track's. The service caches, misses included.
+        // New track: leave the full-lyrics takeover, clear old lyrics
+        // (shrinking the open panel if showing), and fetch this track's.
+        showFullLyrics = false
         if lyrics != nil {
             lyrics = nil
             onContentReflow?()
@@ -174,6 +179,26 @@ final class MediaModule: NotchModule {
             self.likedCurrent = liked
         }
     }
+
+    /// Opens the current track in the Spotify app. This activates Spotify —
+    /// permitted because it is a direct response to the user tapping the
+    /// artwork, not a hover (hard rule 4 protects against hover-stealing).
+    func openInSpotify() {
+        guard let uri = nowPlaying?.artworkIdentifier,
+              let url = URL(string: uri) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Toggles the full-lyrics takeover. Pins the notch open while on.
+    func toggleFullLyrics() {
+        guard lyrics?.isEmpty == false else { return }
+        showFullLyrics.toggle()
+        onContentReflow?()
+    }
+
+    /// The coordinator keeps the panel expanded while this holds, so the
+    /// lyrics view does not vanish when the cursor leaves.
+    var wantsPinnedExpansion: Bool { showFullLyrics }
 
     func toggleLike() {
         guard let webAPI, let trackID = currentTrackID else { return }

@@ -31,10 +31,16 @@ struct MediaExpandedView: View {
     let module: MediaModule
 
     var body: some View {
-        if let playing = module.nowPlaying, playing.hasContent {
+        if module.showFullLyrics {
+            MediaFullLyricsView(module: module)
+        } else if let playing = module.nowPlaying, playing.hasContent {
             VStack(spacing: 14) {
-                HStack(spacing: 12) {
-                    ArtworkThumb(data: playing.artworkData, side: 52, corner: 10)
+                HStack(alignment: .top, spacing: 12) {
+                    // Tapping the artwork opens the track in Spotify.
+                    Button { module.openInSpotify() } label: {
+                        ArtworkThumb(data: playing.artworkData, side: 52, corner: 10)
+                    }
+                    .buttonStyle(.plain)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(playing.title ?? "—")
                             .font(.system(size: 17, weight: .semibold))
@@ -47,26 +53,29 @@ struct MediaExpandedView: View {
                     // Bounded: the panel sizes itself to measured content;
                     // an unbounded one-line title would balloon it.
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    // The same waveform as the wings, top-trailing like the
-                    // reference design.
-                    MediaWingWaveform(module: module)
+                    // Trailing column, per the reference: up-next above the
+                    // wave (their card sits in the same corner).
+                    VStack(alignment: .trailing, spacing: 5) {
+                        if let next = module.upNext {
+                            VStack(alignment: .trailing, spacing: 1) {
+                                Text("UP NEXT")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle((module.artworkAccent ?? .mediaAccent).opacity(0.9))
+                                Text(next.title)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .lineLimit(1)
+                                Text(next.artist)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.white.opacity(0.55))
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: 110, alignment: .trailing)
+                        }
+                        MediaWingWaveform(module: module)
+                    }
                 }
                 MediaProgressBar(module: module)
                 MediaLyricsView(module: module)
-                if let next = module.upNext {
-                    HStack(spacing: 6) {
-                        Text("UP NEXT")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle((module.artworkAccent ?? .mediaAccent).opacity(0.9))
-                        Text(next.title)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                        Text(next.artist)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .lineLimit(1)
-                    }
-                }
                 controls(isPlaying: playing.isPlaying)
             }
             .frame(width: 368)
@@ -210,15 +219,104 @@ private struct MediaLyricsView: View {
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 let elapsed = module.nowPlaying?.elapsedNow(at: context.date) ?? 0
                 let current = LyricsParser.currentLine(at: elapsed, in: lines)
-                Text(current?.text ?? "♪")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(module.artworkAccent ?? Color.mediaAccent)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
-                    .animation(.easeInOut(duration: 0.25), value: current?.time)
+                // Tapping the line opens the full-lyrics takeover.
+                Button { module.toggleFullLyrics() } label: {
+                    Text(current?.text ?? "♪")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(module.artworkAccent ?? Color.mediaAccent)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .animation(.easeInOut(duration: 0.25), value: current?.time)
             }
             .frame(height: 14)
         }
+    }
+}
+
+/// The lyrics takeover: the whole notch becomes scrolling synced lyrics —
+/// current line large in the accent, neighbours dimmed, auto-centered as
+/// the song advances. A compact header keeps track identity and the way
+/// back; the panel stays pinned open while this shows.
+struct MediaFullLyricsView: View {
+    let module: MediaModule
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Button { module.toggleFullLyrics() } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .bold))
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(.white.opacity(0.12)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                ArtworkThumb(data: module.nowPlaying?.artworkData, side: 26, corner: 6)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(module.nowPlaying?.title ?? "")
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                    Text(module.nowPlaying?.artist ?? "")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+
+            if let lines = module.lyrics, !lines.isEmpty {
+                TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                    let elapsed = module.nowPlaying?.elapsedNow(at: context.date) ?? 0
+                    let currentIndex = lines.lastIndex { $0.time <= elapsed + 0.2 }
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(spacing: 12) {
+                                ForEach(lines.indices, id: \.self) { index in
+                                    Text(lines[index].text)
+                                        .font(.system(size: index == currentIndex ? 17 : 13,
+                                                      weight: index == currentIndex ? .bold : .medium))
+                                        .foregroundStyle(index == currentIndex
+                                            ? (module.artworkAccent ?? .mediaAccent)
+                                            : .white.opacity(0.35))
+                                        .multilineTextAlignment(.center)
+                                        .frame(maxWidth: .infinity)
+                                        .id(index)
+                                }
+                            }
+                            .padding(.vertical, 60)
+                        }
+                        .onChange(of: currentIndex) { _, newIndex in
+                            guard let newIndex else { return }
+                            withAnimation(.easeInOut(duration: 0.35)) {
+                                proxy.scrollTo(newIndex, anchor: .center)
+                            }
+                        }
+                        .onAppear {
+                            if let currentIndex {
+                                proxy.scrollTo(currentIndex, anchor: .center)
+                            }
+                        }
+                    }
+                }
+                .frame(height: 190)
+                .mask(
+                    // Fade the edges so lines melt in and out, per the
+                    // reference screenshot.
+                    LinearGradient(
+                        stops: [.init(color: .clear, location: 0),
+                                .init(color: .black, location: 0.18),
+                                .init(color: .black, location: 0.82),
+                                .init(color: .clear, location: 1)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+            }
+        }
+        .frame(width: 368)
+        .foregroundStyle(.white)
     }
 }
 

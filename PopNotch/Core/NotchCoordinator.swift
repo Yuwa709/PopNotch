@@ -170,9 +170,14 @@ final class NotchCoordinator {
     /// a standby module has something worth flanking the housing with;
     /// otherwise invisible.
     private func desiredState() -> NotchPanel.State {
-        if isHovered || isShowingLiveActivity { return .expanded }
+        if isHovered || isShowingLiveActivity || isAnyModulePinned { return .expanded }
         if standbyWings() != nil { return .compact }
         return .idle
+    }
+
+    /// A module holding the notch open for a takeover view (e.g. full lyrics).
+    private var isAnyModulePinned: Bool {
+        arbiter.registeredModules.contains { $0.isEnabled && $0.wantsPinnedExpansion }
     }
 
     /// Measured size of the current expanded content, set by renderContent.
