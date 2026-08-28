@@ -155,6 +155,13 @@ final class NotchPanel: NSPanel {
     static let leadingWingWidth: CGFloat = 48
     static let trailingWingWidth: CGFloat = 44
 
+    /// The physical housing reads about 2pt left of the geometric screen
+    /// center on this machine — confirmed independently in the compact state
+    /// (equal wings looked right-heavy; +4 left balanced them) and the
+    /// expanded state (right of the housing obviously wider). Anything that
+    /// centers on the screen applies this to center on the *housing*.
+    static let opticalCenterOffset: CGFloat = -2
+
     static func compactRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
         return NSRect(
@@ -180,7 +187,7 @@ final class NotchPanel: NSPanel {
         let minHeight = base.height + 56
         let height = (min(max(contentSize.height, minHeight), 300)).rounded(.up)
         return NSRect(
-            x: (screen.frame.midX - width / 2).rounded(),
+            x: (screen.frame.midX + opticalCenterOffset - width / 2).rounded(),
             y: base.maxY - height,
             width: width,
             height: height
