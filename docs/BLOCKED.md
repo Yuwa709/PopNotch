@@ -23,3 +23,9 @@ done
 ```
 
 Paste the output into the audit table in `PROJECT-CONTEXT.md`, replacing the UNVERIFIED row. Thirty seconds, and it is the same check that would have caught `starred` before it shipped.
+
+## Item 5 (partial): README screenshot
+
+The README is written, but ROADMAP's Phase 5 spec calls for a screenshot and that needs a human with eyes on the physical display — the expanded notch against the real bezel is exactly the thing I cannot see or verify. A `TODO(user)` placeholder marks the spot in `README.md`; drop the image in as `docs/screenshot.png`.
+
+One editorial call to check: the README says binary releases don't exist yet and points people at `scripts/install.sh`. If you publish a Release, update the Install section.
