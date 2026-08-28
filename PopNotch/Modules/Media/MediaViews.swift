@@ -110,8 +110,8 @@ struct MediaWingWaveform: View {
         // abs(), whose corner at zero reads as a harsh bounce — at gentle
         // frequencies, with a modest swing. 30fps so motion has no visible
         // stepping.
-        let primary = sin(time * (1.3 + Double(index) * 0.35) + Double(index) * 2.1)
-        let secondary = sin(time * 0.9 + Double(index) * 1.1)
+        let primary = sin(time * (2.4 + Double(index) * 0.55) + Double(index) * 2.1)
+        let secondary = sin(time * 1.6 + Double(index) * 1.1)
         let level = 0.5 + 0.35 * primary + 0.15 * secondary   // 0...1, smooth
         return 5 + 7 * level                                   // 5...12pt
     }
