@@ -170,14 +170,9 @@ final class NotchCoordinator {
     /// a standby module has something worth flanking the housing with;
     /// otherwise invisible.
     private func desiredState() -> NotchPanel.State {
-        if isHovered || isShowingLiveActivity || isAnyModulePinned { return .expanded }
+        if isHovered || isShowingLiveActivity { return .expanded }
         if standbyWings() != nil { return .compact }
         return .idle
-    }
-
-    /// A module holding the notch open for a takeover view (e.g. full lyrics).
-    private var isAnyModulePinned: Bool {
-        arbiter.registeredModules.contains { $0.isEnabled && $0.wantsPinnedExpansion }
     }
 
     /// Measured size of the current expanded content, set by renderContent.
@@ -190,6 +185,9 @@ final class NotchCoordinator {
     private func applyState() {
         guard let panel, let screen = currentScreen else { return }
         let state = desiredState()
+        if lastAppliedState == .expanded && state != .expanded {
+            arbiter.registeredModules.forEach { $0.notchDidCollapse() }
+        }
         panel.setState(state, on: screen, expandedContentSize: expandedContentSize)
         lastAppliedState = state
     }
@@ -203,7 +201,7 @@ final class NotchCoordinator {
         // will not fit the rendered content.
         let probe = NSHostingView(rootView:
             content
-                .padding(.top, neck + 8)
+                .padding(.top, neck + 20)
                 .padding(.horizontal, 32)
                 .padding(.bottom, 20)
         )

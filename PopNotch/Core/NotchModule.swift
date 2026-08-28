@@ -68,10 +68,9 @@ protocol NotchModule: AnyObject {
     /// The arbiter polls this; the module does not push.
     var pendingLiveActivity: LiveActivityRequest? { get }
 
-    /// While true, the coordinator keeps the notch expanded regardless of
-    /// hover — for a takeover view the user is actively reading, like full
-    /// lyrics. Default false.
-    var wantsPinnedExpansion: Bool { get }
+    /// Called when the notch collapses out of the expanded state, so a
+    /// module can leave any takeover view it was showing. Default no-op.
+    func notchDidCollapse()
 
     func makeCompactView() -> AnyView
     func makeExpandedView() -> AnyView
@@ -97,7 +96,7 @@ protocol NotchModule: AnyObject {
 extension NotchModule {
     var wantsCompactDisplay: Bool { true }
     var pendingLiveActivity: LiveActivityRequest? { nil }
-    var wantsPinnedExpansion: Bool { false }
+    func notchDidCollapse() {}
     func didBecomeVisible() {}
     func didResignVisible() {}
     func makeCompactLeadingView() -> AnyView? { nil }

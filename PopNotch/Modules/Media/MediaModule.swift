@@ -196,9 +196,11 @@ final class MediaModule: NotchModule {
         onContentReflow?()
     }
 
-    /// The coordinator keeps the panel expanded while this holds, so the
-    /// lyrics view does not vanish when the cursor leaves.
-    var wantsPinnedExpansion: Bool { showFullLyrics }
+    /// The notch collapsed (cursor left). Leave the lyrics takeover so the
+    /// next hover shows the player, matching how every other view collapses.
+    func notchDidCollapse() {
+        showFullLyrics = false
+    }
 
     func toggleLike() {
         guard let webAPI, let trackID = currentTrackID else { return }

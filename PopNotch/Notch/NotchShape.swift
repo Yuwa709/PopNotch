@@ -106,7 +106,7 @@ struct NotchOverlayView: View {
                 // Horizontal padding is the panel's visible side border;
                 // keep in lockstep with the coordinator's measuring probe.
                 content
-                    .padding(.top, neckHeight + 8)
+                    .padding(.top, neckHeight + 20)
                     .padding(.horizontal, 32)
                     .padding(.bottom, 20)
                     .modifier(RevealFromNotch(enabled: revealContent))
