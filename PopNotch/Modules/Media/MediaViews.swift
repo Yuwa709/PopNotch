@@ -52,6 +52,9 @@ struct MediaExpandedView: View {
                     // Bounded: the panel sizes itself to measured content;
                     // an unbounded one-line title would balloon it.
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // The same waveform as the wings, top-trailing like the
+                    // reference design.
+                    MediaWingWaveform(module: module)
                 }
                 MediaProgressBar(module: module)
                 controls(isPlaying: playing.isPlaying)
@@ -128,6 +131,13 @@ private struct MediaProgressBar: View {
                 Capsule().fill(Color.mediaAccent)
                     .frame(width: max(4, geo.size.width * fraction))
                     .shadow(color: .mediaAccent.opacity(0.6), radius: 4)
+                // The playhead. Dragging anywhere on the track scrubs — the
+                // gesture below covers the dot too, so it follows the finger.
+                Circle()
+                    .fill(.white)
+                    .frame(width: 9, height: 9)
+                    .shadow(color: .mediaAccent.opacity(0.8), radius: 3)
+                    .offset(x: min(max(0, geo.size.width * fraction - 4.5), geo.size.width - 9))
             }
             .frame(height: 4)
             .frame(maxHeight: .infinity)
@@ -193,12 +203,9 @@ struct MediaWingWaveform: View {
             }
         }
         // Fixed height so bars grow around their center instead of pushing
-        // the row's layout; intrinsic width so wing alignment places it.
+        // the row's layout; intrinsic width so alignment places it.
         .frame(height: 14)
-        // User-tuned on hardware: centered still read as sitting too far
-        // right (screenshot-measured ~3-4pt), which also made the right
-        // wing look wider than the left. Visual nudge only; no layout.
-        .offset(x: -3)
+        .shadow(color: .mediaAccent.opacity(0.5), radius: 3)
     }
 }
 

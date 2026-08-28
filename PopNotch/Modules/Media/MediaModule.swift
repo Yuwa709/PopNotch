@@ -94,7 +94,9 @@ final class MediaModule: NotchModule {
 
     func makeCompactTrailingView() -> AnyView? {
         guard nowPlaying?.hasContent == true else { return nil }
-        return AnyView(MediaWingWaveform(module: self))
+        // The 3pt nudge is wing-placement tuning (user-measured); it lives
+        // here so the same waveform sits naturally in the expanded layout.
+        return AnyView(MediaWingWaveform(module: self).offset(x: -3))
     }
 
     func didBecomeVisible() {
