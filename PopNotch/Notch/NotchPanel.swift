@@ -59,6 +59,9 @@ final class NotchPanel: NSPanel {
     /// rebuilding the panel.
     private var hostingView: NSHostingView<NotchOverlayView>?
 
+    /// Tracked so the haptic fires only on the transition into expanded.
+    private var currentState: State = .idle
+
     /// Replaces the notch's contents. All nil shows the bare silhouette.
     func setContent(
         _ content: AnyView?,
@@ -162,6 +165,13 @@ final class NotchPanel: NSPanel {
     /// centers on the screen applies this to center on the *housing*.
     static let opticalCenterOffset: CGFloat = -2
 
+    /// Invisible hover halo: every state's frame extends this far beyond the
+    /// visible silhouette (sides and below; the top is the screen edge), so
+    /// the notch snaps open when the cursor gets near, not only dead-on.
+    /// The overlay insets its drawing to match. Transparent pixels do not
+    /// capture clicks, so the halo steals nothing from the menu bar.
+    static let hoverMargin: CGFloat = 10
+
     /// Extra black beyond the wings at each end of the compact panel —
     /// user-requested breathing room. The wing slots are inset by the same
     /// amount in the overlay, so widening this moves no content.
@@ -203,12 +213,27 @@ final class NotchPanel: NSPanel {
     /// not the inner view — the hosting view and tracking area follow via
     /// autoresizing and updateTrackingAreas.
     func setState(_ state: State, on screen: NSScreen, expandedContentSize: CGSize = .zero) {
-        let target: NSRect
+        let visible: NSRect
         switch state {
-        case .idle: target = Self.notchRect(on: screen)
-        case .compact: target = Self.compactRect(on: screen)
-        case .expanded: target = Self.expandedRect(on: screen, contentSize: expandedContentSize)
+        case .idle: visible = Self.notchRect(on: screen)
+        case .compact: visible = Self.compactRect(on: screen)
+        case .expanded: visible = Self.expandedRect(on: screen, contentSize: expandedContentSize)
         }
+        // Inflate by the hover halo: sides and downward, top stays flush.
+        var target = visible
+        target.origin.x -= Self.hoverMargin
+        target.size.width += Self.hoverMargin * 2
+        target.origin.y -= Self.hoverMargin
+        target.size.height += Self.hoverMargin
+
+        let wasExpanded = currentState == .expanded
+        currentState = state
+        // The trackpad ticks as the notch snaps open — only on the way in,
+        // and only when the hand is on the trackpad (the system's rule).
+        if state == .expanded && !wasExpanded {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        }
+
         guard target != frame else { return }
 
         // Hard rule 8: with Reduce Motion on, snap instead of animating.

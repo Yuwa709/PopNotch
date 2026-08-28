@@ -107,6 +107,11 @@ struct NotchOverlayView: View {
                     .padding(.bottom, 14)
             }
         }
+        // The hover halo: the panel frame is inflated by this margin, and
+        // the drawing insets back, leaving transparent hover-sensitive
+        // pixels around the silhouette. Top stays flush with the screen.
+        .padding(.horizontal, NotchPanel.hoverMargin)
+        .padding(.bottom, NotchPanel.hoverMargin)
         .ignoresSafeArea()
     }
 
