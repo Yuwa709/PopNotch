@@ -1,5 +1,12 @@
 import SwiftUI
 
+extension Color {
+    /// The media accent: a warm peach, user-chosen against the Sapphire
+    /// reference. A future nicety could derive it from the artwork; for now
+    /// it is deliberately fixed.
+    static let mediaAccent = Color(red: 1.0, green: 0.72, blue: 0.52)
+}
+
 /// Shown beside other modules in the collapsed/standby row.
 struct MediaCompactView: View {
     let module: MediaModule
@@ -28,6 +35,11 @@ struct MediaExpandedView: View {
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
                     ArtworkThumb(data: playing.artworkData, side: 52, corner: 10)
+                        // Soft outer glow, expanded state only (the tiny wing
+                        // thumb stays flat). Two shadows: a tight warm halo
+                        // plus a wide faint bloom.
+                        .shadow(color: .mediaAccent.opacity(0.5), radius: 4)
+                        .shadow(color: .mediaAccent.opacity(0.25), radius: 12)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(playing.title ?? "—")
                             .font(.system(size: 14, weight: .semibold))
@@ -112,9 +124,10 @@ private struct MediaProgressBar: View {
     private func track(fraction: Double, duration: TimeInterval) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.25))
-                Capsule().fill(.white)
+                Capsule().fill(.white.opacity(0.22))
+                Capsule().fill(Color.mediaAccent)
                     .frame(width: max(4, geo.size.width * fraction))
+                    .shadow(color: .mediaAccent.opacity(0.6), radius: 4)
             }
             .frame(height: 4)
             .frame(maxHeight: .infinity)
@@ -197,7 +210,7 @@ private struct WaveBar: View {
 
     var body: some View {
         Capsule()
-            .fill(.white.opacity(0.85))
+            .fill(Color.mediaAccent.opacity(0.95))
             .frame(width: 2.5, height: playing ? (lifted ? 12 : 5) : 4)
             .onAppear { apply(playing) }
             .onChange(of: playing) { _, nowPlaying in apply(nowPlaying) }
