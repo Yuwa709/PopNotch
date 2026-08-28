@@ -161,7 +161,7 @@ final class SpotifyAccount {
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
                     connection.cancel()
                 })
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.handleCallback(requestLine: firstLine, clientID: clientID)
                 }
             }
