@@ -77,6 +77,25 @@ final class SpotifyWebAPI {
         )
     }
 
+    // MARK: - Playback context decoding
+
+    struct PlayerStateResponse: Decodable {
+        let context: PlaybackContext?
+    }
+    struct PlaybackContext: Decodable {
+        let uri: String?
+    }
+
+    /// Where playback was started from — the user's playlist, their Liked
+    /// Songs, an artist page, or the album. Nil when Spotify reports no
+    /// context, which is the normal answer for autoplay and radio, not an
+    /// error; the caller falls back to the track itself.
+    nonisolated static func contextURI(fromPlayerJSON data: Data) -> String? {
+        guard let decoded = try? JSONDecoder().decode(PlayerStateResponse.self, from: data),
+              let uri = decoded.context?.uri, !uri.isEmpty else { return nil }
+        return uri
+    }
+
     // MARK: - Track and artist decoding
 
     struct TrackResponse: Decodable {
@@ -131,6 +150,13 @@ final class SpotifyWebAPI {
         guard let url = URL(string: urlString), url.scheme == "https",
               let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
         return data
+    }
+
+    /// `/v1/me/player` answers 204 with no body when nothing is playing on
+    /// the account; `get` already treats that as a quiet nil.
+    func fetchPlaybackContext() async -> String? {
+        guard let data = await get("https://api.spotify.com/v1/me/player") else { return nil }
+        return Self.contextURI(fromPlayerJSON: data)
     }
 
     func fetchUpNext() async -> SpotifyUpNext? {

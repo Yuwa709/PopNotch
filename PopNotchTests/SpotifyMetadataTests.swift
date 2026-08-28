@@ -65,4 +65,37 @@ final class SpotifyMetadataTests: XCTestCase {
     func testGarbageArtistJSONIsNil() {
         XCTAssertNil(SpotifyWebAPI.artistInfo(fromJSON: Data("not json".utf8)))
     }
+
+    // MARK: - Playback context
+    //
+    // Drives the artwork tap: the context is where the user actually started
+    // playing, so it beats the track URI's canonical album page.
+
+    func testContextURIReadsPlaylist() {
+        let json = Data(##"{"context": {"type": "playlist", "uri": "spotify:playlist:37i9dQZF1"}, "item": {"name": "3005"}}"##.utf8)
+        XCTAssertEqual(SpotifyWebAPI.contextURI(fromPlayerJSON: json),
+                       "spotify:playlist:37i9dQZF1")
+    }
+
+    func testContextURIReadsLikedSongsCollection() {
+        let json = Data(##"{"context": {"uri": "spotify:collection:tracks"}}"##.utf8)
+        XCTAssertEqual(SpotifyWebAPI.contextURI(fromPlayerJSON: json),
+                       "spotify:collection:tracks")
+    }
+
+    func testNullContextIsNil() {
+        // Autoplay and radio report no context. The caller falls back to the track.
+        let json = Data(##"{"context": null, "item": {"name": "3005"}}"##.utf8)
+        XCTAssertNil(SpotifyWebAPI.contextURI(fromPlayerJSON: json))
+    }
+
+    func testEmptyContextURIIsNil() {
+        let json = Data(##"{"context": {"uri": ""}}"##.utf8)
+        XCTAssertNil(SpotifyWebAPI.contextURI(fromPlayerJSON: json),
+                     "an empty string would open nothing; treat it as absent")
+    }
+
+    func testGarbagePlayerJSONIsNil() {
+        XCTAssertNil(SpotifyWebAPI.contextURI(fromPlayerJSON: Data("not json".utf8)))
+    }
 }

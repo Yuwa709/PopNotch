@@ -58,6 +58,13 @@ final class MediaModule: NotchModule {
     /// Cached per artist so skipping within an album costs no extra calls.
     @ObservationIgnored private var artistCache: [String: (SpotifyArtistInfo, Data?)] = [:]
 
+    /// Where playback was started from, e.g. `spotify:playlist:...`. Drives
+    /// the artwork tap. Not `@Observable` state — nothing renders from it.
+    /// Kept across a track change rather than cleared: within one playlist
+    /// the context does not change, so the stale value is the right value,
+    /// and the refresh overwrites it a round trip later either way.
+    @ObservationIgnored private var playbackContextURI: String?
+
     /// When true the expanded notch shows full scrolling lyrics instead of
     /// the player, and stays open regardless of hover until dismissed.
     private(set) var showFullLyrics = false
@@ -184,9 +191,11 @@ final class MediaModule: NotchModule {
         let trackID = currentTrackID
         Task { [weak self] in
             let next = await webAPI.fetchUpNext()
+            let context = await webAPI.fetchPlaybackContext()
             let liked: Bool? = if let trackID { await webAPI.isSaved(trackID: trackID) } else { nil }
             guard let self else { return }
             self.upNext = next
+            if let context { self.playbackContextURI = context }
             self.likedCurrent = liked
             await self.refreshArtistDetail(trackID: trackID, webAPI: webAPI)
         }
@@ -217,11 +226,17 @@ final class MediaModule: NotchModule {
         onContentReflow?()
     }
 
-    /// Opens the current track in the Spotify app. This activates Spotify —
+    /// Opens what is playing in the Spotify app. This activates Spotify —
     /// permitted because it is a direct response to the user tapping the
     /// artwork, not a hover (hard rule 4 protects against hover-stealing).
+    ///
+    /// Prefers the playback *context* — the playlist or collection the user
+    /// started from — over the track URI, which lands on the canonical album
+    /// page instead of wherever they actually were. Falls back to the track
+    /// when there is no context: autoplay and radio genuinely have none, and
+    /// so does every case where the account is not connected.
     func openInSpotify() {
-        guard let uri = nowPlaying?.artworkIdentifier,
+        guard let uri = playbackContextURI ?? nowPlaying?.artworkIdentifier,
               let url = URL(string: uri) else { return }
         NSWorkspace.shared.open(url)
     }
