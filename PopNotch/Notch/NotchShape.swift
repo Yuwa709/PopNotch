@@ -76,10 +76,10 @@ struct NotchOverlayView: View {
                 // alignment also reads as "attached to the notch".
                 HStack(spacing: 0) {
                     wing(leadingWing, alignment: .trailing)
-                        .padding(.trailing, 2)
+                        .padding(.trailing, 6)
                     Spacer(minLength: 0)
                     wing(trailingWing, alignment: .leading)
-                        .padding(.leading, 2)
+                        .padding(.leading, 6)
                 }
                 .frame(height: neckHeight)
             }

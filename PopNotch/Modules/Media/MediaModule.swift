@@ -64,16 +64,11 @@ final class MediaModule: NotchModule {
         let key = snapshot.artworkIdentifier ?? "\(snapshot.title ?? "")|\(snapshot.artist ?? "")"
         guard key != lastTrackKey else { return }
 
-        let isFirstSighting = lastTrackKey == nil
         lastTrackKey = key
-        // The launch-time snapshot is not news; popping the notch for it
-        // would read as random. Only actual changes announce themselves.
-        if !isFirstSighting {
-            Self.logger.notice("Track change; requesting live activity")
-            onLiveActivityRequest?(LiveActivityRequest(
-                moduleID: id, priority: priority, duration: Self.popDuration
-            ))
-        }
+        // Auto-announcing track changes (a 4s live-activity pop) shipped and
+        // was experienced as a glitch — the notch "expands for a second and
+        // goes back" uninvited. Off until it can be a designed banner; the
+        // live-activity plumbing stays for whatever earns it next.
     }
 
     func send(_ command: MediaCommand) {
