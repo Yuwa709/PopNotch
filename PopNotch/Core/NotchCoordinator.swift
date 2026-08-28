@@ -187,7 +187,7 @@ final class NotchCoordinator {
         let probe = NSHostingView(rootView:
             content
                 .padding(.top, neck + 4)
-                .padding(.horizontal, 52)
+                .padding(.horizontal, 32)
                 .padding(.bottom, 14)
         )
         return probe.fittingSize
