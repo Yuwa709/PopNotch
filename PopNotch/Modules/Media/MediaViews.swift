@@ -143,24 +143,11 @@ struct MediaExpandedView: View {
                 }
                 transportButton("forward.fill", size: 20) { module.send(.nextTrack) }
             }
-            // Like sits bottom-leading, where the reference keeps its
-            // secondary actions. Only shown with a connected account.
-            if module.accountConnected {
-                HStack {
-                    Button {
-                        module.toggleLike()
-                    } label: {
-                        Image(systemName: module.likedCurrent == true ? "heart.fill" : "heart")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(module.likedCurrent == true
-                                ? (module.artworkAccent ?? .mediaAccent)
-                                : .white.opacity(0.7))
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                }
+            // Favourite sits bottom-leading, where the reference keeps its
+            // secondary actions.
+            HStack {
+                MediaFavoriteControl(module: module)
+                Spacer()
             }
         }
     }
@@ -179,6 +166,54 @@ struct MediaExpandedView: View {
 /// Elapsed — track — remaining. The fill advances once a second while the
 /// panel is open; dragging scrubs and releases into a seek. The 1s tick
 /// exists only while this view does, i.e. only while the notch is expanded.
+/// The favourite heart, in one of two modes decided by the *source*, not by
+/// this view.
+///
+/// Apple Music's `favorited` is read-write, and Spotify's Web API can save a
+/// track, so both of those are real toggles. Spotify's AppleScript `starred`
+/// is read-only — with no connected account the value is knowable but not
+/// changeable, so the heart renders as state rather than as a control and
+/// takes no clicks at all. Offering a toggle there would be offering
+/// something the scripting interface cannot do.
+///
+/// Hidden entirely when there is no value to show, which is what a denied
+/// Automation prompt looks like. A greyed-out heart of unknown truth is
+/// worse than no heart.
+private struct MediaFavoriteControl: View {
+    let module: MediaModule
+
+    private var isOn: Bool { module.likedCurrent == true }
+
+    private var tint: Color {
+        isOn ? (module.artworkAccent ?? .mediaAccent) : .white.opacity(0.7)
+    }
+
+    var body: some View {
+        if module.likedCurrent != nil {
+            if module.canToggleFavorite {
+                Button { module.toggleLike() } label: { heart }
+                    .buttonStyle(.plain)
+            } else {
+                // Display-only: no Button, and hit testing off so the click
+                // falls through to the panel instead of landing on a dead
+                // control. Dimmed so it does not read as pressable.
+                heart
+                    .opacity(0.55)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(isOn ? "Starred" : "Not starred")
+            }
+        }
+    }
+
+    private var heart: some View {
+        Image(systemName: isOn ? "heart.fill" : "heart")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+    }
+}
+
 private struct MediaProgressBar: View {
     let module: MediaModule
 

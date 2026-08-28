@@ -162,18 +162,31 @@ final class MediaModule: NotchModule {
     /// Apple Event before calling back.
     private func adoptSourceExtras() {
         guard let active = activeSource else {
-            upNext = nil
+            setUpNext(nil)
             likedCurrent = nil
             return
         }
         if active is SpotifyAdapter {
             guard !accountConnected else { return } // Web API path owns these
-            upNext = nil
+            setUpNext(nil)
             likedCurrent = active.favorite.value
         } else {
-            upNext = active.upNext
+            setUpNext(active.upNext)
             likedCurrent = active.favorite.value
         }
+    }
+
+    /// The Up Next slot is removed from the layout entirely when there is
+    /// nothing queued, so its arrival or departure changes the expanded
+    /// panel's height and the coordinator has to re-measure.
+    ///
+    /// Only *presence* reflows. Swapping one queued title for another leaves
+    /// the slot the same size, and reflowing on every track change would
+    /// re-measure the panel for nothing.
+    private func setUpNext(_ next: UpNextTrack?) {
+        let had = upNext != nil
+        upNext = next
+        if had != (next != nil) { onContentReflow?() }
     }
 
     private func handleUpdate(_ snapshot: NowPlaying?) {
@@ -290,7 +303,7 @@ final class MediaModule: NotchModule {
             let context = await webAPI.fetchPlaybackContext()
             let liked: Bool? = if let trackID { await webAPI.isSaved(trackID: trackID) } else { nil }
             guard let self else { return }
-            self.upNext = next
+            self.setUpNext(next)
             if let context { self.playbackContextURI = context }
             self.likedCurrent = liked
             await self.refreshArtistDetail(trackID: trackID, webAPI: webAPI)
