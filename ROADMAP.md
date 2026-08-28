@@ -10,7 +10,11 @@ Read this when starting a new phase. Do not read it for routine tasks.
 
 - **Phase 0:** complete (project created, git initialized, CLAUDE.md in place)
 - **Phase 0.5:** complete — project converted to Mac-only, sandbox off, `LSUIElement` set, usage strings in place
-- **Phase 1:** all tasks implemented — awaiting the reboot test
+- **Phase 2:** tasks 1–5 done; the panel is not yet driven by the arbiter
+  - `NotchModule` protocol, `AppSettings` + `SettingsStore`, `NotchArbiter`, dummy modules, 29 passing tests
+  - Arbiter is AppKit-free by design, so arbitration is verifiable without a screen
+  - **Remaining before the phase's "done when" holds:** a coordinator subscribing to `onPresentationChange`, driving `NotchPanel` and calling `tick()`. Until then a new module can be registered but nothing renders it
+- **Phase 1:** complete — reboot test passed (app relaunched at login, PID 1143)
   - Geometry user-certified: symmetrized around center, 1pt inset per side (undershoot rule), integral coordinates only
   - Monitor attach, clamshell fallback, and lid-reopen all verified on hardware
   - State transitions log at `.notice` — `.info` proved to be memory-only and evicted before test evidence could be read back
