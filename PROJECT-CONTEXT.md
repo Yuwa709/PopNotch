@@ -144,6 +144,31 @@ Three rules follow:
 2. **Keep query scripts minimal.** Every property added to a combined `return` is a new way to lose every other field in it. A field that is nice-to-have does not belong beside a load-bearing one.
 3. **Never let an adapter failure be silent.** The `.failure` branch logged only `isPermissionDenied`, so a -10000 produced no adapter-level line at all. Every failure now logs with its code.
 
+### Verified property audit (executed 2026-08-28, macOS 26.5.2)
+
+Every property in either adapter's query script, executed individually against the live app. **Verified** means the call returned a value that day; it is not a promise about future Spotify/Music builds. Re-run the audit when a query script changes or a player updates.
+
+| App | Property | Result |
+|---|---|---|
+| Spotify | `player state` | ✅ `paused` |
+| Spotify | `name of current track` | ✅ |
+| Spotify | `artist of current track` | ✅ |
+| Spotify | `album of current track` | ✅ |
+| Spotify | `duration of current track` | ✅ milliseconds (`192933`) |
+| Spotify | `player position` | ✅ seconds, fractional |
+| Spotify | `artwork url of current track` | ✅ https URL |
+| Spotify | `id of current track` | ✅ `spotify:track:…` URI |
+| Spotify | `starred of current track` | ❌ **-10000**, unimplemented despite `access="r"` in the sdef. Removed in `83bd628`; must not return |
+| Spotify | `popularity of current track` | ✅ (not in the query; verified during the starred bisect) |
+| Music | `player state` | ✅ `stopped` |
+| Music | `shuffle enabled` | ✅ `false` |
+| Music | `fixed indexing` | ✅ `false` |
+| Music | `player position` (while stopped) | ✅ returns `missing value`, **not an error** — the parser must treat it as absent |
+| Music | `current playlist` (while stopped) | -1728 while no track is targeted — a state error the adapter's `try` block already absorbs, not an implementation gap |
+| Music | `name/artist/album/duration/persistent ID/favorited/index/artworks/lyrics of current track` | ⚠️ **UNVERIFIED.** Auditable only with a track playing or paused; at audit time Music was stopped and the library held zero tracks, and starting playback unattended was out of bounds. See `docs/BLOCKED.md` |
+
+The unverified Music rows are exactly the class that produced the `starred` incident. Until they are executed live, treat the Music query as provisionally correct: it shipped, but its first real run against a playing track is the actual test.
+
 ### MediaRemote: resolved, not open
 
 Measured on hardware 2026-08-27 and written up in `PopNotch/Modules/Media/FINDINGS.md`. Summary: the framework loads and every symbol resolves inside PopNotch, but `MRMediaRemoteGetNowPlayingInfo` returns an **empty dictionary** to the signed app while the same call from an Apple-signed `swift` CLI returns full data for the same track at the same instant. The macOS 15.4 restriction is caller-identity gating and it is live on 26.5. The gating entitlement is private and not grantable.
