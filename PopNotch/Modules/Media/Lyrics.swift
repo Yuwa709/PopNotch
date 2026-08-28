@@ -1,8 +1,8 @@
 import Foundation
 import os
 
-/// One timestamped lyric line.
-struct LyricsLine: Equatable {
+/// One timestamped lyric line. `Codable` so the disk cache can round-trip it.
+struct LyricsLine: Equatable, Codable {
     let time: TimeInterval
     let text: String
 }
@@ -34,80 +34,36 @@ enum LyricsParser {
         return result.sorted { $0.time < $1.time }
     }
 
-    /// The line being sung at `elapsed`, with a small lead so a line appears
-    /// as it starts rather than strictly after. Nil before the first line.
-    static func currentLine(at elapsed: TimeInterval, in lines: [LyricsLine]) -> LyricsLine? {
-        lines.last { $0.time <= elapsed + 0.2 }
-    }
-}
+    /// A line is shown fractionally early so it appears as it starts being
+    /// sung rather than strictly after.
+    static let lead: TimeInterval = 0.2
 
-/// Fetches synced lyrics from LRCLIB — the endpoint hard rule 6 pre-approves
-/// for the lyrics feature — and caches per track, including misses, so a
-/// track is never queried twice in a run.
-@MainActor
-final class LyricsService {
-
-    private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "Lyrics")
-
-    /// nil value = known miss (no synced lyrics, instrumental, or error).
-    private var cache: [String: [LyricsLine]?] = [:]
-    private var inflight: Set<String> = []
-
-    private struct LRCLIBResponse: Decodable {
-        let syncedLyrics: String?
-        let instrumental: Bool?
-    }
-
-    func fetch(
-        artist: String,
-        title: String,
-        duration: TimeInterval?,
-        key: String,
-        completion: @escaping ([LyricsLine]?) -> Void
-    ) {
-        if let cached = cache[key] {
-            completion(cached)
-            return
-        }
-        guard !inflight.contains(key) else { return }
-
-        var components = URLComponents(string: "https://lrclib.net/api/get")
-        var items = [
-            URLQueryItem(name: "artist_name", value: artist),
-            URLQueryItem(name: "track_name", value: title),
-        ]
-        if let duration {
-            items.append(URLQueryItem(name: "duration", value: String(Int(duration.rounded()))))
-        }
-        components?.queryItems = items
-        guard let url = components?.url else {
-            completion(nil)
-            return
-        }
-
-        var request = URLRequest(url: url)
-        // LRCLIB asks callers to identify themselves.
-        request.setValue("PopNotch/0.1", forHTTPHeaderField: "User-Agent")
-
-        inflight.insert(key)
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            let lines: [LyricsLine]?
-            if let data,
-               (response as? HTTPURLResponse)?.statusCode == 200,
-               let decoded = try? JSONDecoder().decode(LRCLIBResponse.self, from: data),
-               let lrc = decoded.syncedLyrics,
-               decoded.instrumental != true {
-                let parsed = LyricsParser.parse(lrc: lrc)
-                lines = parsed.isEmpty ? nil : parsed
+    /// Index of the line being sung at `elapsed` — the last line whose
+    /// timestamp has passed. Nil before the first line.
+    ///
+    /// Binary search, not a scan: `parse` guarantees the array is sorted by
+    /// time, and this is called from a view body on every progress tick, so
+    /// it runs far more often than it is worth being linear about.
+    static func currentIndex(at elapsed: TimeInterval, in lines: [LyricsLine]) -> Int? {
+        guard !lines.isEmpty else { return nil }
+        let cutoff = elapsed + lead
+        var low = 0
+        var high = lines.count - 1
+        var found: Int?
+        while low <= high {
+            let mid = low + (high - low) / 2
+            if lines[mid].time <= cutoff {
+                found = mid
+                low = mid + 1
             } else {
-                lines = nil
+                high = mid - 1
             }
-            Task { @MainActor in
-                self.inflight.remove(key)
-                self.cache[key] = lines
-                Self.logger.notice("Lyrics for \(title, privacy: .public): \(lines.map { "\($0.count) lines" } ?? "none", privacy: .public)")
-                completion(lines)
-            }
-        }.resume()
+        }
+        return found
+    }
+
+    /// The line being sung at `elapsed`. Nil before the first line.
+    static func currentLine(at elapsed: TimeInterval, in lines: [LyricsLine]) -> LyricsLine? {
+        currentIndex(at: elapsed, in: lines).map { lines[$0] }
     }
 }

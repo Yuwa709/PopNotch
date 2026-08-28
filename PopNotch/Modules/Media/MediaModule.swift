@@ -230,7 +230,12 @@ final class MediaModule: NotchModule {
 
     private func fetchLyrics(for snapshot: NowPlaying, trackKey: String) {
         guard let artist = snapshot.artist, let title = snapshot.title else { return }
-        lyricsService.fetch(artist: artist, title: title, duration: snapshot.duration, key: trackKey) { [weak self] lines in
+        // Music can answer from its own `lyrics` property; Spotify cannot,
+        // and returns nil here, sending the lookup straight to LRCLIB.
+        let embedded = activeSource?.embeddedLyrics()
+        lyricsService.fetch(
+            artist: artist, title: title, duration: snapshot.duration, embeddedLRC: embedded
+        ) { [weak self] lines in
             guard let self, self.lastTrackKey == trackKey else { return } // stale reply
             self.lyrics = lines
             if lines != nil {

@@ -95,6 +95,11 @@ protocol MediaSource: AnyObject {
     /// Changes the favourite flag. A no-op unless `favorite` is `.editable`;
     /// callers should still check first so the UI never offers a dead control.
     func setFavorite(_ on: Bool)
+
+    /// Lyrics the player itself holds for the current track, if any. Music
+    /// exposes a `lyrics` property; Spotify's dictionary has none. Often
+    /// plain text, so the caller must check whether it parses as timed.
+    func embeddedLyrics() -> String?
 }
 
 /// Defaults for sources whose player exposes neither concept, so an adapter
@@ -103,6 +108,7 @@ extension MediaSource {
     var upNext: UpNextTrack? { nil }
     var favorite: FavoriteState { .unsupported }
     func setFavorite(_ on: Bool) {}
+    func embeddedLyrics() -> String? { nil }
 }
 
 /// Runs an AppleScript source and reports the result or the error code.

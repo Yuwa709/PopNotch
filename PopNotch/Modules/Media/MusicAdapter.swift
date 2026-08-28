@@ -255,6 +255,24 @@ final class MusicAdapter: MediaSource {
         }
         Self.logger.notice("Favourited set to \(on, privacy: .public)")
     }
+
+    /// Music's `lyrics` property, read on demand rather than in the main
+    /// query — most tracks have none, and a whole lyric sheet is not worth
+    /// carrying through the per-tick snapshot script.
+    ///
+    /// Usually plain text. `LyricsService` decides whether it is timed.
+    func embeddedLyrics() -> String? {
+        guard isPlayerRunning, !permissionDenied else { return nil }
+        let script = "tell application \"Music\" to get lyrics of current track"
+        guard case .success(let descriptor) = AppleScriptRunner.run(script),
+              let text = descriptor.stringValue, !text.isEmpty
+        else {
+            Self.logger.notice("No embedded lyrics on current Music track")
+            return nil
+        }
+        Self.logger.notice("Read \(text.count, privacy: .public) chars of embedded lyrics from Music")
+        return text
+    }
 }
 
 /// Pure parsing, split out for tests.
