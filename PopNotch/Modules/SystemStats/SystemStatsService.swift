@@ -80,7 +80,7 @@ final class SystemStatsService {
         if shouldRun {
             sample()
             let timer = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.sample() }
+                Task { @MainActor [weak self] in self?.sample() }
             }
             // Sampling must not stall while a menu is open.
             RunLoop.main.add(timer, forMode: .common)
