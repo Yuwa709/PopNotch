@@ -32,15 +32,15 @@ struct MediaExpandedView: View {
 
     var body: some View {
         if let playing = module.nowPlaying, playing.hasContent {
-            VStack(spacing: 10) {
+            VStack(spacing: 14) {
                 HStack(spacing: 12) {
                     ArtworkThumb(data: playing.artworkData, side: 52, corner: 10)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(playing.title ?? "—")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 17, weight: .semibold))
                             .lineLimit(1)
                         Text(playing.artist ?? "")
-                            .font(.system(size: 12))
+                            .font(.system(size: 13))
                             .foregroundStyle(.white.opacity(0.6))
                             .lineLimit(1)
                     }
@@ -55,7 +55,7 @@ struct MediaExpandedView: View {
                 MediaLyricsView(module: module)
                 controls(isPlaying: playing.isPlaying)
             }
-            .frame(width: 296)
+            .frame(width: 368)
             .foregroundStyle(.white)
         } else if module.permissionDenied {
             // The tested denied path: one line, no re-prompt loop.
@@ -66,12 +66,13 @@ struct MediaExpandedView: View {
     }
 
     private func controls(isPlaying: Bool) -> some View {
-        HStack(spacing: 26) {
-            transportButton("backward.fill", size: 13) { module.send(.previousTrack) }
-            transportButton(isPlaying ? "pause.fill" : "play.fill", size: 18) {
+        // Spacing and glyph sizes measured 1:1 off the reference.
+        HStack(spacing: 56) {
+            transportButton("backward.fill", size: 20) { module.send(.previousTrack) }
+            transportButton(isPlaying ? "pause.fill" : "play.fill", size: 26) {
                 module.send(.togglePlayPause)
             }
-            transportButton("forward.fill", size: 13) { module.send(.nextTrack) }
+            transportButton("forward.fill", size: 20) { module.send(.nextTrack) }
         }
     }
 
@@ -79,7 +80,7 @@ struct MediaExpandedView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .semibold))
-                .frame(width: 30, height: 26)
+                .frame(width: 40, height: 32)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -117,10 +118,10 @@ private struct MediaProgressBar: View {
 
     private func timeLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium))
+            .font(.system(size: 11, weight: .medium))
             .monospacedDigit()
             .foregroundStyle(.white.opacity(0.65))
-            .frame(width: 34)
+            .frame(width: 38)
     }
 
     private func track(fraction: Double, duration: TimeInterval) -> some View {
@@ -128,12 +129,12 @@ private struct MediaProgressBar: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(.white.opacity(0.22))
                 Capsule().fill(accent)
-                    .frame(width: max(4, geo.size.width * fraction))
+                    .frame(width: max(6, geo.size.width * fraction))
                     .shadow(color: accent.opacity(0.6), radius: 4)
                 // No playhead dot (tried, user-rejected); the whole track
                 // drags, so the handle was decoration.
             }
-            .frame(height: 4)
+            .frame(height: 6)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(
@@ -175,7 +176,7 @@ private struct MediaLyricsView: View {
                 let elapsed = module.nowPlaying?.elapsedNow(at: context.date) ?? 0
                 let current = LyricsParser.currentLine(at: elapsed, in: lines)
                 Text(current?.text ?? "♪")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(module.artworkAccent ?? Color.mediaAccent)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)

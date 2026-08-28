@@ -11,10 +11,12 @@ struct NotchShape: Shape {
 
     /// Per-state radii, user-tuned: the open card is softer than the
     /// compact bar.
-    static let compactTopRadius: CGFloat = 10
-    static let compactBottomRadius: CGFloat = 20
-    static let expandedTopRadius: CGFloat = 12
-    static let expandedBottomRadius: CGFloat = 26
+    /// Compact matches the physical housing's own corner tightness; the
+    /// open card is much rounder, measured against the Sapphire reference.
+    static let compactTopRadius: CGFloat = 8
+    static let compactBottomRadius: CGFloat = 12
+    static let expandedTopRadius: CGFloat = 14
+    static let expandedBottomRadius: CGFloat = 34
 
     var topRadius: CGFloat = NotchShape.compactTopRadius
     var bottomRadius: CGFloat = NotchShape.compactBottomRadius
@@ -102,9 +104,9 @@ struct NotchOverlayView: View {
                 // Horizontal padding is the panel's visible side border;
                 // keep in lockstep with the coordinator's measuring probe.
                 content
-                    .padding(.top, neckHeight + 4)
+                    .padding(.top, neckHeight + 8)
                     .padding(.horizontal, 32)
-                    .padding(.bottom, 14)
+                    .padding(.bottom, 20)
             }
         }
         // The hover halo: the panel frame is inflated by this margin, and

@@ -68,8 +68,10 @@ enum ArtworkColor {
 
         let hue = (Double(best) * 10 + 5) / 360
         let saturation = min(1, satSum[best] / count[best])
-        // Floor the brightness: the accent sits on pure black and must read.
-        let brightness = max(0.62, min(1, briSum[best] / count[best]))
+        // Floor the brightness high: the accent sits on pure black, and the
+        // user asked for deliberately brighter than the artwork's own tone
+        // (dark-red covers were yielding a muddy bar).
+        let brightness = max(0.78, min(1, briSum[best] / count[best]))
         return Color(hue: hue, saturation: saturation, brightness: brightness)
     }
 }
