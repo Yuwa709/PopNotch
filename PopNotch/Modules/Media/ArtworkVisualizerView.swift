@@ -90,11 +90,18 @@ enum ArtworkPaletteExtractor {
 /// cursor across the panel.
 ///
 /// Motion notes, learned the hard way in this project:
-/// - Driven by `withAnimation(...repeatForever)` rather than a per-frame
+/// - Driven by a repeating animation rather than a per-frame
 ///   `TimelineView`. The notch panel can never become key (hard rule 3),
 ///   and SwiftUI throttles per-frame animation callbacks in non-key
 ///   windows — that produced visible stutter in the waveform. Repeating
 ///   animations run in the render server and are immune.
+/// - The loop is started and stopped via `.animation(_:value:)` keyed to
+///   one `@State`, never `withAnimation`. The transforms must not read
+///   `isPlaying` directly: the prop flips in the module's own (instant)
+///   transaction, which interrupts an in-flight `repeatForever` instead
+///   of replacing it — the artwork froze mid-drift as a mangled crop on
+///   every pause. `.animation(value:)` picks the ease-out at the moment
+///   the value flips, which replaces the repeat deterministically.
 /// - Everything stops when playback pauses: the loop settles, the tilt
 ///   returns to neutral, and no animation remains scheduled.
 /// - Reduce Motion (hard rule 8) disables the loop and the tilt entirely;
@@ -120,7 +127,10 @@ struct ArtworkVisualizerView: View {
     private let maxTilt: Double = 5
 
     @State private var palette: ArtworkPalette?
-    @State private var drifting = false
+    /// Sole driver of the Ken Burns loop. Set plainly (no `withAnimation`);
+    /// the `.animation(_:value:)` modifiers on the transforms decide the
+    /// curve — repeat on start, ease-out on stop.
+    @State private var loopActive = false
     /// Cursor position within the view, normalised to -1...1 on both axes.
     @State private var tilt: CGSize = .zero
 
@@ -153,17 +163,26 @@ struct ArtworkVisualizerView: View {
         }
         .onAppear {
             palette = ArtworkPaletteExtractor.palette(from: image)
-            applyLoop(animatesLoop)
+            loopActive = animatesLoop
         }
         .onChange(of: image) { _, newImage in
             palette = ArtworkPaletteExtractor.palette(from: newImage)
         }
         .onChange(of: isPlaying) { _, _ in
-            applyLoop(animatesLoop)
+            loopActive = animatesLoop
             if !animatesLoop {
                 withAnimation(.easeOut(duration: 0.4)) { tilt = .zero }
             }
         }
+    }
+
+    /// Repeat while looping, ease back to rest when stopped. Evaluated at
+    /// the moment `loopActive` changes, so the stop always animates out
+    /// instead of interrupting the repeat mid-flight.
+    private var loopAnimation: Animation {
+        loopActive
+            ? .easeInOut(duration: loopDuration).repeatForever(autoreverses: true)
+            : .easeOut(duration: 0.6)
     }
 
     // MARK: - Layers
@@ -191,14 +210,14 @@ struct ArtworkVisualizerView: View {
             }
             // Proportional: a fixed 26pt blur swamped a 60pt thumbnail.
             .blur(radius: max(8, min(size.width, size.height) * 0.28))
-            .scaleEffect(drifting && animatesLoop ? 1.08 : 1)
+            .scaleEffect(loopActive ? 1.08 : 1)
+            .animation(loopAnimation, value: loopActive)
             .allowsHitTesting(false)
         }
     }
 
     private func artwork(in size: CGSize) -> some View {
         let drift = size.width * driftRatio
-        let active = drifting && animatesLoop
         // The clip belongs to a fixed-size container, with the image moving
         // *inside* it. Clipping after the transforms made the crop window
         // travel with the image, which is what mangled the thumbnail.
@@ -208,11 +227,12 @@ struct ArtworkVisualizerView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     // Ken Burns: scale and drift together, autoreversing.
-                    .scaleEffect(active ? driftScale : restScale)
+                    .scaleEffect(loopActive ? driftScale : restScale)
                     .offset(
-                        x: active ? drift : -drift,
-                        y: active ? -drift * 0.6 : drift * 0.6
+                        x: loopActive ? drift : -drift,
+                        y: loopActive ? -drift * 0.6 : drift * 0.6
                     )
+                    .animation(loopAnimation, value: loopActive)
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             // Parallax: tilt away from the cursor, with a slight counter
@@ -231,19 +251,4 @@ struct ArtworkVisualizerView: View {
             .shadow(color: (palette?.overall ?? .black).opacity(0.5), radius: 12)
     }
 
-    // MARK: - Loop control
-
-    /// Starts or stops the repeating drift. Stopping animates back to rest
-    /// rather than snapping, and leaves nothing scheduled.
-    private func applyLoop(_ running: Bool) {
-        if running {
-            withAnimation(.easeInOut(duration: loopDuration).repeatForever(autoreverses: true)) {
-                drifting = true
-            }
-        } else {
-            withAnimation(.easeOut(duration: 0.6)) {
-                drifting = false
-            }
-        }
-    }
 }
