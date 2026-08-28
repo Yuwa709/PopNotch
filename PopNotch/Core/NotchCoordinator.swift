@@ -182,11 +182,13 @@ final class NotchCoordinator {
     /// cheap at this size; runs only on content changes, never per frame.
     private func measureExpandedContent(_ content: AnyView?, neck: CGFloat) -> CGSize {
         guard let content else { return .zero }
+        // Padding mirrors NotchOverlayView's exactly, or the measured panel
+        // will not fit the rendered content.
         let probe = NSHostingView(rootView:
             content
                 .padding(.top, neck + 4)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 14)
         )
         return probe.fittingSize
     }

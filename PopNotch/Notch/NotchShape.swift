@@ -9,8 +9,9 @@ import SwiftUI
 /// stays drawable without artifacts.
 struct NotchShape: Shape {
 
-    var topRadius: CGFloat = 8
-    var bottomRadius: CGFloat = 12
+    // Softened to match the Sapphire reference by user verdict.
+    var topRadius: CGFloat = 10
+    var bottomRadius: CGFloat = 20
 
     func path(in rect: CGRect) -> Path {
         let topR = min(topRadius, rect.width / 4, rect.height / 2)
@@ -85,10 +86,12 @@ struct NotchOverlayView: View {
                 .frame(height: neckHeight)
             }
             if let content {
+                // Horizontal padding is the panel's visible side border;
+                // keep in lockstep with the coordinator's measuring probe.
                 content
                     .padding(.top, neckHeight + 4)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 14)
             }
         }
         .ignoresSafeArea()
