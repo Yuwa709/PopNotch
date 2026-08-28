@@ -29,3 +29,9 @@ Paste the output into the audit table in `PROJECT-CONTEXT.md`, replacing the UNV
 The README is written, but ROADMAP's Phase 5 spec calls for a screenshot and that needs a human with eyes on the physical display — the expanded notch against the real bezel is exactly the thing I cannot see or verify. A `TODO(user)` placeholder marks the spot in `README.md`; drop the image in as `docs/screenshot.png`.
 
 One editorial call to check: the README says binary releases don't exist yet and points people at `scripts/install.sh`. If you publish a Release, update the Install section.
+
+## Item 7 (partial): LyricsService network-path tests
+
+The lyrics *parser*, cache key, disk-cache round-trip, and binary search all have tests. What does not is `LyricsService`'s network path itself (get → search fallback → duration matching against live responses) and its `fetch` orchestration. Testing those honestly needs `URLSession` injection, and its disk cache writes to the real `~/Library/Application Support/PopNotch/Lyrics` — pointing that at a temp directory needs the cache location to become injectable too. Both are small design changes to shipped code, which this session's rules put out of bounds ("anything requiring a design decision").
+
+**What I need from you:** a yes/no on introducing constructor injection (a `URLSession`-protocol seam and a cache-directory parameter) into `LyricsService`. Fifteen minutes of work once approved; I did not want to reshape a shipped API unattended.

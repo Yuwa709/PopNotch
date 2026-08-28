@@ -16,11 +16,17 @@ final class StubMediaSource: MediaSource {
         permissionDenied = denied
     }
 
+    /// Commands the module routed here, for asserting command routing.
+    private(set) var sent: [MediaCommand] = []
+
     func startObserving() {}
     func stopObserving() {}
     func refresh() {}
-    func send(_ command: MediaCommand) {}
+    func send(_ command: MediaCommand) { sent.append(command) }
     func seek(to seconds: TimeInterval) {}
+
+    /// Drives the module's real update path, exactly as an adapter would.
+    func publish(_ snapshot: NowPlaying?) { onUpdate?(snapshot) }
 }
 
 /// The in-notch permission banner shows only when a RUNNING player is

@@ -41,6 +41,15 @@ final class MusicParsingTests: XCTestCase {
         XCTAssertEqual(parsed?.snapshot.elapsed ?? -1, 12.607, accuracy: 0.001)
     }
 
+    func testStoppedPlayerPositionIsMissingValueNotError() {
+        // Verified live 2026-08-28 (property audit): a stopped Music returns
+        // the string "missing value" for player position rather than
+        // erroring. The parser must read that as absent, never as zero.
+        let parsed = MusicParsing.parse(scriptOutput: output(position: "missing value"))
+        XCTAssertNil(parsed?.snapshot.elapsed)
+        XCTAssertEqual(parsed?.snapshot.title, "3005", "the rest of the snapshot survives")
+    }
+
     func testCommaDecimalLocale() {
         let parsed = MusicParsing.parse(scriptOutput: output(duration: "212,45", position: "12,607"))
         XCTAssertEqual(parsed?.snapshot.duration ?? -1, 212.45, accuracy: 0.001)
