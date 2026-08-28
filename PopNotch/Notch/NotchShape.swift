@@ -79,6 +79,9 @@ struct NotchOverlayView: View {
                     Spacer(minLength: 0)
                     wing(trailingWing, width: NotchPanel.trailingWingWidth)
                 }
+                // Matches compactEdgeExtra: the panel is wider than the
+                // wings by this per side, so content stays put as it grows.
+                .padding(.horizontal, NotchPanel.compactEdgeExtra)
                 .frame(height: neckHeight)
             }
             if let content {

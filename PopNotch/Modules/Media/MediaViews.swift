@@ -129,17 +129,12 @@ private struct MediaProgressBar: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(.white.opacity(0.22))
                 Capsule().fill(Color.mediaAccent)
-                    .frame(width: max(4, geo.size.width * fraction))
+                    .frame(width: max(3, geo.size.width * fraction))
                     .shadow(color: .mediaAccent.opacity(0.6), radius: 4)
-                // The playhead. Dragging anywhere on the track scrubs — the
-                // gesture below covers the dot too, so it follows the finger.
-                Circle()
-                    .fill(.white)
-                    .frame(width: 9, height: 9)
-                    .shadow(color: .mediaAccent.opacity(0.8), radius: 3)
-                    .offset(x: min(max(0, geo.size.width * fraction - 4.5), geo.size.width - 9))
+                // No playhead dot (tried, user-rejected); the whole track
+                // drags, so the handle was decoration.
             }
-            .frame(height: 4)
+            .frame(height: 3)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(

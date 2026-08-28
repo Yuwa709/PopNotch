@@ -162,12 +162,17 @@ final class NotchPanel: NSPanel {
     /// centers on the screen applies this to center on the *housing*.
     static let opticalCenterOffset: CGFloat = -2
 
+    /// Extra black beyond the wings at each end of the compact panel —
+    /// user-requested breathing room. The wing slots are inset by the same
+    /// amount in the overlay, so widening this moves no content.
+    static let compactEdgeExtra: CGFloat = 2
+
     static func compactRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
         return NSRect(
-            x: base.minX - leadingWingWidth,
+            x: base.minX - leadingWingWidth - compactEdgeExtra,
             y: base.minY,
-            width: base.width + leadingWingWidth + trailingWingWidth,
+            width: base.width + leadingWingWidth + trailingWingWidth + compactEdgeExtra * 2,
             height: base.height
         )
     }
