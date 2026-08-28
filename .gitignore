@@ -27,3 +27,4 @@ xcuserdata/
 *.ipa
 *.app.zip
 *.dmg
+dist/
