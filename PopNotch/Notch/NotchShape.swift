@@ -75,9 +75,9 @@ struct NotchOverlayView: View {
                 // user-verified on hardware, the latter by photo). Center
                 // splits the margin evenly.
                 HStack(spacing: 0) {
-                    wing(leadingWing, alignment: .center)
+                    wing(leadingWing, width: NotchPanel.leadingWingWidth)
                     Spacer(minLength: 0)
-                    wing(trailingWing, alignment: .center)
+                    wing(trailingWing, width: NotchPanel.trailingWingWidth)
                 }
                 .frame(height: neckHeight)
             }
@@ -92,10 +92,10 @@ struct NotchOverlayView: View {
     }
 
     @ViewBuilder
-    private func wing(_ view: AnyView?, alignment: Alignment) -> some View {
+    private func wing(_ view: AnyView?, width: CGFloat) -> some View {
         Group {
             if let view { view } else { Color.clear }
         }
-        .frame(width: NotchPanel.wingWidth, height: neckHeight, alignment: alignment)
+        .frame(width: width, height: neckHeight, alignment: .center)
     }
 }

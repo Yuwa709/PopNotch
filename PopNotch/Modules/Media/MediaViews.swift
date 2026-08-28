@@ -78,7 +78,7 @@ struct MediaWingArtwork: View {
         // Intrinsic size only: the wing slot's alignment decides placement.
         // User-tuned: a minuscule up-and-right from center.
         ArtworkThumb(data: module.nowPlaying?.artworkData, side: 22, corner: 5)
-            .offset(x: 2, y: -2)
+            .offset(x: 2, y: -1)
     }
 }
 

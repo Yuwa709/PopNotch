@@ -147,17 +147,20 @@ final class NotchPanel: NSPanel {
         case expanded
     }
 
-    /// Width of each compact wing. Sized for a 22pt artwork thumb or a small
-    /// waveform with breathing room; tuned by eye on hardware across three
-    /// rounds — content is centered in the wing.
-    static let wingWidth: CGFloat = 44
+    /// Wing widths, tuned by eye on hardware across four rounds. Asymmetric
+    /// on purpose: with equal wings the right side consistently read as
+    /// wider than the left (user-confirmed twice) — the housing does not
+    /// sit perfectly on the panel's center — so the left wing carries a few
+    /// extra points to balance the appearance.
+    static let leadingWingWidth: CGFloat = 48
+    static let trailingWingWidth: CGFloat = 44
 
     static func compactRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
         return NSRect(
-            x: base.minX - wingWidth,
+            x: base.minX - leadingWingWidth,
             y: base.minY,
-            width: base.width + wingWidth * 2,
+            width: base.width + leadingWingWidth + trailingWingWidth,
             height: base.height
         )
     }
@@ -172,7 +175,7 @@ final class NotchPanel: NSPanel {
     /// fractional origins, which desyncs the computed and actual frames.
     static func expandedRect(on screen: NSScreen, contentSize: CGSize) -> NSRect {
         let base = notchRect(on: screen)
-        let minWidth = base.width + (wingWidth + 24) * 2
+        let minWidth = base.width + (leadingWingWidth + 24) * 2
         let width = (min(max(contentSize.width, minWidth), 540)).rounded(.up)
         let minHeight = base.height + 56
         let height = (min(max(contentSize.height, minHeight), 300)).rounded(.up)
