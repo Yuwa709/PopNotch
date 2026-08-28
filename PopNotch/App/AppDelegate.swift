@@ -18,7 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.start()
 
         // Modules register here, one line each — the Phase 2 goal made real.
-        let media = MediaModule(sources: [SpotifyAdapter()], account: spotifyAccount)
+        // Order is not precedence: MediaModule arbitrates by what is actually
+        // playing. See MediaModule.shouldTakeOver(_:from:).
+        let media = MediaModule(sources: [SpotifyAdapter(), MusicAdapter()], account: spotifyAccount)
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)
         }

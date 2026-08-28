@@ -14,7 +14,17 @@ import os
 ///
 /// Artwork itself is an image fetch from the URL Spotify's scripting
 /// interface hands us — a network call permitted by the hard rule 6 decision
-/// recorded in PROJECT-CONTEXT.md.
+/// recorded in PROJECT-CONTEXT.md. `artwork url` is the only usable route:
+/// the dictionary's `artwork` property is image data that Spotify does not
+/// populate, so reading it yields nothing.
+///
+/// What this dictionary cannot do, verified against `sdef`:
+/// - **No queue.** There is no playlist, context, or queue class. `next
+///   track` is a *command* that skips; it returns no data. `upNext` is
+///   therefore always nil here, and never derived by skipping.
+/// - **`starred` is read-only** (`access="r"`), so favourite is reported as
+///   `.readOnly` and `setFavorite` is unimplemented. Anything offering the
+///   user a Spotify star toggle would be offering a lie.
 @MainActor
 final class SpotifyAdapter: MediaSource {
 
@@ -32,6 +42,11 @@ final class SpotifyAdapter: MediaSource {
     private var artworkCache: (url: String, data: Data)?
     private var lastSnapshot: NowPlaying?
     private var artworkTask: URLSessionDataTask?
+
+    /// Read from `starred` on each pull. `.unsupported` until a script call
+    /// succeeds, so a denied-Automation session shows no favourite at all
+    /// rather than a confident-looking false.
+    private(set) var favorite: FavoriteState = .unsupported
 
     var isPlayerRunning: Bool {
         NSWorkspace.shared.runningApplications.contains {
@@ -84,7 +99,7 @@ final class SpotifyAdapter: MediaSource {
             return (player state as text) & "\\n" & name of t & "\\n" & artist of t \
                 & "\\n" & album of t & "\\n" & (duration of t as text) \
                 & "\\n" & (player position as text) & "\\n" & artwork url of t \
-                & "\\n" & (id of t as text)
+                & "\\n" & (id of t as text) & "\\n" & (starred of t as text)
         end tell
         """
 
@@ -92,6 +107,7 @@ final class SpotifyAdapter: MediaSource {
         // Never Apple-Event a dead app: "tell application" would launch it.
         guard isPlayerRunning else {
             lastSnapshot = nil
+            favorite = .unsupported
             onUpdate?(nil)
             return
         }
@@ -113,6 +129,10 @@ final class SpotifyAdapter: MediaSource {
                 onUpdate?(nil)
                 return
             }
+            favorite = parsed.starred.map(FavoriteState.readOnly) ?? .unsupported
+            Self.logger.notice(
+                "Pull ok: starred=\(parsed.starred.map(String.init) ?? "unknown", privacy: .public), upNext=nil (no queue in dictionary)"
+            )
             publish(parsed.snapshot)
             if let url = parsed.artworkURL { fetchArtwork(from: url) }
         case .failure(let failure):
@@ -226,8 +246,14 @@ enum SpotifyParsing {
     }
 
     /// Parses the query script's newline-separated output:
-    /// state, title, artist, album, duration-ms, position-s, artwork URL, id.
-    static func parse(scriptOutput: String) -> (snapshot: NowPlaying, artworkURL: String?)? {
+    /// state, title, artist, album, duration-ms, position-s, artwork URL, id,
+    /// and `starred`.
+    ///
+    /// The `starred` field is optional on purpose: output from an older build
+    /// of the script still parses rather than failing whole. Parsing another
+    /// process's stdout should degrade, not throw everything away.
+    static func parse(scriptOutput: String)
+        -> (snapshot: NowPlaying, artworkURL: String?, starred: Bool?)? {
         guard scriptOutput != "stopped" else { return nil }
         let lines = scriptOutput.components(separatedBy: "\n")
         guard lines.count >= 8 else { return nil }
@@ -247,6 +273,8 @@ enum SpotifyParsing {
 
         guard snapshot.hasContent else { return nil }
         let url = lines[6].isEmpty ? nil : lines[6]
-        return (snapshot, url)
+        // AppleScript booleans stringify as "true"/"false".
+        let starred: Bool? = lines.count >= 9 ? (lines[8] == "true" ? true : (lines[8] == "false" ? false : nil)) : nil
+        return (snapshot, url, starred)
     }
 }

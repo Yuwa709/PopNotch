@@ -1,11 +1,9 @@
 import Foundation
 import os
 
-/// What the notch shows from the user's queue.
-struct SpotifyUpNext: Equatable {
-    let title: String
-    let artist: String
-}
+// `SpotifyUpNext` is now a typealias for the source-neutral `UpNextTrack`,
+// declared in MediaSource.swift — Music supplies the same shape from its own
+// dictionary, so the type should not be named after one player.
 
 /// Official artist metadata. Note `followers` is Spotify's follower count —
 /// NOT monthly listeners, which the official API does not expose. Labelled

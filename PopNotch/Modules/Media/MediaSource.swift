@@ -1,6 +1,49 @@
 import Foundation
 import os
 
+/// The track queued after the current one, when the player exposes one.
+///
+/// Only Music.app can answer this from its scripting dictionary. Spotify's
+/// has no playlist, context, or queue — its `next track` is a *command* that
+/// skips, not data — so `SpotifyAdapter` always reports nil here and Up Next
+/// for Spotify comes from the optional Web API instead.
+struct UpNextTrack: Equatable {
+    let title: String
+    let artist: String
+}
+
+/// Kept so the Web API layer and its tests keep their original name while
+/// both sources now speak the same type.
+typealias SpotifyUpNext = UpNextTrack
+
+/// Whether the current track is favourited, and whether this source can
+/// change it.
+///
+/// The distinction is forced by the dictionaries, not by preference:
+/// Spotify's `starred` is `access="r"` — readable, never writable — while
+/// Music's `favorited` is read-write. A UI that offers a toggle for Spotify
+/// would be offering something the scripting interface cannot do.
+enum FavoriteState: Equatable {
+    /// No favourite concept is reachable for this source right now.
+    case unsupported
+    /// Known, but this source cannot change it (Spotify's `starred`).
+    case readOnly(Bool)
+    /// Known and changeable (Music's `favorited`).
+    case editable(Bool)
+
+    var value: Bool? {
+        switch self {
+        case .unsupported: nil
+        case .readOnly(let on), .editable(let on): on
+        }
+    }
+
+    var isEditable: Bool {
+        if case .editable = self { return true }
+        return false
+    }
+}
+
 /// One music player PopNotch can read and control.
 ///
 /// Adapters (Spotify, Apple Music) implement this; `MediaModule` owns a list
@@ -40,6 +83,26 @@ protocol MediaSource: AnyObject {
 
     /// Jump playback to an absolute position, for scrubbing.
     func seek(to seconds: TimeInterval)
+
+    /// Next track in the player's own queue, refreshed by `refresh()` rather
+    /// than fetched on access — reading it costs an Apple Event, and this is
+    /// read from view code.
+    var upNext: UpNextTrack? { get }
+
+    /// Favourite state for the current track, refreshed by `refresh()`.
+    var favorite: FavoriteState { get }
+
+    /// Changes the favourite flag. A no-op unless `favorite` is `.editable`;
+    /// callers should still check first so the UI never offers a dead control.
+    func setFavorite(_ on: Bool)
+}
+
+/// Defaults for sources whose player exposes neither concept, so an adapter
+/// only implements what its dictionary actually supports.
+extension MediaSource {
+    var upNext: UpNextTrack? { nil }
+    var favorite: FavoriteState { .unsupported }
+    func setFavorite(_ on: Bool) {}
 }
 
 /// Runs an AppleScript source and reports the result or the error code.

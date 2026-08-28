@@ -76,6 +76,20 @@ final class MediaModule: NotchModule {
     @ObservationIgnored private var lastTrackKey: String?
     @ObservationIgnored private var hadPresence = false
 
+    /// Which adapter currently owns the notch. Written only by
+    /// `handleUpdate(_:from:)`; every command routes here rather than to
+    /// "the first running player", which was correct only while one adapter
+    /// existed.
+    @ObservationIgnored private var activeSource: (any MediaSource)?
+
+    /// Whether the current track's favourite can be changed. False for
+    /// Spotify without a connected account, because `starred` is read-only
+    /// in its dictionary — the UI must not offer a toggle there.
+    var canToggleFavorite: Bool {
+        if activeSource?.sourceID == "spotify" { return webAPI != nil && accountConnected }
+        return activeSource?.favorite.isEditable ?? false
+    }
+
     var accountConnected: Bool { account?.isConnected == true }
 
     var permissionDenied: Bool {
@@ -87,10 +101,78 @@ final class MediaModule: NotchModule {
         self.account = account
         self.webAPI = account.map(SpotifyWebAPI.init(account:))
         for source in sources {
-            source.onUpdate = { [weak self] snapshot in
-                self?.handleUpdate(snapshot)
+            source.onUpdate = { [weak self, weak source] snapshot in
+                guard let source else { return }
+                self?.handleUpdate(snapshot, from: source)
             }
             source.startObserving()
+        }
+    }
+
+    /// Picks which player owns the notch when more than one is running.
+    ///
+    /// Rules, in order:
+    /// 1. A source reporting *playing* audio always wins. Two players cannot
+    ///    both be audible for long, and the audible one is what the user means.
+    /// 2. Otherwise the incumbent keeps the notch, so a paused Spotify in the
+    ///    background cannot stomp a paused Music the user is actually looking
+    ///    at. This is the "never switch silently" rule from Phase 4 task 2.
+    /// 3. A source losing content only clears the notch if it *held* it; the
+    ///    notch then falls back to any other source that still has something.
+    ///
+    /// Before this existed the module was last-writer-wins, which was correct
+    /// only because exactly one adapter was registered.
+    private func shouldTakeOver(_ snapshot: NowPlaying?, from source: any MediaSource) -> Bool {
+        if snapshot?.isPlaying == true { return true }
+        guard let active = activeSource else { return snapshot?.hasContent == true }
+        return active === source
+    }
+
+    private func handleUpdate(_ snapshot: NowPlaying?, from source: any MediaSource) {
+        guard shouldTakeOver(snapshot, from: source) else { return }
+
+        if activeSource !== source, snapshot?.hasContent == true {
+            Self.logger.notice("Active media source -> \(source.sourceID, privacy: .public)")
+        }
+
+        if snapshot?.hasContent == true {
+            activeSource = source
+        } else if activeSource === source {
+            // The owner went quiet: hand off to another source still playing
+            // something rather than blanking the notch outright.
+            activeSource = sources.first { $0 !== source && $0.isPlayerRunning }
+        }
+
+        adoptSourceExtras()
+        handleUpdate(snapshot)
+    }
+
+    /// Resolves Up Next and favourite for whichever source owns the notch.
+    ///
+    /// Precedence is per source, because the two dictionaries expose
+    /// genuinely different things:
+    /// - **Music** answers both itself, with no network: a real queue via
+    ///   `current playlist`, and a read-write `favorited`.
+    /// - **Spotify** answers neither usefully. It has no queue class at all,
+    ///   and `starred` is read-only. Its Up Next and its *editable* like come
+    ///   from the optional Web API; with no account connected it degrades to
+    ///   `starred` as display-only, which is all the dictionary permits.
+    ///
+    /// Synchronous and free — the adapter refreshed these during its own
+    /// Apple Event before calling back.
+    private func adoptSourceExtras() {
+        guard let active = activeSource else {
+            upNext = nil
+            likedCurrent = nil
+            return
+        }
+        if active is SpotifyAdapter {
+            guard !accountConnected else { return } // Web API path owns these
+            upNext = nil
+            likedCurrent = active.favorite.value
+        } else {
+            upNext = active.upNext
+            likedCurrent = active.favorite.value
         }
     }
 
@@ -132,13 +214,18 @@ final class MediaModule: NotchModule {
         refreshAccountExtras()
     }
 
+    /// The adapter commands go to: whoever owns the notch, falling back to
+    /// any running player before the notch has been claimed.
+    private var commandTarget: (any MediaSource)? {
+        activeSource ?? sources.first { $0.isPlayerRunning }
+    }
+
     func send(_ command: MediaCommand) {
-        // v1: one adapter. With several, route to the one that is running.
-        sources.first { $0.isPlayerRunning }?.send(command)
+        commandTarget?.send(command)
     }
 
     func seek(to seconds: TimeInterval) {
-        sources.first { $0.isPlayerRunning }?.seek(to: seconds)
+        commandTarget?.seek(to: seconds)
     }
 
     private func fetchLyrics(for snapshot: NowPlaying, trackKey: String) {
@@ -186,8 +273,12 @@ final class MediaModule: NotchModule {
     }
 
     /// Event-driven only (track change, panel opening): no polling loop.
+    ///
+    /// Gated on Spotify owning the notch: querying Spotify's Web API while
+    /// Apple Music is playing would report the wrong player's queue and the
+    /// wrong track's like state.
     private func refreshAccountExtras() {
-        guard let webAPI, accountConnected else { return }
+        guard let webAPI, accountConnected, activeSource is SpotifyAdapter else { return }
         let trackID = currentTrackID
         Task { [weak self] in
             let next = await webAPI.fetchUpNext()
@@ -254,10 +345,23 @@ final class MediaModule: NotchModule {
         showFullLyrics = false
     }
 
+    /// Only ever called when `canToggleFavorite` is true. Spotify writes go
+    /// through the Web API because its `starred` is read-only; Music writes
+    /// go straight to the player.
     func toggleLike() {
-        guard let webAPI, let trackID = currentTrackID else { return }
+        guard canToggleFavorite else { return }
         let target = !(likedCurrent ?? false)
         likedCurrent = target // optimistic; revert on failure
+
+        if let active = activeSource, !(active is SpotifyAdapter) {
+            active.setFavorite(target)
+            likedCurrent = active.favorite.value
+            return
+        }
+        guard let webAPI, let trackID = currentTrackID else {
+            likedCurrent = !target
+            return
+        }
         Task { [weak self] in
             let accepted = await webAPI.setSaved(target, trackID: trackID)
             if !accepted { self?.likedCurrent = !target }
