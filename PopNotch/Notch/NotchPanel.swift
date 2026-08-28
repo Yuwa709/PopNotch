@@ -63,17 +63,21 @@ final class NotchPanel: NSPanel {
     private var currentState: State = .idle
 
     /// Replaces the notch's contents. All nil shows the bare silhouette.
+    /// `reveal` plays the emerge-from-the-notch entrance — pass true only on
+    /// the transition into expanded, not on content updates mid-display.
     func setContent(
         _ content: AnyView?,
         leadingWing: AnyView? = nil,
         trailingWing: AnyView? = nil,
-        neckHeight: CGFloat
+        neckHeight: CGFloat,
+        reveal: Bool = false
     ) {
         hostingView?.rootView = NotchOverlayView(
             content: content,
             leadingWing: leadingWing,
             trailingWing: trailingWing,
-            neckHeight: neckHeight
+            neckHeight: neckHeight,
+            revealContent: reveal
         )
     }
 
@@ -250,11 +254,12 @@ final class NotchPanel: NSPanel {
             // silently flattened — user never felt the bounce it promised).
             // The sideways component of the overshoot is what makes opening
             // read as blooming outward, not just dropping down.
+            // User-tuned subtle: half the first attempt's travel.
             var overshoot = target
-            overshoot.origin.x -= 7
-            overshoot.size.width += 14
-            overshoot.origin.y -= 9
-            overshoot.size.height += 9
+            overshoot.origin.x -= 4
+            overshoot.size.width += 8
+            overshoot.origin.y -= 5
+            overshoot.size.height += 5
 
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.21

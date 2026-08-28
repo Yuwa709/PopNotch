@@ -74,6 +74,8 @@ struct NotchOverlayView: View {
     var trailingWing: AnyView?
     /// The menu bar band, which the housing occupies. Content starts below it.
     var neckHeight: CGFloat = 32
+    /// Play the emerge-from-the-notch entrance on this content.
+    var revealContent: Bool = false
 
     var body: some View {
         // Expanded (has content) draws the softer card; compact and idle
@@ -107,6 +109,7 @@ struct NotchOverlayView: View {
                     .padding(.top, neckHeight + 8)
                     .padding(.horizontal, 32)
                     .padding(.bottom, 20)
+                    .modifier(RevealFromNotch(enabled: revealContent))
             }
         }
         // The hover halo: the panel frame is inflated by this margin, and
@@ -123,5 +126,27 @@ struct NotchOverlayView: View {
             if let view { view } else { Color.clear }
         }
         .frame(width: width, height: neckHeight, alignment: .center)
+    }
+}
+
+/// The entrance for expanded content: pulled out of the notch with the
+/// panel's own growth — scaling from the top center — with a fast fade and
+/// a settling blur standing in for motion blur. Timed to the expand
+/// animation so content and silhouette move as one.
+private struct RevealFromNotch: ViewModifier {
+    let enabled: Bool
+    @State private var revealed = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(revealed || !enabled ? 1 : 0.55, anchor: .top)
+            .opacity(revealed || !enabled ? 1 : 0)
+            .blur(radius: revealed || !enabled ? 0 : 7)
+            .onAppear {
+                guard enabled, !revealed else { return }
+                withAnimation(.easeOut(duration: 0.26)) {
+                    revealed = true
+                }
+            }
     }
 }

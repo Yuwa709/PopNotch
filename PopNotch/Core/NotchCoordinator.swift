@@ -178,9 +178,15 @@ final class NotchCoordinator {
     /// Measured size of the current expanded content, set by renderContent.
     private var expandedContentSize: CGSize = .zero
 
+    /// The state most recently applied to the panel, so renderContent can
+    /// tell an entrance (play the reveal) from an in-place update (do not).
+    private var lastAppliedState: NotchPanel.State = .idle
+
     private func applyState() {
         guard let panel, let screen = currentScreen else { return }
-        panel.setState(desiredState(), on: screen, expandedContentSize: expandedContentSize)
+        let state = desiredState()
+        panel.setState(state, on: screen, expandedContentSize: expandedContentSize)
+        lastAppliedState = state
     }
 
     /// Measures what the expanded panel is about to display by laying the
@@ -225,7 +231,12 @@ final class NotchCoordinator {
         case .expanded:
             let view = content(for: arbiter.presentation)
             expandedContentSize = measureExpandedContent(view, neck: neck)
-            panel.setContent(view, neckHeight: neck)
+            // The emerge entrance plays only when the panel is opening —
+            // content swaps mid-display (lyrics arriving, hover re-renders)
+            // must not re-bloom. Hard rule 8: skipped under Reduce Motion.
+            let entering = lastAppliedState != .expanded
+                && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            panel.setContent(view, neckHeight: neck, reveal: entering)
         case .compact:
             let wings = standbyWings()
             panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing, neckHeight: neck)
