@@ -9,9 +9,15 @@ import SwiftUI
 /// stays drawable without artifacts.
 struct NotchShape: Shape {
 
-    // Softened to match the Sapphire reference by user verdict.
-    var topRadius: CGFloat = 10
-    var bottomRadius: CGFloat = 20
+    /// Per-state radii, user-tuned: the open card is softer than the
+    /// compact bar.
+    static let compactTopRadius: CGFloat = 10
+    static let compactBottomRadius: CGFloat = 20
+    static let expandedTopRadius: CGFloat = 12
+    static let expandedBottomRadius: CGFloat = 26
+
+    var topRadius: CGFloat = NotchShape.compactTopRadius
+    var bottomRadius: CGFloat = NotchShape.compactBottomRadius
 
     func path(in rect: CGRect) -> Path {
         let topR = min(topRadius, rect.width / 4, rect.height / 2)
@@ -68,8 +74,15 @@ struct NotchOverlayView: View {
     var neckHeight: CGFloat = 32
 
     var body: some View {
+        // Expanded (has content) draws the softer card; compact and idle
+        // keep the tighter bar silhouette.
+        let expanded = content != nil
         ZStack(alignment: .top) {
-            NotchShape().fill(Color.black)
+            NotchShape(
+                topRadius: expanded ? NotchShape.expandedTopRadius : NotchShape.compactTopRadius,
+                bottomRadius: expanded ? NotchShape.expandedBottomRadius : NotchShape.compactBottomRadius
+            )
+            .fill(Color.black)
             if leadingWing != nil || trailingWing != nil {
                 // Centered in each wing: hugging the outer corners looked
                 // crowded, hugging the housing looked glued to it (both
