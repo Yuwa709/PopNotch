@@ -123,7 +123,9 @@ enum AppleScriptRunner {
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "AppleScript")
 
     /// errAEEventNotPermitted: the user declined the Automation prompt.
-    static let permissionDeniedCode = -1743
+    /// nonisolated: an immutable Int read by Failure.isPermissionDenied
+    /// from nonisolated contexts; isolation was only inherited.
+    nonisolated static let permissionDeniedCode = -1743
 
     struct Failure: Error {
         let code: Int
