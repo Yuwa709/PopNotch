@@ -45,13 +45,29 @@ final class NotchPanel: NSPanel {
         hidesOnDeactivate = false
 
         let hoverView = NotchHoverView()
-        let hostingView = NSHostingView(rootView: NotchOverlayView())
-        hostingView.frame = hoverView.bounds
-        hostingView.autoresizingMask = [.width, .height]
-        hoverView.addSubview(hostingView)
+        let hosting = NSHostingView(rootView: NotchOverlayView(neckHeight: notchRect.height))
+        hosting.frame = hoverView.bounds
+        hosting.autoresizingMask = [.width, .height]
+        hoverView.addSubview(hosting)
+        hostingView = hosting
         contentView = hoverView
 
         setFrame(notchRect, display: false)
+    }
+
+    /// Retained so the coordinator can swap what the notch displays without
+    /// rebuilding the panel.
+    private var hostingView: NSHostingView<NotchOverlayView>?
+
+    /// Replaces the notch's contents. Nil shows the bare silhouette.
+    func setContent(_ content: AnyView?, neckHeight: CGFloat) {
+        hostingView?.rootView = NotchOverlayView(content: content, neckHeight: neckHeight)
+    }
+
+    /// Seconds the cursor must dwell before hover reports true.
+    var hoverEnterDelay: TimeInterval {
+        get { (contentView as? NotchHoverView)?.enterDebounce ?? 0.35 }
+        set { (contentView as? NotchHoverView)?.enterDebounce = newValue }
     }
 
     /// Debounced hover state from the tracking view. Task 7 wires

@@ -98,6 +98,14 @@ final class NotchArbiter {
         recompute()
     }
 
+    /// Seconds until the active activity yields, or nil when nothing is
+    /// active. Lets the coordinator schedule a single one-shot timer at the
+    /// exact moment instead of polling — hard rule 9 by construction.
+    var timeUntilExpiry: TimeInterval? {
+        guard let active else { return nil }
+        return max(0, active.expiresAt - now())
+    }
+
     /// Expires the active activity if its duration has elapsed. Driven by the
     /// coordinator; the arbiter owns no timer of its own so it cannot leak one.
     func tick() {

@@ -13,8 +13,9 @@ final class NotchHoverView: NSView {
 
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "Hover")
 
-    /// User-tuned: 200ms let too much passing traffic through.
-    private static let enterDebounce: TimeInterval = 0.35
+    /// User-tuned: 200ms let too much passing traffic through. Overridable
+    /// from settings via `NotchPanel.hoverEnterDelay`.
+    var enterDebounce: TimeInterval = 0.35
     private static let exitGrace: TimeInterval = 0.1
 
     /// Fires on every debounced state change.
@@ -52,7 +53,7 @@ final class NotchHoverView: NSView {
             self.onHoverChange?(true)
         }
         pendingEnter = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.enterDebounce, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + enterDebounce, execute: work)
     }
 
     override func mouseExited(with event: NSEvent) {

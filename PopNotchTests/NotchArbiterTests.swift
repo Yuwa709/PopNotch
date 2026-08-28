@@ -142,6 +142,59 @@ final class NotchArbiterTests: XCTestCase {
         XCTAssertEqual(arbiter.presentation, .standby(["stats"]))
     }
 
+    // MARK: - Expiry scheduling
+
+    func testNoExpiryWhenIdle() {
+        arbiter.register(StubModule(id: "stats"))
+        XCTAssertNil(arbiter.timeUntilExpiry, "an idle notch must schedule no timer")
+    }
+
+    func testTimeUntilExpiryCountsDown() {
+        let media = StubModule(id: "media", priority: .elevated)
+        arbiter.register(media)
+
+        arbiter.requestLiveActivity(media.activity(duration: 5))
+        XCTAssertEqual(arbiter.timeUntilExpiry ?? -1, 5, accuracy: 0.001)
+
+        clock.advance(by: 3)
+        XCTAssertEqual(arbiter.timeUntilExpiry ?? -1, 2, accuracy: 0.001)
+    }
+
+    func testTimeUntilExpiryNeverGoesNegative() {
+        let media = StubModule(id: "media", priority: .elevated)
+        arbiter.register(media)
+        arbiter.requestLiveActivity(media.activity(duration: 1))
+
+        clock.advance(by: 10)
+        XCTAssertEqual(arbiter.timeUntilExpiry ?? -1, 0, accuracy: 0.001)
+    }
+
+    func testExpiryClearsAfterYielding() {
+        let media = StubModule(id: "media", priority: .elevated)
+        arbiter.register(media)
+        arbiter.requestLiveActivity(media.activity(duration: 1))
+
+        clock.advance(by: 1)
+        arbiter.tick()
+        XCTAssertNil(arbiter.timeUntilExpiry, "no timer must survive the activity")
+    }
+
+    func testQueuedActivityGetsItsFullDurationFromWhenItStarts() {
+        let a = StubModule(id: "a", priority: .standard)
+        let b = StubModule(id: "b", priority: .standard)
+        arbiter.register(a)
+        arbiter.register(b)
+
+        arbiter.requestLiveActivity(a.activity(duration: 2))
+        arbiter.requestLiveActivity(b.activity(duration: 4))
+
+        clock.advance(by: 2)
+        arbiter.tick()
+        XCTAssertEqual(arbiter.presentation, .liveActivity("b"))
+        XCTAssertEqual(arbiter.timeUntilExpiry ?? -1, 4, accuracy: 0.001,
+                       "queued time must not count against its duration")
+    }
+
     // MARK: - Enablement
 
     func testDisablingActiveModuleYieldsTheNotch() {

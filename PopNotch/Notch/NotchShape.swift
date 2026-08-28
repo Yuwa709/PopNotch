@@ -47,15 +47,31 @@ struct NotchShape: Shape {
     }
 }
 
-/// What the panel hosts: the silhouette filled black.
+/// What the panel hosts: the silhouette, plus whatever the arbiter says
+/// should be inside it.
 ///
-/// Pure black for now — matching the physical bezel's black on an XDR panel
-/// is task 8, user-verified by eye. The fill color is the single thing that
-/// task will tune.
+/// The fill measures #000000 at the window buffer — the darkest displayable
+/// value. Solid, no stroke; any residual mismatch against the bezel is LCD
+/// backlight, not colour.
+///
+/// Content is inset below the menu bar band so it never renders behind the
+/// physical camera housing, where it would be invisible.
 struct NotchOverlayView: View {
+
+    var content: AnyView?
+    /// The menu bar band, which the housing occupies. Content starts below it.
+    var neckHeight: CGFloat = 32
+
     var body: some View {
-        NotchShape()
-            .fill(Color.black)
-            .ignoresSafeArea()
+        ZStack {
+            NotchShape().fill(Color.black)
+            if let content {
+                content
+                    .padding(.top, neckHeight + 4)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+            }
+        }
+        .ignoresSafeArea()
     }
 }
