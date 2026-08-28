@@ -73,51 +73,68 @@ struct MediaWingArtwork: View {
     let module: MediaModule
 
     var body: some View {
+        // Intrinsic size only: the wing slot's alignment decides placement.
         ArtworkThumb(data: module.nowPlaying?.artworkData, side: 22, corner: 5)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 /// Right wing: a small animated waveform while playing, still while paused.
 ///
 /// Decorative for now — bars move on time, not on real amplitude; the honest
-/// upgrade is Phase "real audio" behind its permission. The timeline pauses
-/// itself whenever playback pauses, so nothing animates (and nothing ticks)
-/// while music is stopped — and the view only exists while the wings do.
+/// upgrade is the audio-capture feature behind its permission.
+///
+/// Driven by repeating Core Animation animations, NOT per-frame SwiftUI
+/// updates: this panel can never become key (hard rule 3), and SwiftUI
+/// throttles TimelineView callbacks in non-key windows — two rounds of
+/// user-visible stutter proved it. CA repeats run in the render server,
+/// immune to that throttling, at effectively zero CPU. When playback
+/// pauses the animations are removed entirely; nothing runs.
 struct MediaWingWaveform: View {
     let module: MediaModule
 
-    private static let barCount = 4
-
     var body: some View {
         let playing = module.nowPlaying?.isPlaying == true
-        // No minimumInterval: the hint quantized updates to a visible stutter
-        // (user-observed "5 to 10 FPS") in this borderless panel. Native
-        // refresh is smooth, costs nothing measurable for four capsules, and
-        // still pauses completely with playback.
-        TimelineView(.animation(paused: !playing)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 2.5) {
-                ForEach(0..<Self.barCount, id: \.self) { index in
-                    Capsule()
-                        .fill(.white.opacity(0.85))
-                        .frame(width: 2.5, height: barHeight(time: t, index: index, playing: playing))
-                }
+        HStack(spacing: 2.5) {
+            ForEach(0..<4, id: \.self) { index in
+                WaveBar(index: index, playing: playing)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        // Fixed height so bars grow around their center instead of pushing
+        // the row's layout; intrinsic width so wing alignment places it.
+        .frame(height: 14)
+    }
+}
+
+private struct WaveBar: View {
+    let index: Int
+    let playing: Bool
+
+    @State private var lifted = false
+
+    var body: some View {
+        Capsule()
+            .fill(.white.opacity(0.85))
+            .frame(width: 2.5, height: playing ? (lifted ? 12 : 5) : 4)
+            .onAppear { apply(playing) }
+            .onChange(of: playing) { _, nowPlaying in apply(nowPlaying) }
     }
 
-    private func barHeight(time: TimeInterval, index: Int, playing: Bool) -> CGFloat {
-        guard playing else { return 4 }
-        // User-tuned: slow and smooth. Two blended sines per bar — no
-        // abs(), whose corner at zero reads as a harsh bounce — at gentle
-        // frequencies, with a modest swing. 30fps so motion has no visible
-        // stepping.
-        let primary = sin(time * (3.1 + Double(index) * 0.6) + Double(index) * 2.1)
-        let secondary = sin(time * 2.0 + Double(index) * 1.1)
-        let level = 0.5 + 0.35 * primary + 0.15 * secondary   // 0...1, smooth
-        return 5 + 7 * level                                   // 5...12pt
+    /// Speed matches the user-approved tempo. Distinct duration and start
+    /// delay per bar keep them from ever syncing up.
+    private func apply(_ playing: Bool) {
+        if playing {
+            withAnimation(
+                .easeInOut(duration: 0.45 + Double(index) * 0.08)
+                .repeatForever(autoreverses: true)
+                .delay(Double(index) * 0.13)
+            ) {
+                lifted = true
+            }
+        } else {
+            withAnimation(.easeOut(duration: 0.2)) {
+                lifted = false
+            }
+        }
     }
 }
 
