@@ -273,20 +273,24 @@ struct MediaFullLyricsView: View {
                     let currentIndex = lines.lastIndex { $0.time <= elapsed + 0.2 }
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: false) {
-                            VStack(spacing: 12) {
+                            // Styled to the Sapphire reference: big bold
+                            // wrapped lines, current in the accent, the rest
+                            // dimmed, generous spacing.
+                            VStack(spacing: 22) {
                                 ForEach(lines.indices, id: \.self) { index in
                                     Text(lines[index].text)
-                                        .font(.system(size: index == currentIndex ? 17 : 13,
-                                                      weight: index == currentIndex ? .bold : .medium))
+                                        .font(.system(size: index == currentIndex ? 24 : 19,
+                                                      weight: .bold))
                                         .foregroundStyle(index == currentIndex
                                             ? (module.artworkAccent ?? .mediaAccent)
-                                            : .white.opacity(0.35))
+                                            : .white.opacity(0.30))
                                         .multilineTextAlignment(.center)
                                         .frame(maxWidth: .infinity)
                                         .id(index)
                                 }
                             }
-                            .padding(.vertical, 60)
+                            .padding(.vertical, 100)
+                            .padding(.horizontal, 4)
                         }
                         .onChange(of: currentIndex) { _, newIndex in
                             guard let newIndex else { return }
@@ -301,7 +305,7 @@ struct MediaFullLyricsView: View {
                         }
                     }
                 }
-                .frame(height: 190)
+                .frame(height: 260)
                 .mask(
                     // Fade the edges so lines melt in and out, per the
                     // reference screenshot.

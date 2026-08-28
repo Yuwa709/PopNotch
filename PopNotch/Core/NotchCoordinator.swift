@@ -262,7 +262,12 @@ final class NotchCoordinator {
         case .standby(let ids):
             let modules = ids.compactMap { arbiter.module(for: $0) }
             guard !modules.isEmpty else { return nil }
-            if isHovered {
+            // Expanded content whenever the panel is expanded for ANY reason
+            // — hover, live activity, or a pinned takeover. Keying this off
+            // the cursor alone swapped in compact content (and shrank the
+            // panel around it) the moment the cursor left a pinned lyrics
+            // view: user-observed bug.
+            if desiredState() == .expanded {
                 // Stacked, not side by side: several expanded modules in a row
                 // overflow the panel and truncate (observed with media plus
                 // five stats). The notch grows downward, so height is the
