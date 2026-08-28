@@ -270,11 +270,18 @@ final class NotchPanel: NSPanel {
                 context.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.90, 0.45, 1.0)
                 self.animator().setFrame(overshoot, display: true)
             }, completionHandler: { [weak self] in
-                guard let self, self.currentState == .expanded else { return }
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.13
-                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                    self.animator().setFrame(target, display: true)
+                // AppKit invokes animation completions on the main thread;
+                // assumeIsolated states that fact to the compiler (and traps
+                // if it were ever violated) without deferring a runloop turn
+                // the way Task would — the settle must start this tick or
+                // the bounce reads as a hitch.
+                MainActor.assumeIsolated {
+                    guard let self, self.currentState == .expanded else { return }
+                    NSAnimationContext.runAnimationGroup { context in
+                        context.duration = 0.13
+                        context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                        self.animator().setFrame(target, display: true)
+                    }
                 }
             })
         } else {
