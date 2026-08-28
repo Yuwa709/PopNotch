@@ -22,9 +22,14 @@ import os
 /// - **No queue.** There is no playlist, context, or queue class. `next
 ///   track` is a *command* that skips; it returns no data. `upNext` is
 ///   therefore always nil here, and never derived by skipping.
-/// - **`starred` is read-only** (`access="r"`), so favourite is reported as
-///   `.readOnly` and `setFavorite` is unimplemented. Anything offering the
-///   user a Spotify star toggle would be offering a lie.
+/// - **No favourite state.** `starred` is in the dictionary with
+///   `access="r"`, but Spotify does not implement the handler: reading it
+///   throws **-10000 (errAEEventFailed)** against the live app, measured
+///   2026-08-28. It was briefly in the query script and took every other
+///   field down with it, because AppleScript aborts the whole `return`
+///   expression when one property fails — which is how nine working fields,
+///   artwork included, were lost to one unimplemented term. Favourite is
+///   therefore `.unsupported` here, not `.readOnly`. Do not re-add it.
 @MainActor
 final class SpotifyAdapter: MediaSource {
 
@@ -43,10 +48,11 @@ final class SpotifyAdapter: MediaSource {
     private var lastSnapshot: NowPlaying?
     private var artworkTask: URLSessionDataTask?
 
-    /// Read from `starred` on each pull. `.unsupported` until a script call
-    /// succeeds, so a denied-Automation session shows no favourite at all
-    /// rather than a confident-looking false.
-    private(set) var favorite: FavoriteState = .unsupported
+    /// Constant: Spotify exposes no readable favourite over AppleScript at
+    /// all (see the header note on `starred`). With an account connected the
+    /// Web API supplies a real, writable like; `MediaModule` owns that path
+    /// and never consults this property.
+    let favorite: FavoriteState = .unsupported
 
     var isPlayerRunning: Bool {
         NSWorkspace.shared.runningApplications.contains {
@@ -91,6 +97,9 @@ final class SpotifyAdapter: MediaSource {
 
     // MARK: - Pull
 
+    /// Exposed for the regression test that asserts `starred` never returns.
+    static var queryScriptSource: String { queryScript }
+
     /// One query returning newline-separated fields; see SpotifyParsing.
     private static let queryScript = """
         tell application "Spotify"
@@ -99,7 +108,7 @@ final class SpotifyAdapter: MediaSource {
             return (player state as text) & "\\n" & name of t & "\\n" & artist of t \
                 & "\\n" & album of t & "\\n" & (duration of t as text) \
                 & "\\n" & (player position as text) & "\\n" & artwork url of t \
-                & "\\n" & (id of t as text) & "\\n" & (starred of t as text)
+                & "\\n" & (id of t as text)
         end tell
         """
 
@@ -107,7 +116,6 @@ final class SpotifyAdapter: MediaSource {
         // Never Apple-Event a dead app: "tell application" would launch it.
         guard isPlayerRunning else {
             lastSnapshot = nil
-            favorite = .unsupported
             onUpdate?(nil)
             return
         }
@@ -129,16 +137,24 @@ final class SpotifyAdapter: MediaSource {
                 onUpdate?(nil)
                 return
             }
-            favorite = parsed.starred.map(FavoriteState.readOnly) ?? .unsupported
             Self.logger.notice(
-                "Pull ok: starred=\(parsed.starred.map(String.init) ?? "unknown", privacy: .public), upNext=nil (no queue in dictionary)"
+                "Pull ok: artwork=\(parsed.artworkURL == nil ? "none" : "url", privacy: .public), upNext=nil (no queue in dictionary)"
             )
             publish(parsed.snapshot)
             if let url = parsed.artworkURL { fetchArtwork(from: url) }
         case .failure(let failure):
+            // Log every failure, not just denials. A -10000 from one
+            // unimplemented property used to produce no adapter-level line
+            // at all, so a totally dead pull path looked identical to a
+            // healthy one — artwork silently missing with permission
+            // reporting green. Never let a failure mode be silent again.
             if failure.isPermissionDenied {
                 permissionDenied = true
                 Self.logger.notice("Automation permission denied for Spotify; pull path disabled")
+            } else {
+                Self.logger.error(
+                    "Spotify pull failed (\(failure.code, privacy: .public)) — not a permission problem; artwork and pull-only fields will be missing"
+                )
             }
         }
     }
@@ -246,14 +262,12 @@ enum SpotifyParsing {
     }
 
     /// Parses the query script's newline-separated output:
-    /// state, title, artist, album, duration-ms, position-s, artwork URL, id,
-    /// and `starred`.
+    /// state, title, artist, album, duration-ms, position-s, artwork URL, id.
     ///
-    /// The `starred` field is optional on purpose: output from an older build
-    /// of the script still parses rather than failing whole. Parsing another
-    /// process's stdout should degrade, not throw everything away.
+    /// Eight fields, and deliberately no ninth. `starred` was appended here
+    /// once and reverted — see the note on `SpotifyAdapter`.
     static func parse(scriptOutput: String)
-        -> (snapshot: NowPlaying, artworkURL: String?, starred: Bool?)? {
+        -> (snapshot: NowPlaying, artworkURL: String?)? {
         guard scriptOutput != "stopped" else { return nil }
         let lines = scriptOutput.components(separatedBy: "\n")
         guard lines.count >= 8 else { return nil }
@@ -273,8 +287,6 @@ enum SpotifyParsing {
 
         guard snapshot.hasContent else { return nil }
         let url = lines[6].isEmpty ? nil : lines[6]
-        // AppleScript booleans stringify as "true"/"false".
-        let starred: Bool? = lines.count >= 9 ? (lines[8] == "true" ? true : (lines[8] == "false" ? false : nil)) : nil
-        return (snapshot, url, starred)
+        return (snapshot, url)
     }
 }

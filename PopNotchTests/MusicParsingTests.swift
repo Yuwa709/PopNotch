@@ -118,22 +118,33 @@ final class MusicParsingTests: XCTestCase {
 /// that the adapter reports those limits rather than faking past them.
 final class SpotifyCapabilityTests: XCTestCase {
 
-    func testStarredParsesAsReadOnlyFavorite() {
-        let output = ["playing", "3005", "Childish Gambino", "because the internet",
-                      "212450", "12.607", "https://i.scdn.co/x", "spotify:track:abc", "true"]
-            .joined(separator: "\n")
-        XCTAssertEqual(SpotifyParsing.parse(scriptOutput: output)?.starred, true)
-    }
-
-    func testOlderEightFieldOutputStillParses() {
-        // Tolerant by design: a missing starred field degrades to unknown
-        // rather than discarding the whole snapshot.
+    /// Eight fields exactly. A ninth (`starred`) was added and reverted:
+    /// Spotify does not implement that handler, and one failing property
+    /// aborts the whole AppleScript `return`, so all eight working fields —
+    /// artwork among them — were lost with it.
+    func testParsesTheEightFieldOutput() {
         let output = ["playing", "3005", "Childish Gambino", "because the internet",
                       "212450", "12.607", "https://i.scdn.co/x", "spotify:track:abc"]
             .joined(separator: "\n")
         let parsed = SpotifyParsing.parse(scriptOutput: output)
         XCTAssertEqual(parsed?.snapshot.title, "3005")
-        XCTAssertNil(parsed?.starred)
+        XCTAssertEqual(parsed?.artworkURL, "https://i.scdn.co/x")
+    }
+
+    @MainActor
+    func testQueryScriptDoesNotAskForStarred() {
+        // The regression guard. Reading `starred` throws -10000 against the
+        // live app, which takes artwork down with it.
+        XCTAssertFalse(SpotifyAdapter.queryScriptSource.contains("starred"),
+                       "starred is unimplemented by Spotify; it must never return to the query")
+    }
+
+    @MainActor
+    func testSpotifyAdapterHasNoFavoriteState() {
+        // Not .readOnly — unavailable. With an account connected the Web API
+        // owns the like, and MediaModule never consults this.
+        XCTAssertEqual(SpotifyAdapter().favorite, .unsupported)
+        XCTAssertNil(SpotifyAdapter().favorite.value)
     }
 
     @MainActor

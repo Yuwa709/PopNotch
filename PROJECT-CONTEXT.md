@@ -130,6 +130,20 @@ The goal is every service — Spotify, Apple Music, Pandora, YouTube Music. The 
 
 **Decision: v1 ships Apple Music and Spotify via AppleScript.** Pandora and YouTube Music are blocked, not cut. The `MediaSource` protocol exists precisely so that if MediaRemote becomes viable again — or a per-service API path is chosen — it costs one new file rather than a rewrite.
 
+### One failing property kills the whole query
+
+Recorded because it cost a debugging round and was invisible while it did.
+
+`starred` appears in Spotify's dictionary as `access="r"`. It was verified there, added to the query script in `7667ad9`, and shipped. Against the live app it throws **-10000 (errAEEventFailed)** — Spotify declares the term but implements no handler.
+
+The damage was disproportionate to the field. AppleScript evaluates the whole `return` expression as one unit, so a single failing property aborts it entirely: all nine fields were lost, not just `starred`. Album artwork is the only field whose sole producer is that script, so artwork silently stopped appearing while title, artist, album and position kept arriving over the permission-free distributed notification. The failure looked exactly like an Automation problem and was not one — `permissionDenied` stayed correctly false, so both the in-notch banner and the Permissions tab reported Spotify as healthy.
+
+Three rules follow:
+
+1. **Execute every new AppleScript property against the live app before it enters a query.** See the working agreement above.
+2. **Keep query scripts minimal.** Every property added to a combined `return` is a new way to lose every other field in it. A field that is nice-to-have does not belong beside a load-bearing one.
+3. **Never let an adapter failure be silent.** The `.failure` branch logged only `isPermissionDenied`, so a -10000 produced no adapter-level line at all. Every failure now logs with its code.
+
 ### MediaRemote: resolved, not open
 
 Measured on hardware 2026-08-27 and written up in `PopNotch/Modules/Media/FINDINGS.md`. Summary: the framework loads and every symbol resolves inside PopNotch, but `MRMediaRemoteGetNowPlayingInfo` returns an **empty dictionary** to the signed app while the same call from an Apple-signed `swift` CLI returns full data for the same track at the same instant. The macOS 15.4 restriction is caller-identity gating and it is live on 26.5. The gating entitlement is private and not grantable.
@@ -208,6 +222,7 @@ Standing rules that came out of it:
 - One feature per session. Large asks get a proposed breakdown first, then wait for confirmation
 - Commit before starting anything risky so `git reset --hard` is always available
 - Verify a new file actually compiled into the target, not just that the build succeeded. A file that exists on disk but was never added in Xcode builds clean and does nothing
+- **An `sdef` proves vocabulary, not implementation.** A property can be declared in a scripting dictionary, with a type and an access level, and still have no working handler behind it. Before any new AppleScript property goes into a query script, **execute it against the live app** and read the result. `osascript -e 'tell application "X" to get <property> of current track'` is the whole test and it takes seconds
 - When a mistake gets corrected twice, that correction belongs in CLAUDE.md
 - Model guidance: Fable for notch geometry, window management, architecture, and the media adapter. Sonnet for routine edits and straightforward API plumbing
 
