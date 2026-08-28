@@ -32,10 +32,10 @@ Read this when starting a new phase. Do not read it for routine tasks.
 - **Phase 4 (media):** substantially built, not closed — this entry said "not started" long after the work shipped; do not trust it again without reading the tree
   - **Task zero answered.** MediaRemote probed on hardware 2026-08-27, macOS 26.5.2: symbols resolve in-app, the data callback returns `{}` while an Apple-signed CLI gets 17 keys for the same track. Caller-identity gating, live. Written up in `PopNotch/Modules/Media/FINDINGS.md`. AppleScript adapters chosen, user-approved
   - **Shipped:** `SpotifyAdapter` (AppleScript, notification-driven), artwork fetch + cache, artwork-derived accent, draggable scrub bar, LRCLIB time-synced lyrics with a pinned/full-takeover page, Spotify OAuth via PKCE, Up Next, like/unlike, official artist metadata (avatar, followers, popularity)
-  - **Not shipped:** the Apple Music adapter. `SpotifyAdapter` is the only `MediaSource` registered in `AppDelegate`, which means every doc promising "Apple Music and Spotify" is currently ahead of the build
-  - **Untested:** multi-source selection (Phase 4 task 2). `send(_:)` routes to `sources.first { $0.isPlayerRunning }` and `handleUpdate` is last-writer-wins. Correct by accident with one adapter. Write the rule down before the second adapter exists, not after
+  - **Shipped 2026-08-28 (`7667ad9`):** the Apple Music adapter, closing the promise gap — queue-based Up Next with three refusal cases, read-write favourite, embedded lyrics, artwork as raw bytes. Source arbitration (task 2) landed in the same commit as its prerequisite: playing wins, the incumbent keeps the notch, commands route to the owner
+  - **Corrected same day (`83bd628`):** `starred` removed from the Spotify query — present in the sdef, unimplemented by Spotify, threw -10000 and took all eight working fields down with it. The full incident and the verify-live rule are in PROJECT-CONTEXT
   - **Deliberately reverted:** auto-announcing track changes as a 4s live activity. It shipped and read as a glitch. The live-activity plumbing stays for whatever earns it
-  - 83 tests across parsing, metadata, OAuth, lyrics, artwork, settings, arbitration and stats
+  - 126 tests as of 2026-08-28: parsing for both adapters, metadata, OAuth, lyrics service and disk cache, artwork color, permission-banner rule, settings, arbitration, stats
 - **Phases 5 and 6:** not started
 
 Update this section at the end of each phase.

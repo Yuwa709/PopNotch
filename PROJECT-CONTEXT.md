@@ -150,12 +150,14 @@ Measured on hardware 2026-08-27 and written up in `PopNotch/Modules/Media/FINDIN
 
 This question is closed. Do not reopen it on the strength of another app appearing to have now-playing working — that observation is consistent with the Apple-signed-interpreter loophole (FINDINGS path 2), which is a different mechanism, not evidence that in-process MediaRemote works. Reopen only on a new **measurement** on a newer OS.
 
-### What actually ships today
+### What actually ships today (updated 2026-08-28, after 7667ad9)
 
-`SpotifyAdapter` is the only `MediaSource` in the target. **There is no Apple Music adapter yet**, so the sentence above describes the intent, not the build. Two things follow:
+Both promised adapters are registered in `AppDelegate`: `SpotifyAdapter` and `MusicAdapter`. The single-adapter world this section used to describe is gone.
 
-- Apple Music is the largest single gap between the plan and the app, and it is a Phase 4 completion task, not a new feature.
-- Multi-source selection is unproven. `MediaModule.send(_:)` picks `sources.first { $0.isPlayerRunning }` and `handleUpdate` is last-writer-wins. With one adapter that is correct by accident. Adding Apple Music is what will expose it, so the rule from Phase 4 task 2 has to be written before the adapter, not after.
+- **Source arbitration exists and is the routing rule.** `MediaModule.shouldTakeOver(_:from:)`: a source reporting *playing* audio always wins; otherwise the incumbent keeps the notch, so a paused background player cannot stomp the one the user is looking at; an owner going quiet hands off to another running source. Commands route to `activeSource`, not to "the first running player".
+- **Capabilities are per source, forced by the dictionaries.** Music answers Up Next (playlist `index + 1`, refused under shuffle/fixed indexing/last-in-playlist) and a read-write `favorited` itself, with no network. Spotify answers neither over AppleScript — no queue class exists, and `starred` is unimplemented (see *One failing property kills the whole query* below) — so its Up Next and its editable like come from the optional Web API when an account is connected, and its favourite is absent otherwise.
+- **Lyrics resolve player-first.** Music's own `lyrics` property when it parses as timed LRC, then LRCLIB `/api/get`, then `/api/search` disambiguated by duration (±2s). Cached to disk including misses.
+- **New files join the target automatically.** The project uses Xcode's `PBXFileSystemSynchronizedRootGroup` — zero individual `.swift` references exist in `project.pbxproj` (verified by grep, 2026-08-28). Creating a file under `PopNotch/` or `PopNotchTests/` is sufficient; no Xcode add step, and hard rule 1's remedy never triggers for new files. The working-agreement item about verifying a file "was added in Xcode" predates this and survives only as: confirm a new test actually *ran* by name in the test output.
 
 ---
 
@@ -234,9 +236,8 @@ Each needs an owner and a trigger, or it is not a question, it is a wish.
 
 | Question | Resolve by | Why it matters |
 |---|---|---|
-| Does an Apple Music adapter ship in v1, or is PopNotch a Spotify-first app that adds Music later? | Before Phase 4 is called done | Every doc here promises both. Only Spotify is built. Either write the adapter or change the promise — leaving it is the drift that made Phase 0.5 necessary |
 | Which stock data provider, and does its license permit redistribution? | Start of Phase 6 | A provider that forbids redistribution blocks public release, not just the feature |
 | At what download count does notarization become worth $99/year? | Revisit after first public release | Pick a number now so the decision is a trigger rather than a mood |
 | Does PopNotch ever become a paid product? | Open | MIT permits it. Anyone may also fork the free version, which is the tradeoff MIT was chosen with |
 
-Resolved and moved into the sections above: license (MIT), source visibility (public), notarization (no, for now), the full Phase 0.5 configuration drift, and **whether MediaRemote is reachable** — measured, gated, closed. See the Media section and `PopNotch/Modules/Media/FINDINGS.md`.
+Resolved and moved into the sections above: license (MIT), source visibility (public), notarization (no, for now), the full Phase 0.5 configuration drift, **whether MediaRemote is reachable** — measured, gated, closed — and **whether Apple Music ships in v1**: it shipped, in commit `7667ad9`, alongside the source-arbitration rule it forced. See the Media section and `PopNotch/Modules/Media/FINDINGS.md`.

@@ -6,7 +6,7 @@ PopNotch, by Techie. A native macOS menu bar utility that draws an interactive o
 
 **This is a native macOS app. It is not a web app.**
 
-- Language: Swift 5.9+
+- Language: Swift, `SWIFT_VERSION = 5.0` (the *language mode* — valid values are 4.0/4.2/5.0/6.0; there is no 5.9). Modern toolchain features like `@Observable` come from the macOS 14 target, not this setting
 - UI: SwiftUI, bridged to AppKit via `NSHostingView` where needed
 - Windowing: AppKit (`NSPanel`, `NSScreen`, `NSTrackingArea`)
 - Build system: Xcode project (`PopNotch.xcodeproj`)
@@ -18,9 +18,9 @@ PopNotch, by Techie. A native macOS menu bar utility that draws an interactive o
 
 Never scaffold a Node, React, Vite, Electron, Tauri, or Python project in this repo. Never start a dev server. Never suggest running anything on localhost. If a task seems to call for a web technology, stop and ask first.
 
-### Build settings drift
+### Build settings
 
-The values above are the **intended** configuration. The Xcode project was scaffolded from the iOS multiplatform template and does not yet match. See the drift table in `PROJECT-CONTEXT.md`.
+The iOS-template drift this section used to describe was resolved in Phase 0.5; the settled configuration and its rationale live in the *Build configuration* table in `PROJECT-CONTEXT.md`.
 
 **Do not assume a setting is correct because this file says so.** When a setting matters to the task, read it out of `project.pbxproj` first:
 
@@ -141,9 +141,9 @@ One `Codable` `AppSettings` struct persisted to `UserDefaults` as JSON, with a `
 
 ## Testing
 
-There is no test target yet. It is created in Phase 2 alongside the module system, because that is the first code worth testing.
+The test target exists (created in Phase 2) and runs 126 tests as of 2026-08-28 — geometry, arbitration, settings migration, media parsing for both adapters, lyrics, OAuth, and artwork color. A new test file joins the target automatically (file-system-synchronized groups); confirm a new suite actually ran by finding its cases by name in the test output.
 
-Three things are testable without a screen, and are therefore the only things that get tests:
+What is testable without a screen, and therefore what gets tests:
 
 - **Geometry.** Given a mocked screen rect and safe-area insets, does the computed notch rect land where it should? Include the no-notch fallback and the external-display case.
 - **Arbitration.** Given a sequence of module activations with priorities and timeouts, does the arbiter pick the right one? Pure logic, no AppKit.
@@ -182,9 +182,9 @@ Each needs an Info.plist usage string and a graceful denied path. Never crash wh
 | Automation | music control via AppleScript | `NSAppleEventsUsageDescription` |
 | Accessibility | window snapping (later phase) | requested at runtime |
 
-**The project currently has no Info.plist.** It is built with `GENERATE_INFOPLIST_FILE = YES`, so none of these keys exist yet. Until an Info.plist is added to the target, a usage string must be supplied as an `INFOPLIST_KEY_*` build setting instead — which only the user can do, in Xcode.
+There is no Info.plist file; the app builds with `GENERATE_INFOPLIST_FILE = YES` and usage strings are supplied as `INFOPLIST_KEY_*` build settings. **Apple Events, Calendar, and Location strings are set** (verified in `project.pbxproj`, 2026-08-28). Adding a new one is an Xcode build-settings change, which only the user can make.
 
-Requesting a permission whose usage string is missing does not fail gracefully; the process is killed by the system. Before writing any code that triggers an authorization prompt, verify the key is present.
+Requesting a permission whose usage string is missing does not fail gracefully; the process is killed by the system. Before writing any code that triggers an authorization prompt, verify the key is present with the grep above.
 
 Every permission also needs a **denied** path that is tested, not assumed. The module hides itself or shows a one-line "permission needed" state. It never retries in a loop and never blocks the rest of the notch.
 
