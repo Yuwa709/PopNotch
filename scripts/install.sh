@@ -41,5 +41,5 @@ codesign --verify --strict /Applications/PopNotch.app && echo "==> Signature val
 
 echo
 echo "Installed. Launch it YOURSELF so permission prompts are attributed to a"
-echo "user-initiated launch:  open -a PopNotch"
+echo "user-initiated launch:  open /Applications/PopNotch.app"
 echo "(or Spotlight: Cmd-Space, \"PopNotch\")"
