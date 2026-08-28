@@ -106,9 +106,14 @@ struct ArtworkVisualizerView: View {
     var cornerRadius: CGFloat = 14
 
     /// Ken Burns extremes. Deliberately gentle — this sits under text.
-    private let restScale: CGFloat = 1.04
-    private let driftScale: CGFloat = 1.16
-    private let driftOffset: CGFloat = 10
+    ///
+    /// Drift is a fraction of the view's own width, not a fixed point count:
+    /// 10pt on a 60pt tile is a sixth of the frame, which slid the crop
+    /// visibly off-centre. Both scales must stay above `1 + 2 * driftRatio`
+    /// or the image pulls away from an edge and leaves a gap.
+    private let restScale: CGFloat = 1.08
+    private let driftScale: CGFloat = 1.18
+    private let driftRatio: CGFloat = 0.03
     private let loopDuration: TimeInterval = 18
 
     /// Maximum tilt in degrees at the panel's edge.
@@ -129,7 +134,7 @@ struct ArtworkVisualizerView: View {
         GeometryReader { geo in
             ZStack {
                 glow(in: geo.size)
-                artwork
+                artwork(in: geo.size)
             }
             .contentShape(Rectangle())
             .onContinuousHover { phase in
@@ -184,21 +189,30 @@ struct ArtworkVisualizerView: View {
                 )
                 palette.overall.opacity(0.18)
             }
-            .blur(radius: 26)
+            // Proportional: a fixed 26pt blur swamped a 60pt thumbnail.
+            .blur(radius: max(8, min(size.width, size.height) * 0.28))
             .scaleEffect(drifting && animatesLoop ? 1.08 : 1)
             .allowsHitTesting(false)
         }
     }
 
-    private var artwork: some View {
-        Image(nsImage: image)
-            .resizable()
-            .aspectRatio(contentMode: .fill)
-            // Ken Burns: scale and drift together, autoreversing forever.
-            .scaleEffect(drifting && animatesLoop ? driftScale : restScale)
-            .offset(
-                x: drifting && animatesLoop ? driftOffset : -driftOffset,
-                y: drifting && animatesLoop ? -driftOffset * 0.6 : driftOffset * 0.6
+    private func artwork(in size: CGSize) -> some View {
+        let drift = size.width * driftRatio
+        let active = drifting && animatesLoop
+        // The clip belongs to a fixed-size container, with the image moving
+        // *inside* it. Clipping after the transforms made the crop window
+        // travel with the image, which is what mangled the thumbnail.
+        return Color.clear
+            .overlay(
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    // Ken Burns: scale and drift together, autoreversing.
+                    .scaleEffect(active ? driftScale : restScale)
+                    .offset(
+                        x: active ? drift : -drift,
+                        y: active ? -drift * 0.6 : drift * 0.6
+                    )
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             // Parallax: tilt away from the cursor, with a slight counter
