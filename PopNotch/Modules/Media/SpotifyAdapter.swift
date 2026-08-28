@@ -182,7 +182,7 @@ final class SpotifyAdapter: MediaSource {
         artworkTask?.cancel()
         artworkTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data, !data.isEmpty else { return }
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.artworkCache = (urlString, data)
                 self.attachArtwork(data)
