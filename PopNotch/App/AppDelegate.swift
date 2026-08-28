@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)
         }
+        media.onPresenceChange = { [weak self] in
+            self?.coordinator.refreshPresentation()
+        }
         let modules: [any NotchModule] = [
             media,
             SystemStatsModule(service: statsService)

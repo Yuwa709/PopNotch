@@ -59,9 +59,19 @@ final class NotchPanel: NSPanel {
     /// rebuilding the panel.
     private var hostingView: NSHostingView<NotchOverlayView>?
 
-    /// Replaces the notch's contents. Nil shows the bare silhouette.
-    func setContent(_ content: AnyView?, neckHeight: CGFloat) {
-        hostingView?.rootView = NotchOverlayView(content: content, neckHeight: neckHeight)
+    /// Replaces the notch's contents. All nil shows the bare silhouette.
+    func setContent(
+        _ content: AnyView?,
+        leadingWing: AnyView? = nil,
+        trailingWing: AnyView? = nil,
+        neckHeight: CGFloat
+    ) {
+        hostingView?.rootView = NotchOverlayView(
+            content: content,
+            leadingWing: leadingWing,
+            trailingWing: trailingWing,
+            neckHeight: neckHeight
+        )
     }
 
     /// Seconds the cursor must dwell before hover reports true.
@@ -123,6 +133,34 @@ final class NotchPanel: NSPanel {
         return notchRect
     }
 
+    // MARK: - States
+
+    /// The three sizes the panel occupies.
+    enum State: String {
+        /// Exactly the notch: invisible, the at-rest state.
+        case idle
+        /// Menu-bar-height wings flanking the housing — the "something is
+        /// playing" indicator. Costs menu bar coverage on both sides; that
+        /// trade-off is deliberate and shared by every notch app.
+        case compact
+        /// The open panel.
+        case expanded
+    }
+
+    /// Width of each compact wing. Sized for a 22pt artwork thumb or a small
+    /// waveform with breathing room; tuned by eye on hardware.
+    static let wingWidth: CGFloat = 40
+
+    static func compactRect(on screen: NSScreen) -> NSRect {
+        let base = notchRect(on: screen)
+        return NSRect(
+            x: base.minX - wingWidth,
+            y: base.minY,
+            width: base.width + wingWidth * 2,
+            height: base.height
+        )
+    }
+
     /// The hovered frame: the notch rect grown sideways and downward, top
     /// edge still flush with the screen top. The original task 7 geometry,
     /// restored by user verdict after two corner-anchoring experiments —
@@ -144,30 +182,35 @@ final class NotchPanel: NSPanel {
         )
     }
 
-    /// Animates the panel frame between the collapsed and expanded rects.
-    /// Resizes the panel itself, not the inner view — the hosting view and
-    /// tracking area follow via autoresizing and updateTrackingAreas.
-    func setExpanded(_ expanded: Bool, on screen: NSScreen) {
-        let target = expanded ? Self.expandedRect(on: screen) : Self.notchRect(on: screen)
+    /// Animates the panel frame to a state's rect. Resizes the panel itself,
+    /// not the inner view — the hosting view and tracking area follow via
+    /// autoresizing and updateTrackingAreas.
+    func setState(_ state: State, on screen: NSScreen) {
+        let target: NSRect
+        switch state {
+        case .idle: target = Self.notchRect(on: screen)
+        case .compact: target = Self.compactRect(on: screen)
+        case .expanded: target = Self.expandedRect(on: screen)
+        }
         guard target != frame else { return }
 
         // Hard rule 8: with Reduce Motion on, snap instead of animating.
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             setFrame(target, display: true)
-            Self.logger.notice("\(expanded ? "Expanded" : "Collapsed", privacy: .public) (reduced motion) to \(NSStringFromRect(target), privacy: .public)")
+            Self.logger.notice("State \(state.rawValue, privacy: .public) (reduced motion) at \(NSStringFromRect(target), privacy: .public)")
             return
         }
 
         NSAnimationContext.runAnimationGroup { context in
-            // Spring feel, not linear: the expand curve overshoots slightly
-            // (control-point y > 1) and settles; collapse eases out with no
-            // bounce so leaving feels crisp.
-            context.duration = expanded ? 0.32 : 0.22
-            context.timingFunction = expanded
+            // Opening gets the spring feel — a slight overshoot that settles
+            // (control-point y > 1). Closing and the idle/compact wing
+            // transitions ease out with no bounce so they read as tidy.
+            context.duration = state == .expanded ? 0.32 : 0.22
+            context.timingFunction = state == .expanded
                 ? CAMediaTimingFunction(controlPoints: 0.30, 1.35, 0.40, 1.0)
                 : CAMediaTimingFunction(controlPoints: 0.30, 0.90, 0.55, 1.0)
             animator().setFrame(target, display: true)
         }
-        Self.logger.notice("\(expanded ? "Expanded" : "Collapsed", privacy: .public) to \(NSStringFromRect(target), privacy: .public)")
+        Self.logger.notice("State \(state.rawValue, privacy: .public) at \(NSStringFromRect(target), privacy: .public)")
     }
 }

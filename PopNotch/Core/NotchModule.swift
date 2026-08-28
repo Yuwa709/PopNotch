@@ -71,6 +71,13 @@ protocol NotchModule: AnyObject {
     func makeCompactView() -> AnyView
     func makeExpandedView() -> AnyView
 
+    /// Content for the collapsed panel's wings, drawn in the menu bar band
+    /// flanking the housing. Returning non-nil is what makes the collapsed
+    /// notch widen from invisible to the compact state — return nil whenever
+    /// there is nothing worth occupying menu bar space for.
+    func makeCompactLeadingView() -> AnyView?
+    func makeCompactTrailingView() -> AnyView?
+
     /// The module is now on screen. Start sampling here, not in `init`.
     func didBecomeVisible()
 
@@ -87,4 +94,6 @@ extension NotchModule {
     var pendingLiveActivity: LiveActivityRequest? { nil }
     func didBecomeVisible() {}
     func didResignVisible() {}
+    func makeCompactLeadingView() -> AnyView? { nil }
+    func makeCompactTrailingView() -> AnyView? { nil }
 }

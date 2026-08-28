@@ -59,12 +59,24 @@ struct NotchShape: Shape {
 struct NotchOverlayView: View {
 
     var content: AnyView?
+    /// Compact-state wing contents, drawn in the menu bar band flanking the
+    /// housing. The gap between them is exactly the housing's deadzone.
+    var leadingWing: AnyView?
+    var trailingWing: AnyView?
     /// The menu bar band, which the housing occupies. Content starts below it.
     var neckHeight: CGFloat = 32
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             NotchShape().fill(Color.black)
+            if leadingWing != nil || trailingWing != nil {
+                HStack(spacing: 0) {
+                    wing(leadingWing)
+                    Spacer(minLength: 0)
+                    wing(trailingWing)
+                }
+                .frame(height: neckHeight)
+            }
             if let content {
                 content
                     .padding(.top, neckHeight + 4)
@@ -73,5 +85,13 @@ struct NotchOverlayView: View {
             }
         }
         .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private func wing(_ view: AnyView?) -> some View {
+        Group {
+            if let view { view } else { Color.clear }
+        }
+        .frame(width: NotchPanel.wingWidth, height: neckHeight)
     }
 }

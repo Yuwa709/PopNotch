@@ -95,7 +95,7 @@ final class NotchCoordinator {
         settings.setEnabled(enabled, for: id)
         arbiter.enablementDidChange()
         renderContent()
-        applyExpansion()
+        applyState()
     }
 
     func requestLiveActivity(_ request: LiveActivityRequest) {
@@ -133,7 +133,7 @@ final class NotchCoordinator {
         }
 
         Self.logger.notice("Reposition (\(reason, privacy: .public)): panel at \(NSStringFromRect(frame), privacy: .public) on \(screen.localizedName, privacy: .public)")
-        applyExpansion()
+        applyState()
     }
 
     // MARK: - Presentation
@@ -143,21 +143,35 @@ final class NotchCoordinator {
         // Content depends on expansion, not just presentation: an expanded
         // notch shows each module's richer view.
         renderContent()
-        applyExpansion()
+        applyState()
     }
 
     private func presentationChanged(_ presentation: NotchPresentation) {
         renderContent()
-        applyExpansion()
+        applyState()
         scheduleExpiry()
     }
 
-    /// Expanded while hovered, or while a module has taken the notch — that
-    /// is what "temporarily takes the notch" means visually.
-    private func applyExpansion() {
+    /// Re-evaluates size and content. Public for modules whose collapsed
+    /// presence changes — e.g. music starting or stopping flips the panel
+    /// between invisible and the compact wings.
+    func refreshPresentation() {
+        renderContent()
+        applyState()
+    }
+
+    /// Expanded while hovered or during a live activity; compact wings when
+    /// a standby module has something worth flanking the housing with;
+    /// otherwise invisible.
+    private func desiredState() -> NotchPanel.State {
+        if isHovered || isShowingLiveActivity { return .expanded }
+        if standbyWings() != nil { return .compact }
+        return .idle
+    }
+
+    private func applyState() {
         guard let panel, let screen = currentScreen else { return }
-        let shouldExpand = isHovered || isShowingLiveActivity
-        panel.setExpanded(shouldExpand, on: screen)
+        panel.setState(desiredState(), on: screen)
     }
 
     private var isShowingLiveActivity: Bool {
@@ -165,10 +179,32 @@ final class NotchCoordinator {
         return false
     }
 
+    /// The first standby module offering wing content provides both wings.
+    private func standbyWings() -> (leading: AnyView?, trailing: AnyView?)? {
+        guard case .standby(let ids) = arbiter.presentation else { return nil }
+        for id in ids {
+            guard let module = arbiter.module(for: id) else { continue }
+            let leading = module.makeCompactLeadingView()
+            let trailing = module.makeCompactTrailingView()
+            if leading != nil || trailing != nil {
+                return (leading, trailing)
+            }
+        }
+        return nil
+    }
+
     private func renderContent() {
         guard let panel, let screen = currentScreen else { return }
         let neck = NotchPanel.notchRect(on: screen).height
-        panel.setContent(content(for: arbiter.presentation), neckHeight: neck)
+        switch desiredState() {
+        case .expanded:
+            panel.setContent(content(for: arbiter.presentation), neckHeight: neck)
+        case .compact:
+            let wings = standbyWings()
+            panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing, neckHeight: neck)
+        case .idle:
+            panel.setContent(nil, neckHeight: neck)
+        }
     }
 
     /// Builds the SwiftUI content for the current state.

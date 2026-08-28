@@ -68,6 +68,50 @@ struct MediaExpandedView: View {
     }
 }
 
+/// Left wing: album art beside the housing.
+struct MediaWingArtwork: View {
+    let module: MediaModule
+
+    var body: some View {
+        ArtworkThumb(data: module.nowPlaying?.artworkData, side: 22, corner: 5)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Right wing: a small animated waveform while playing, still while paused.
+///
+/// Decorative for now — bars move on time, not on real amplitude; the honest
+/// upgrade is Phase "real audio" behind its permission. The timeline pauses
+/// itself whenever playback pauses, so nothing animates (and nothing ticks)
+/// while music is stopped — and the view only exists while the wings do.
+struct MediaWingWaveform: View {
+    let module: MediaModule
+
+    private static let barCount = 4
+
+    var body: some View {
+        let playing = module.nowPlaying?.isPlaying == true
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !playing)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 2.5) {
+                ForEach(0..<Self.barCount, id: \.self) { index in
+                    Capsule()
+                        .fill(.white.opacity(0.85))
+                        .frame(width: 2.5, height: barHeight(time: t, index: index, playing: playing))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func barHeight(time: TimeInterval, index: Int, playing: Bool) -> CGFloat {
+        guard playing else { return 4 }
+        // Distinct frequency and phase per bar so they never sync up.
+        let phase = time * (4.2 + Double(index) * 1.37) + Double(index) * 1.9
+        return 5 + 11 * abs(sin(phase))
+    }
+}
+
 /// Album art from raw bytes, or a placeholder note while it loads.
 private struct ArtworkThumb: View {
     let data: Data?

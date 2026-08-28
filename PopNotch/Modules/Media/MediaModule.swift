@@ -27,9 +27,15 @@ final class MediaModule: NotchModule {
     /// Wired by AppDelegate to the coordinator.
     @ObservationIgnored var onLiveActivityRequest: ((LiveActivityRequest) -> Void)?
 
+    /// Fires when whether-there-is-anything-to-show flips — the coordinator
+    /// resizes the collapsed panel between idle and compact on it. Content
+    /// *changes* do not fire it; the wing views observe those themselves.
+    @ObservationIgnored var onPresenceChange: (() -> Void)?
+
     private(set) var nowPlaying: NowPlaying?
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private var lastTrackKey: String?
+    @ObservationIgnored private var hadPresence = false
 
     var permissionDenied: Bool {
         sources.allSatisfy(\.permissionDenied)
@@ -47,6 +53,12 @@ final class MediaModule: NotchModule {
 
     private func handleUpdate(_ snapshot: NowPlaying?) {
         nowPlaying = snapshot
+
+        let hasPresence = snapshot?.hasContent == true
+        if hasPresence != hadPresence {
+            hadPresence = hasPresence
+            onPresenceChange?()
+        }
 
         guard let snapshot, snapshot.hasContent else { return }
         let key = snapshot.artworkIdentifier ?? "\(snapshot.title ?? "")|\(snapshot.artist ?? "")"
@@ -73,6 +85,18 @@ final class MediaModule: NotchModule {
 
     func makeCompactView() -> AnyView { AnyView(MediaCompactView(module: self)) }
     func makeExpandedView() -> AnyView { AnyView(MediaExpandedView(module: self)) }
+
+    /// The wings: artwork left of the housing, waveform right of it — the
+    /// "music is on" indicator visible without hovering.
+    func makeCompactLeadingView() -> AnyView? {
+        guard nowPlaying?.hasContent == true else { return nil }
+        return AnyView(MediaWingArtwork(module: self))
+    }
+
+    func makeCompactTrailingView() -> AnyView? {
+        guard nowPlaying?.hasContent == true else { return nil }
+        return AnyView(MediaWingWaveform(module: self))
+    }
 
     func didBecomeVisible() {
         // Pull once so the first hover after launch has data and artwork.
