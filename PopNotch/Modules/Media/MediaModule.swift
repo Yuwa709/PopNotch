@@ -47,6 +47,13 @@ final class MediaModule: NotchModule {
     /// Account-backed extras (nil until the user connects Spotify).
     private(set) var upNext: SpotifyUpNext?
     private(set) var likedCurrent: Bool?
+    /// Official artist metadata: avatar, follower count, genres.
+    private(set) var artistInfo: SpotifyArtistInfo?
+    private(set) var artistImageData: Data?
+    /// Spotify's 0-100 popularity score for the current track.
+    private(set) var trackPopularity: Int?
+    /// Cached per artist so skipping within an album costs no extra calls.
+    @ObservationIgnored private var artistCache: [String: (SpotifyArtistInfo, Data?)] = [:]
 
     /// When true the expanded notch shows full scrolling lyrics instead of
     /// the player, and stays open regardless of hover until dismissed.
@@ -177,7 +184,33 @@ final class MediaModule: NotchModule {
             guard let self else { return }
             self.upNext = next
             self.likedCurrent = liked
+            await self.refreshArtistDetail(trackID: trackID, webAPI: webAPI)
         }
+    }
+
+    /// Official track and artist metadata: popularity score, artist avatar,
+    /// follower count. Two calls on a track change, then cached per artist.
+    private func refreshArtistDetail(trackID: String?, webAPI: SpotifyWebAPI) async {
+        guard let trackID, let detail = await webAPI.fetchTrackDetail(trackID: trackID) else {
+            trackPopularity = nil
+            return
+        }
+        trackPopularity = detail.popularity
+
+        if let cached = artistCache[detail.artistID] {
+            artistInfo = cached.0
+            artistImageData = cached.1
+            return
+        }
+        guard let info = await webAPI.fetchArtist(id: detail.artistID) else { return }
+        var imageData: Data?
+        if let url = info.imageURL {
+            imageData = await webAPI.fetchImage(url)
+        }
+        artistCache[detail.artistID] = (info, imageData)
+        artistInfo = info
+        artistImageData = imageData
+        onContentReflow?()
     }
 
     /// Opens the current track in the Spotify app. This activates Spotify —

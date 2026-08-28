@@ -7,6 +7,33 @@ struct SpotifyUpNext: Equatable {
     let artist: String
 }
 
+/// Official artist metadata. Note `followers` is Spotify's follower count —
+/// NOT monthly listeners, which the official API does not expose. Labelled
+/// honestly in the UI rather than passed off as the other number.
+struct SpotifyArtistInfo: Equatable {
+    let name: String
+    let followers: Int
+    let imageURL: String?
+    let genres: [String]
+}
+
+/// Human-readable large counts: 31.7M, 1.2B, 450K.
+enum CountFormatter {
+    static func short(_ value: Int) -> String {
+        let n = Double(value)
+        switch value {
+        case 1_000_000_000...:
+            return String(format: "%.1fB", n / 1_000_000_000)
+        case 1_000_000...:
+            return String(format: "%.1fM", n / 1_000_000)
+        case 1_000...:
+            return String(format: "%.1fK", n / 1_000)
+        default:
+            return String(value)
+        }
+    }
+}
+
 /// The Web API calls PopNotch makes once the account is connected. Thin by
 /// design: every function is one endpoint, authed via SpotifyAccount.
 @MainActor
@@ -50,7 +77,61 @@ final class SpotifyWebAPI {
         )
     }
 
+    // MARK: - Track and artist decoding
+
+    struct TrackResponse: Decodable {
+        let popularity: Int?
+        let artists: [TrackArtist]
+    }
+    struct TrackArtist: Decodable {
+        let id: String
+    }
+    struct ArtistResponse: Decodable {
+        let name: String
+        let followers: Followers?
+        let images: [ArtistImage]?
+        let genres: [String]?
+    }
+    struct Followers: Decodable { let total: Int? }
+    struct ArtistImage: Decodable { let url: String; let width: Int? }
+
+    nonisolated static func trackDetail(fromJSON data: Data) -> (popularity: Int?, artistID: String)? {
+        guard let decoded = try? JSONDecoder().decode(TrackResponse.self, from: data),
+              let artistID = decoded.artists.first?.id else { return nil }
+        return (decoded.popularity, artistID)
+    }
+
+    nonisolated static func artistInfo(fromJSON data: Data) -> SpotifyArtistInfo? {
+        guard let decoded = try? JSONDecoder().decode(ArtistResponse.self, from: data) else { return nil }
+        // Smallest image that is still crisp for a ~20pt avatar.
+        let image = (decoded.images ?? [])
+            .sorted { ($0.width ?? 0) < ($1.width ?? 0) }
+            .first { ($0.width ?? 0) >= 120 } ?? decoded.images?.last
+        return SpotifyArtistInfo(
+            name: decoded.name,
+            followers: decoded.followers?.total ?? 0,
+            imageURL: image?.url,
+            genres: decoded.genres ?? []
+        )
+    }
+
     // MARK: - Calls
+
+    func fetchTrackDetail(trackID: String) async -> (popularity: Int?, artistID: String)? {
+        guard let data = await get("https://api.spotify.com/v1/tracks/\(trackID)") else { return nil }
+        return Self.trackDetail(fromJSON: data)
+    }
+
+    func fetchArtist(id: String) async -> SpotifyArtistInfo? {
+        guard let data = await get("https://api.spotify.com/v1/artists/\(id)") else { return nil }
+        return Self.artistInfo(fromJSON: data)
+    }
+
+    func fetchImage(_ urlString: String) async -> Data? {
+        guard let url = URL(string: urlString), url.scheme == "https",
+              let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        return data
+    }
 
     func fetchUpNext() async -> SpotifyUpNext? {
         guard let data = await get("https://api.spotify.com/v1/me/player/queue") else { return nil }

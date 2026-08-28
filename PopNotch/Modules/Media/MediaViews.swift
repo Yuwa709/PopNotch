@@ -41,14 +41,33 @@ struct MediaExpandedView: View {
                         ArtworkThumb(data: playing.artworkData, side: 52, corner: 10)
                     }
                     .buttonStyle(.plain)
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(playing.title ?? "—")
                             .font(.system(size: 17, weight: .semibold))
                             .lineLimit(1)
-                        Text(playing.artist ?? "")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            // Official artist avatar, when the account is
+                            // connected and Spotify has one.
+                            if let data = module.artistImageData, let image = NSImage(data: data) {
+                                Image(nsImage: image)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 15, height: 15)
+                                    .clipShape(Circle())
+                            }
+                            Text(playing.artist ?? "")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .lineLimit(1)
+                        }
+                        // Followers, labelled for what it is: the official
+                        // API does not expose monthly listeners.
+                        if let followers = module.artistInfo?.followers, followers > 0 {
+                            Text("\(CountFormatter.short(followers)) followers")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.42))
+                                .lineLimit(1)
+                        }
                     }
                     // Bounded: the panel sizes itself to measured content;
                     // an unbounded one-line title would balloon it.
@@ -56,6 +75,20 @@ struct MediaExpandedView: View {
                     // Trailing column, per the reference: up-next above the
                     // wave (their card sits in the same corner).
                     VStack(alignment: .trailing, spacing: 5) {
+                        // Popularity pill, where the reference puts its play
+                        // count. Spotify's official 0-100 score, not plays.
+                        if let popularity = module.trackPopularity {
+                            HStack(spacing: 3) {
+                                Image(systemName: "chart.bar.fill")
+                                    .font(.system(size: 7, weight: .bold))
+                                Text("\(popularity)")
+                                    .font(.system(size: 10, weight: .bold))
+                            }
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(.green.opacity(0.16)))
+                        }
                         if let next = module.upNext {
                             VStack(alignment: .trailing, spacing: 1) {
                                 Text("UP NEXT")
