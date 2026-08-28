@@ -141,10 +141,12 @@ private struct RevealFromNotch: ViewModifier {
         content
             .scaleEffect(revealed || !enabled ? 1 : 0.55, anchor: .top)
             .opacity(revealed || !enabled ? 1 : 0)
-            .blur(radius: revealed || !enabled ? 0 : 7)
+            .blur(radius: revealed || !enabled ? 0 : 14)
             .onAppear {
                 guard enabled, !revealed else { return }
-                withAnimation(.easeOut(duration: 0.26)) {
+                // Faster than the panel's expand+settle (0.34s total), so
+                // content is locked in before the silhouette is.
+                withAnimation(.easeOut(duration: 0.17)) {
                     revealed = true
                 }
             }
