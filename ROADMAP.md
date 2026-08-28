@@ -29,8 +29,8 @@ Read this when starting a new phase. Do not read it for routine tasks.
   - Expanded silhouette: original task 7 shape at ±48pt/side, 64pt down — a placeholder sized by eye; the media module dictates real dimensions in Phase 4
   - Bezel black: fill measured #000000 at the window buffer; residual mismatch is LCD backlight, not fixable in software
   - Menu bar item (Settings/Quit) and launch-at-login toggle in place
-  - **Done when** still pending: reboot, app comes up silently, hover works, monitor plug survives
-- **Phases 2 and beyond:** not started
+- **Phase 4 (media):** not started — the reason the app exists. Switch to Fable for it; MediaRemote's post-15.4 status must be established empirically before any design work
+- **Phases 5 and 6:** not started
 
 Update this section at the end of each phase.
 
@@ -73,11 +73,11 @@ Update this section at the end of each phase.
 3. **Instantiate and display.** Create one panel at launch, `orderFrontRegardless`. Set `collectionBehavior` to include `.canJoinAllSpaces`, `.fullScreenAuxiliary`, `.stationary`. Without these it vanishes on space switch and in fullscreen. **Done** — a temporary 8pt red lip below the menu bar makes the panel visible until hover exists; remove it with task 7.
 4. **Screen ownership policy.** Decide *before* writing the code: the notch panel lives on the built-in display, always, even when an external monitor is primary. Only if the lid is closed does it move or hide. Write the rule down in code as a single function, `targetScreen()`, so it is one place to change. **Done** — `ScreenPolicy.targetScreen()`, selecting via `CGDisplayIsBuiltin`.
 5. **Screen change resilience.** Subscribe to `NSApplication.didChangeScreenParametersNotification`, recompute and reposition on every fire. Test: plug in external monitor, unplug, change resolution, close and open lid, hot-plug while the panel is expanded. This is where most notch apps break. **Done** — hardware-verified: panel stays on the built-in display with a monitor attached, falls back to the external screen in clamshell, returns on lid-open. Re-test hot-plug-while-expanded once task 7 exists.
-6. **Hover detection.** `NSTrackingArea` with `.mouseEnteredAndExited` and `.activeAlways`. Debounce 150 to 250ms before expanding, or dragging the cursor across the top of the screen fires it constantly. Rebuild the tracking area on every geometry change — a stale one is the classic "hover stopped working after I unplugged my monitor" bug.
-7. **Expand and collapse animation.** Resize the panel, not the inner view. Spring curve, not linear. Inverse-rounded corners where the shape meets the notch, as a custom SwiftUI `Shape` with Bezier curves. **Honor Reduce Motion** — check `accessibilityDisplayShouldReduceMotion` and snap instead of spring.
-8. **Bezel black matching.** The expanded panel must read as an extension of the physical bezel. This is not `Color.black`. On an XDR display the panel's black and the bezel's black are different blacks, and the mismatch is visible at the seam. Expect to tune this by eye against a real machine, and expect it to differ between the built-in display and any external one. **User-verified only — the assistant cannot see this.**
-9. **Menu bar item and settings window.** `NSStatusItem` so the user can reach settings and quit. Basic SwiftUI settings window, empty tabs are fine.
-10. **Launch at login.** `SMAppService.mainApp.register()`, wired to a settings toggle, with the unregister path and error handling.
+6. **Hover detection.** `NSTrackingArea` with `.mouseEnteredAndExited` and `.activeAlways`. Debounce 150 to 250ms before expanding, or dragging the cursor across the top of the screen fires it constantly. Rebuild the tracking area on every geometry change — a stale one is the classic "hover stopped working after I unplugged my monitor" bug. **Done** — debounce raised to 350ms on user feedback; exits verified against mid-animation spurious events.
+7. **Expand and collapse animation.** Resize the panel, not the inner view. Spring curve, not linear. Inverse-rounded corners where the shape meets the notch, as a custom SwiftUI `Shape` with Bezier curves. **Honor Reduce Motion** — check `accessibilityDisplayShouldReduceMotion` and snap instead of spring. **Done** — ±48pt/side, 64pt down. Two corner-anchored variants were built and rejected by the user on screenshot review; the original silhouette stands. Real dimensions come from the media module.
+8. **Bezel black matching.** The expanded panel must read as an extension of the physical bezel. **Resolved differently than expected.** The fill measures #000000 at the window buffer — the darkest value the display can emit, so there is no darker colour to tune toward. On this LCD the residual difference against the unlit bezel is backlight leakage, not colour, and is not fixable in software. A gloss/shadow "piano black" treatment was tried and rejected by the user. Revisit only on a mini-LED machine, where local dimming changes the premise.
+9. **Menu bar item and settings window.** `NSStatusItem` so the user can reach settings and quit. Basic SwiftUI settings window, empty tabs are fine. **Done** — `MenuBarExtra` with Settings and Quit.
+10. **Launch at login.** `SMAppService.mainApp.register()`, wired to a settings toggle, with the unregister path and error handling. **Done** — reboot-verified.
 
 ### Done when
 
