@@ -91,7 +91,7 @@ struct MediaWingWaveform: View {
 
     var body: some View {
         let playing = module.nowPlaying?.isPlaying == true
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !playing)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !playing)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             HStack(spacing: 2.5) {
                 ForEach(0..<Self.barCount, id: \.self) { index in
@@ -106,9 +106,14 @@ struct MediaWingWaveform: View {
 
     private func barHeight(time: TimeInterval, index: Int, playing: Bool) -> CGFloat {
         guard playing else { return 4 }
-        // Distinct frequency and phase per bar so they never sync up.
-        let phase = time * (4.2 + Double(index) * 1.37) + Double(index) * 1.9
-        return 5 + 11 * abs(sin(phase))
+        // User-tuned: slow and smooth. Two blended sines per bar — no
+        // abs(), whose corner at zero reads as a harsh bounce — at gentle
+        // frequencies, with a modest swing. 30fps so motion has no visible
+        // stepping.
+        let primary = sin(time * (1.3 + Double(index) * 0.35) + Double(index) * 2.1)
+        let secondary = sin(time * 0.9 + Double(index) * 1.1)
+        let level = 0.5 + 0.35 * primary + 0.15 * secondary   // 0...1, smooth
+        return 5 + 7 * level                                   // 5...12pt
     }
 }
 
