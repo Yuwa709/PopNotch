@@ -25,7 +25,7 @@ struct PopNotchApp: App {
         }
 
         Settings {
-            SettingsView()
+            SettingsView(coordinator: appDelegate.coordinator, settings: appDelegate.settings)
         }
     }
 }

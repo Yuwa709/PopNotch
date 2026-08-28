@@ -73,8 +73,29 @@ final class NotchCoordinator {
     }
 
     /// Registers a feature. The one place adding a module touches.
-    func register(_ module: any NotchModule) {
+    ///
+    /// The stored preference is applied here rather than by the caller, so a
+    /// module can never be registered in a state that disagrees with what the
+    /// user chose.
+    func register(_ module: any NotchModule, enabledByDefault: Bool = true) {
+        module.isEnabled = settings.isEnabled(module.id, default: enabledByDefault)
         arbiter.register(module)
+    }
+
+    /// What Settings lists: one row per registered module.
+    var moduleSummaries: [(id: ModuleID, displayName: String, isEnabled: Bool)] {
+        arbiter.registeredModules.map { ($0.id, $0.displayName, $0.isEnabled) }
+    }
+
+    /// Toggles a module from Settings: persists the choice, updates the live
+    /// module, and re-runs arbitration so the notch reflects it immediately.
+    func setEnabled(_ enabled: Bool, for id: ModuleID) {
+        guard let module = arbiter.module(for: id) else { return }
+        module.isEnabled = enabled
+        settings.setEnabled(enabled, for: id)
+        arbiter.enablementDidChange()
+        renderContent()
+        applyExpansion()
     }
 
     func requestLiveActivity(_ request: LiveActivityRequest) {

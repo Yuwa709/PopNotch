@@ -25,10 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             media,
             SystemStatsModule(service: statsService)
         ]
-        for module in modules {
-            module.isEnabled = settings.isEnabled(module.id, default: true)
-            coordinator.register(module)
-        }
+        // register() applies the stored preference itself, so a module can
+        // never start in a state that disagrees with the user's choice.
+        modules.forEach { coordinator.register($0) }
 
         Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
     }

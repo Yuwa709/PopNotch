@@ -62,6 +62,9 @@ final class NotchArbiter {
         modules.first { $0.id == id }
     }
 
+    /// Registration order, for Settings to list.
+    var registeredModules: [any NotchModule] { modules }
+
     /// Call after changing any module's `isEnabled`, so standby and the
     /// active activity are re-evaluated.
     func enablementDidChange() {
