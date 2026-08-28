@@ -169,9 +169,26 @@ final class NotchCoordinator {
         return .idle
     }
 
+    /// Measured size of the current expanded content, set by renderContent.
+    private var expandedContentSize: CGSize = .zero
+
     private func applyState() {
         guard let panel, let screen = currentScreen else { return }
-        panel.setState(desiredState(), on: screen)
+        panel.setState(desiredState(), on: screen, expandedContentSize: expandedContentSize)
+    }
+
+    /// Measures what the expanded panel is about to display by laying the
+    /// same padded content out in a throwaway hosting view. Synchronous and
+    /// cheap at this size; runs only on content changes, never per frame.
+    private func measureExpandedContent(_ content: AnyView?, neck: CGFloat) -> CGSize {
+        guard let content else { return .zero }
+        let probe = NSHostingView(rootView:
+            content
+                .padding(.top, neck + 4)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+        )
+        return probe.fittingSize
     }
 
     private var isShowingLiveActivity: Bool {
@@ -198,7 +215,9 @@ final class NotchCoordinator {
         let neck = NotchPanel.notchRect(on: screen).height
         switch desiredState() {
         case .expanded:
-            panel.setContent(content(for: arbiter.presentation), neckHeight: neck)
+            let view = content(for: arbiter.presentation)
+            expandedContentSize = measureExpandedContent(view, neck: neck)
+            panel.setContent(view, neckHeight: neck)
         case .compact:
             let wings = standbyWings()
             panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing, neckHeight: neck)

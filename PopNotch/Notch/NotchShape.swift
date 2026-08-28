@@ -70,16 +70,14 @@ struct NotchOverlayView: View {
         ZStack(alignment: .top) {
             NotchShape().fill(Color.black)
             if leadingWing != nil || trailingWing != nil {
-                // Content hugs the housing, not the outer corners: the wings'
-                // outer edges carry the rounded silhouette, and content
-                // against them looked crowded (user screenshot). Inner-edge
-                // alignment also reads as "attached to the notch".
+                // Centered in each wing: hugging the outer corners looked
+                // crowded, hugging the housing looked glued to it (both
+                // user-verified on hardware, the latter by photo). Center
+                // splits the margin evenly.
                 HStack(spacing: 0) {
-                    wing(leadingWing, alignment: .trailing)
-                        .padding(.trailing, 6)
+                    wing(leadingWing, alignment: .center)
                     Spacer(minLength: 0)
-                    wing(trailingWing, alignment: .leading)
-                        .padding(.leading, 6)
+                    wing(trailingWing, alignment: .center)
                 }
                 .frame(height: neckHeight)
             }

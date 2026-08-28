@@ -35,7 +35,9 @@ struct MediaExpandedView: View {
                         .foregroundStyle(.white.opacity(0.6))
                         .lineLimit(1)
                 }
-                .frame(minWidth: 70, alignment: .leading)
+                // Bounded: the panel sizes itself to measured content, and
+                // an unbounded one-line title would balloon the measurement.
+                .frame(minWidth: 70, maxWidth: 180, alignment: .leading)
                 controls(isPlaying: playing.isPlaying)
             }
             .foregroundStyle(.white)

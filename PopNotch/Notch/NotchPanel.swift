@@ -148,8 +148,9 @@ final class NotchPanel: NSPanel {
     }
 
     /// Width of each compact wing. Sized for a 22pt artwork thumb or a small
-    /// waveform with breathing room; tuned by eye on hardware.
-    static let wingWidth: CGFloat = 40
+    /// waveform with breathing room; tuned by eye on hardware across three
+    /// rounds — content is centered in the wing.
+    static let wingWidth: CGFloat = 44
 
     static func compactRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
@@ -161,36 +162,37 @@ final class NotchPanel: NSPanel {
         )
     }
 
-    /// The hovered frame: the notch rect grown sideways and downward, top
-    /// edge still flush with the screen top. The original task 7 geometry,
-    /// restored by user verdict after two corner-anchoring experiments —
-    /// see git history around this commit. Placeholder proportions until
-    /// modules dictate real content size.
-    static func expandedRect(on screen: NSScreen) -> NSRect {
+    /// The hovered frame, sized by what it will display: the coordinator
+    /// measures the content and passes its size, so a player-only panel is
+    /// snug and a player-plus-stats panel is taller — no guessed constants
+    /// leaving voids (user-verified problem when stats were toggled off).
+    ///
+    /// Clamps keep degenerate measurements from producing a sliver or a
+    /// window-sized slab, and coordinates stay integral: AppKit snaps
+    /// fractional origins, which desyncs the computed and actual frames.
+    static func expandedRect(on screen: NSScreen, contentSize: CGSize) -> NSRect {
         let base = notchRect(on: screen)
-        // Proportioned to bloom down AND wide from the compact wings — the
-        // earlier +-64 gained so little width over the wings that expansion
-        // read as "falls straight down" (user verdict). Interior layout to
-        // match arrives with the media-first layout pass.
-        let sideExtra: CGFloat = 96
-        let bottomExtra: CGFloat = 104
+        let minWidth = base.width + (wingWidth + 24) * 2
+        let width = (min(max(contentSize.width, minWidth), 540)).rounded(.up)
+        let minHeight = base.height + 56
+        let height = (min(max(contentSize.height, minHeight), 300)).rounded(.up)
         return NSRect(
-            x: base.minX - sideExtra,
-            y: base.minY - bottomExtra,
-            width: base.width + sideExtra * 2,
-            height: base.height + bottomExtra
+            x: (screen.frame.midX - width / 2).rounded(),
+            y: base.maxY - height,
+            width: width,
+            height: height
         )
     }
 
     /// Animates the panel frame to a state's rect. Resizes the panel itself,
     /// not the inner view — the hosting view and tracking area follow via
     /// autoresizing and updateTrackingAreas.
-    func setState(_ state: State, on screen: NSScreen) {
+    func setState(_ state: State, on screen: NSScreen, expandedContentSize: CGSize = .zero) {
         let target: NSRect
         switch state {
         case .idle: target = Self.notchRect(on: screen)
         case .compact: target = Self.compactRect(on: screen)
-        case .expanded: target = Self.expandedRect(on: screen)
+        case .expanded: target = Self.expandedRect(on: screen, contentSize: expandedContentSize)
         }
         guard target != frame else { return }
 
