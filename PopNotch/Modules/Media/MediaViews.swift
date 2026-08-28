@@ -104,6 +104,10 @@ struct MediaWingWaveform: View {
         // Fixed height so bars grow around their center instead of pushing
         // the row's layout; intrinsic width so wing alignment places it.
         .frame(height: 14)
+        // User-tuned on hardware: centered still read as sitting too far
+        // right (screenshot-measured ~3-4pt), which also made the right
+        // wing look wider than the left. Visual nudge only; no layout.
+        .offset(x: -3)
     }
 }
 
