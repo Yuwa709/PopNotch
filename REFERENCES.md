@@ -33,3 +33,11 @@ Example of a good entry:
 An entry names a *concept*. If an entry is specific enough that someone could
 reconstruct the original source from it, the line was already crossed.
 -->
+
+## Sapphire (observed 2026-08-27)
+UI observation only — screenshots of its onboarding/permissions screen and
+its collapsed "wings" (artwork + waveform flanking the housing). No source
+code read. Notables: permissions listed plainly with per-row Request
+buttons; wings shown only while a session is active; "private API login"
+for Spotify free-tier features (deliberately not copied — official Web API
+only, if ever).
