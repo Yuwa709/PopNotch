@@ -15,10 +15,12 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             ModulesSettingsTab(coordinator: coordinator, settings: settings)
                 .tabItem { Label("Modules", systemImage: "square.stack") }
+            PermissionsSettingsTab()
+                .tabItem { Label("Permissions", systemImage: "lock.shield") }
             SpotifySettingsTab(settings: settings, account: spotify)
                 .tabItem { Label("Spotify", systemImage: "music.note") }
         }
-        .frame(width: 440, height: 280)
+        .frame(width: 460, height: 320)
     }
 }
 
