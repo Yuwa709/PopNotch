@@ -59,7 +59,7 @@ struct MediaExpandedView: View {
                 MediaProgressBar(module: module)
                 controls(isPlaying: playing.isPlaying)
             }
-            .frame(width: 296)
+            .frame(width: 324)
             .foregroundStyle(.white)
         } else if module.permissionDenied {
             // The tested denied path: one line, no re-prompt loop.
@@ -107,7 +107,7 @@ private struct MediaProgressBar: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let elapsed = scrubFraction.map { $0 * duration }
                     ?? min(snapshot?.elapsedNow(at: context.date) ?? 0, duration)
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     timeLabel(format(elapsed))
                     track(fraction: duration > 0 ? elapsed / duration : 0, duration: duration)
                     timeLabel("-" + format(max(0, duration - elapsed)))
@@ -121,7 +121,7 @@ private struct MediaProgressBar: View {
             .font(.system(size: 10, weight: .medium))
             .monospacedDigit()
             .foregroundStyle(.white.opacity(0.65))
-            .frame(width: 34)
+            .frame(width: 32)
     }
 
     private func track(fraction: Double, duration: TimeInterval) -> some View {
