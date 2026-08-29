@@ -149,6 +149,9 @@ struct MediaExpandedView: View {
             HStack {
                 MediaFavoriteControl(module: module)
                 Spacer()
+                if let caffeinate = module.caffeinate {
+                    MediaCaffeinateControl(service: caffeinate, accent: module.artworkAccent)
+                }
             }
         }
     }
@@ -212,6 +215,31 @@ private struct MediaFavoriteControl: View {
             .foregroundStyle(tint)
             .frame(width: 28, height: 28)
             .contentShape(Rectangle())
+    }
+}
+
+/// Keep-awake toggle. Stays on until pressed again — no timer, no auto-off,
+/// so the icon is the only indication and it has to read unambiguously.
+///
+/// `accent` is the artwork colour when one has been derived, and nil
+/// otherwise; the fallback is a neutral white rather than the peach
+/// `mediaAccent`, so "awake" never reads as part of the album's palette.
+private struct MediaCaffeinateControl: View {
+    @Bindable var service: CaffeinateService
+    let accent: Color?
+
+    var body: some View {
+        Button { service.toggle() } label: {
+            Image(systemName: "cup.and.saucer.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(service.isActive ? (accent ?? .white) : .white.opacity(0.35))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(service.isActive ? "Keeping this Mac awake" : "Keep this Mac awake")
+        .accessibilityLabel("Keep awake")
+        .accessibilityValue(service.isActive ? "On" : "Off")
     }
 }
 

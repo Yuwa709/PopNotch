@@ -70,6 +70,9 @@ final class MediaModule: NotchModule {
     private(set) var showFullLyrics = false
 
     @ObservationIgnored private let sources: [MediaSource]
+    /// Injected, not owned: caffeinate is an app-level concern that merely
+    /// renders inside this widget. Nil in tests and previews.
+    @ObservationIgnored let caffeinate: CaffeinateService?
     @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private let account: SpotifyAccount?
     @ObservationIgnored private let webAPI: SpotifyWebAPI?
@@ -106,9 +109,12 @@ final class MediaModule: NotchModule {
         sources.contains { $0.isPlayerRunning && $0.permissionDenied }
     }
 
-    init(sources: [MediaSource], account: SpotifyAccount? = nil) {
+    init(sources: [MediaSource],
+         account: SpotifyAccount? = nil,
+         caffeinate: CaffeinateService? = nil) {
         self.sources = sources
         self.account = account
+        self.caffeinate = caffeinate
         self.webAPI = account.map(SpotifyWebAPI.init(account:))
         for source in sources {
             source.onUpdate = { [weak self, weak source] snapshot in

@@ -13,6 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) lazy var coordinator = NotchCoordinator(settings: settings)
     private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
     private let statsService = SystemStatsService()
+    /// App-level, not media-level: keeping the Mac awake has nothing to do
+    /// with playback. MediaModule only holds a reference so the control can
+    /// live in the expanded notch, the same way it holds the Spotify account.
+    private(set) lazy var caffeinate = CaffeinateService()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator.start()
@@ -20,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Modules register here, one line each — the Phase 2 goal made real.
         // Order is not precedence: MediaModule arbitrates by what is actually
         // playing. See MediaModule.shouldTakeOver(_:from:).
-        let media = MediaModule(sources: [SpotifyAdapter(), MusicAdapter()], account: spotifyAccount)
+        let media = MediaModule(sources: [SpotifyAdapter(), MusicAdapter()], account: spotifyAccount, caffeinate: caffeinate)
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)
         }
@@ -43,5 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator.stop()
+        // Deterministic on a clean quit. The system would reclaim the
+        // assertion on exit anyway (verified with SIGKILL), but releasing
+        // here means it goes the moment the user quits rather than whenever
+        // the process finishes tearing down.
+        caffeinate.release()
     }
 }
