@@ -70,14 +70,16 @@ final class NotchPanel: NSPanel {
         leadingWing: AnyView? = nil,
         trailingWing: AnyView? = nil,
         neckHeight: CGFloat,
-        reveal: Bool = false
+        reveal: Bool = false,
+        topTrailingAccessory: AnyView? = nil
     ) {
         hostingView?.rootView = NotchOverlayView(
             content: content,
             leadingWing: leadingWing,
             trailingWing: trailingWing,
             neckHeight: neckHeight,
-            revealContent: reveal
+            revealContent: reveal,
+            topTrailingAccessory: topTrailingAccessory
         )
     }
 

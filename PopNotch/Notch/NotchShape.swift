@@ -76,6 +76,15 @@ struct NotchOverlayView: View {
     var neckHeight: CGFloat = 32
     /// Play the emerge-from-the-notch entrance on this content.
     var revealContent: Bool = false
+    /// Panel-level chrome for the expanded state, drawn in the band beside
+    /// the housing on the trailing side. That band is free here: the wings
+    /// that use it render only while compact, and this renders only while
+    /// expanded, so the two can never overlap.
+    var topTrailingAccessory: AnyView?
+
+    /// The panel's visible side border. Shared by the content column and the
+    /// top-trailing accessory so they align on the same vertical.
+    static let contentSideInset: CGFloat = 32
 
     var body: some View {
         // Expanded (has content) draws the softer card; compact and idle
@@ -102,12 +111,27 @@ struct NotchOverlayView: View {
                 .padding(.horizontal, NotchPanel.compactEdgeExtra)
                 .frame(height: neckHeight)
             }
+            if expanded, let topTrailingAccessory {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    topTrailingAccessory
+                }
+                // The content's own inset, so the control's right edge lines
+                // up with the right edge of the content column below it.
+                //
+                // NOT compactEdgeExtra (2pt): that is how much the *compact*
+                // panel exceeds its wings, and the expanded panel is far
+                // wider, so using it here pinned the control to the extreme
+                // edge and the expandedTopRadius corner clipped half of it.
+                .padding(.horizontal, NotchOverlayView.contentSideInset)
+                .frame(height: neckHeight)
+            }
             if let content {
                 // Horizontal padding is the panel's visible side border;
                 // keep in lockstep with the coordinator's measuring probe.
                 content
                     .padding(.top, neckHeight + 20)
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, Self.contentSideInset)
                     .padding(.bottom, 20)
                     .modifier(RevealFromNotch(enabled: revealContent))
             }

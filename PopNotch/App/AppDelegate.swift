@@ -10,12 +10,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "AppDelegate")
 
     let settings = SettingsStore()
-    private(set) lazy var coordinator = NotchCoordinator(settings: settings)
+    private(set) lazy var coordinator = NotchCoordinator(settings: settings, caffeinate: caffeinate)
     private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
     private let statsService = SystemStatsService()
-    /// App-level, not media-level: keeping the Mac awake has nothing to do
-    /// with playback. MediaModule only holds a reference so the control can
-    /// live in the expanded notch, the same way it holds the Spotify account.
+    /// App-level. The control renders as panel chrome via the coordinator,
+    /// so no module needs to know about it.
     private(set) lazy var caffeinate = CaffeinateService()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -24,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Modules register here, one line each — the Phase 2 goal made real.
         // Order is not precedence: MediaModule arbitrates by what is actually
         // playing. See MediaModule.shouldTakeOver(_:from:).
-        let media = MediaModule(sources: [SpotifyAdapter(), MusicAdapter()], account: spotifyAccount, caffeinate: caffeinate)
+        let media = MediaModule(sources: [SpotifyAdapter(), MusicAdapter()], account: spotifyAccount)
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)
         }

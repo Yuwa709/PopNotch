@@ -30,8 +30,17 @@ final class NotchCoordinator {
     /// `arbiter` is injectable for tests. Defaulted via nil rather than
     /// `= NotchArbiter()`, because a default argument is evaluated in a
     /// nonisolated context and the arbiter is `@MainActor`.
-    init(settings: SettingsStore, arbiter: NotchArbiter? = nil) {
+    /// Panel-level, not module-level: keeping the Mac awake is a property of
+    /// the app, not of anything the notch happens to be showing, so the
+    /// control renders as panel chrome whenever the panel is expanded rather
+    /// than living inside a module's view. Nil in tests.
+    private let caffeinate: CaffeinateService?
+
+    init(settings: SettingsStore,
+         arbiter: NotchArbiter? = nil,
+         caffeinate: CaffeinateService? = nil) {
         self.settings = settings
+        self.caffeinate = caffeinate
         self.arbiter = arbiter ?? NotchArbiter()
         self.arbiter.onPresentationChange = { [weak self] presentation in
             self?.presentationChanged(presentation)
@@ -239,13 +248,21 @@ final class NotchCoordinator {
             // must not re-bloom. Hard rule 8: skipped under Reduce Motion.
             let entering = lastAppliedState != .expanded
                 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            panel.setContent(view, neckHeight: neck, reveal: entering)
+            panel.setContent(view, neckHeight: neck, reveal: entering,
+                             topTrailingAccessory: caffeinateAccessory())
         case .compact:
             let wings = standbyWings()
             panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing, neckHeight: neck)
         case .idle:
             panel.setContent(nil, neckHeight: neck)
         }
+    }
+
+    /// Shown for the whole expanded state, independent of which modules are
+    /// on screen or whether anything is playing.
+    private func caffeinateAccessory() -> AnyView? {
+        guard let caffeinate else { return nil }
+        return AnyView(CaffeinateControl(service: caffeinate))
     }
 
     /// Builds the SwiftUI content for the current state.
