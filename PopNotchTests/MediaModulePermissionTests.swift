@@ -70,3 +70,60 @@ final class MediaModulePermissionTests: XCTestCase {
         XCTAssertFalse(MediaModule(sources: []).permissionDenied)
     }
 }
+
+/// The lyric area holds its height across a track change so the panel does
+/// not shrink, pull its bottom edge past the cursor on the transport
+/// buttons, and collapse. Reflow follows the area's HEIGHT, never its
+/// content.
+@MainActor
+final class LyricsReflowTests: XCTestCase {
+
+    private func track(_ title: String) -> NowPlaying {
+        var s = NowPlaying()
+        s.title = title
+        s.artist = "Artist"
+        s.isPlaying = true
+        s.artworkIdentifier = "spotify:track:\(title)"
+        return s
+    }
+
+    func testFreshModuleReservesNothing() {
+        let module = MediaModule(sources: [])
+        XCTAssertFalse(module.lyricsReserved)
+        XCTAssertFalse(module.lyricsOccupiesHeight, "no lyrics and no lookup means no height")
+    }
+
+    func testTrackChangeDoesNotReflowOnTheTransientNil() {
+        // The regression. Clearing lyrics for the incoming track used to
+        // reflow immediately, dropping the panel ~59pt while the replacement
+        // lyrics were still resolving.
+        var reflows = 0
+        let source = StubMediaSource(id: "spotify", running: true)
+        let module = MediaModule(sources: [source])
+        module.onContentReflow = { reflows += 1 }
+
+        source.publish(track("A"))
+        source.publish(track("B"))
+        source.publish(track("C"))
+
+        XCTAssertEqual(reflows, 0,
+                       "clearing lyrics for a new track must never resize the panel")
+    }
+
+    func testStalePlaceholderIsReleasedWhenThereIsNothingToLookUp() {
+        // A track with no artist or title never reaches the lyrics service,
+        // so nothing would ever release the reservation and the area would
+        // hold empty space indefinitely.
+        var bare = NowPlaying()
+        bare.artworkData = Data([0xFF])   // hasContent without title or artist
+        bare.isPlaying = true
+        bare.artworkIdentifier = "spotify:track:bare"
+
+        let source = StubMediaSource(id: "spotify", running: true)
+        let module = MediaModule(sources: [source])
+        source.publish(bare)
+
+        XCTAssertFalse(module.lyricsReserved, "the reservation must not be left held")
+        XCTAssertFalse(module.lyricsOccupiesHeight)
+    }
+}

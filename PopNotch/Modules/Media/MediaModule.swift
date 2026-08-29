@@ -39,6 +39,24 @@ final class MediaModule: NotchModule {
     private(set) var nowPlaying: NowPlaying?
     /// Synced lyrics for the current track, nil while absent or unfetched.
     private(set) var lyrics: [LyricsLine]?
+
+    /// True while a lyrics lookup is running for a track that *replaced* a
+    /// track which had lyrics. The view keeps the lyric area at full height
+    /// while it is set, so the panel does not shrink on the transient nil.
+    ///
+    /// This exists because the panel is top-anchored: shrinking pulls the
+    /// bottom edge up past the transport buttons, so the cursor that just
+    /// pressed Next ends up outside the frame and AppKit fires a *correct*
+    /// mouseExited, which collapses the panel. Measured: a 59pt drop, from a
+    /// 275pt panel to 216pt, with the transport row sitting inside the band
+    /// that vanishes.
+    private(set) var lyricsReserved = false
+
+    /// Whether the lyric area currently occupies its full height — either
+    /// showing lyrics, or holding the space for a lookup in flight. Reflow is
+    /// driven by changes to *this*, not to `lyrics`, so content swapping
+    /// inside an unchanged height never resizes the panel.
+    var lyricsOccupiesHeight: Bool { lyrics != nil || lyricsReserved }
     /// Accent pulled from the current artwork; views fall back to the fixed
     /// peach when nil (colorless art, or artwork not yet loaded).
     private(set) var artworkAccent: Color?
@@ -226,13 +244,14 @@ final class MediaModule: NotchModule {
         // goes back" uninvited. Off until it can be a designed banner; the
         // live-activity plumbing stays for whatever earns it next.
 
-        // New track: leave the full-lyrics takeover, clear old lyrics
-        // (shrinking the open panel if showing), and fetch this track's.
+        // New track: leave the full-lyrics takeover and clear the old
+        // lyrics — but deliberately WITHOUT reflowing. The area holds its
+        // current height via `lyricsReserved` until the lookup resolves, so
+        // the panel keeps its size across the change. Reflowing here is what
+        // collapsed the notch out from under the cursor on every skip.
         showFullLyrics = false
-        if lyrics != nil {
-            lyrics = nil
-            onContentReflow?()
-        }
+        lyricsReserved = lyrics != nil
+        lyrics = nil
         fetchLyrics(for: snapshot, trackKey: key)
         refreshAccountExtras()
     }
@@ -252,18 +271,38 @@ final class MediaModule: NotchModule {
     }
 
     private func fetchLyrics(for snapshot: NowPlaying, trackKey: String) {
-        guard let artist = snapshot.artist, let title = snapshot.title else { return }
+        guard let artist = snapshot.artist, let title = snapshot.title else {
+            // Nothing to look up, so the reservation would never be released
+            // and the area would hold empty space forever.
+            finishLyrics(nil, trackKey: trackKey)
+            return
+        }
         // Music can answer from its own `lyrics` property; Spotify cannot,
         // and returns nil here, sending the lookup straight to LRCLIB.
         let embedded = activeSource?.embeddedLyrics()
         lyricsService.fetch(
             artist: artist, title: title, duration: snapshot.duration, embeddedLRC: embedded
         ) { [weak self] lines in
-            guard let self, self.lastTrackKey == trackKey else { return } // stale reply
-            self.lyrics = lines
-            if lines != nil {
-                self.onContentReflow?()
-            }
+            guard let self else { return }
+            self.finishLyrics(lines, trackKey: trackKey)
+        }
+    }
+
+    /// Applies a resolved lookup and reflows only if the lyric area's height
+    /// actually changed.
+    ///
+    /// - lyrics -> lyrics: same height, no reflow (the common skip).
+    /// - lyrics -> none: shrinks, so reflow. This is the honest "this track
+    ///   has no lyrics" case the panel should resize for.
+    /// - none -> lyrics: grows, so reflow. Growing is safe: the bottom edge
+    ///   moves away from the cursor, never past it.
+    private func finishLyrics(_ lines: [LyricsLine]?, trackKey: String) {
+        guard lastTrackKey == trackKey else { return } // stale reply
+        let occupiedBefore = lyricsOccupiesHeight
+        lyrics = lines
+        lyricsReserved = false
+        if occupiedBefore != lyricsOccupiesHeight {
+            onContentReflow?()
         }
     }
 

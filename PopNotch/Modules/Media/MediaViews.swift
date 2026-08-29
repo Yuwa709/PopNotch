@@ -304,7 +304,12 @@ private struct MediaLyricsView: View {
     let module: MediaModule
 
     /// One line height; the stack travels exactly this far per line change.
-    private let step: CGFloat = 15
+    private static let step: CGFloat = 15
+    /// The area's full height, used both by the ticker and by the placeholder
+    /// that holds the space while a lookup runs. One constant so the two can
+    /// never disagree — a mismatch here would resize the panel by the
+    /// difference and reintroduce the collapse this reservation prevents.
+    static let reservedHeight: CGFloat = step * 3
     /// How many lines either side of the active one are rendered. Two, so a
     /// line has faded to nothing before it joins or leaves the ForEach.
     private let window = 2
@@ -322,6 +327,18 @@ private struct MediaLyricsView: View {
     }
 
     var body: some View {
+        if module.lyrics?.isEmpty == false {
+            ticker
+        } else if module.lyricsReserved {
+            // Holding the height, not showing anything: the outgoing track
+            // had lyrics and the incoming track's lookup is still running.
+            // Without this the panel shrinks and the notch collapses.
+            Color.clear.frame(height: Self.reservedHeight)
+        }
+    }
+
+    @ViewBuilder
+    private var ticker: some View {
         if let lines = module.lyrics, !lines.isEmpty {
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 let elapsed = module.nowPlaying?.elapsedNow(at: context.date) ?? 0
@@ -336,7 +353,7 @@ private struct MediaLyricsView: View {
                 .buttonStyle(.plain)
                 .animation(scroll, value: active)
             }
-            .frame(height: step * 3)
+            .frame(height: Self.reservedHeight)
         }
     }
 
@@ -374,7 +391,7 @@ private struct MediaLyricsView: View {
             .lineLimit(1)
             .scaleEffect(magnitude == 0 ? 1 : 0.85)
             .opacity(magnitude == 0 ? 1 : (magnitude == 1 ? 0.35 : 0))
-            .offset(y: CGFloat(distance) * step)
+            .offset(y: CGFloat(distance) * Self.step)
     }
 
     private var accent: Color { module.artworkAccent ?? Color.mediaAccent }
