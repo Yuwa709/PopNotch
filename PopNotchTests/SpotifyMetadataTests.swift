@@ -66,6 +66,52 @@ final class SpotifyMetadataTests: XCTestCase {
         XCTAssertNil(SpotifyWebAPI.artistInfo(fromJSON: Data("not json".utf8)))
     }
 
+    // MARK: - Error body logging
+    //
+    // A bare 403 with no reason cost a full diagnostic round. Spotify puts
+    // the reason in the body, so the body has to reach the log intact.
+
+    func testRealSpotifyErrorBodySurvivesIntact() {
+        let body = Data(##"{"error":{"status":403,"message":"Insufficient client scope"}}"##.utf8)
+        let rendered = SpotifyWebAPI.describeErrorBody(body)
+        XCTAssertTrue(rendered.contains("Insufficient client scope"),
+                      "the reason is the entire point of logging the body")
+        XCTAssertTrue(rendered.contains("403"))
+    }
+
+    func testEmptyAndNilBodiesAreLabelled() {
+        // A 204 never reaches here, but an empty body on a real error must
+        // read as "empty", not as a missing log line.
+        XCTAssertEqual(SpotifyWebAPI.describeErrorBody(nil), "<empty body>")
+        XCTAssertEqual(SpotifyWebAPI.describeErrorBody(Data()), "<empty body>")
+    }
+
+    func testNonUTF8BodyIsDescribedNotMangled() {
+        let bytes = Data([0xFF, 0xFE, 0xFD, 0x00])
+        XCTAssertEqual(SpotifyWebAPI.describeErrorBody(bytes), "<4 bytes, not UTF-8>")
+    }
+
+    func testNewlinesCollapseToOneLogLine() {
+        let body = Data("{\n  \"error\": 1\n}".utf8)
+        let rendered = SpotifyWebAPI.describeErrorBody(body)
+        XCTAssertFalse(rendered.contains("\n"), "a multi-line body must not fragment the log")
+    }
+
+    func testOversizedBodyIsTruncatedAndSaysSo() {
+        let body = Data(String(repeating: "x", count: 2000).utf8)
+        let rendered = SpotifyWebAPI.describeErrorBody(body)
+        XCTAssertTrue(rendered.hasPrefix(String(repeating: "x", count: 100)))
+        XCTAssertTrue(rendered.contains("truncated from 2000 chars"))
+        XCTAssertLessThan(rendered.count, 600, "an HTML error page must not swamp the log")
+    }
+
+    func testBodyAtTheLimitIsNotTruncated() {
+        let body = Data(String(repeating: "y", count: SpotifyWebAPI.bodyLogLimit).utf8)
+        let rendered = SpotifyWebAPI.describeErrorBody(body)
+        XCTAssertFalse(rendered.contains("truncated"))
+        XCTAssertEqual(rendered.count, SpotifyWebAPI.bodyLogLimit)
+    }
+
     // MARK: - Playback context
     //
     // Drives the artwork tap: the context is where the user actually started

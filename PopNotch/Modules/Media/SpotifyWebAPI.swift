@@ -181,6 +181,33 @@ final class SpotifyWebAPI {
         return (200..<300).contains(status)
     }
 
+    /// Renders an error response body for the log.
+    ///
+    /// Spotify states the actual reason in the body — "Insufficient client
+    /// scope", or the development-mode user-allowlist refusal — while the
+    /// status alone says only "forbidden". A bare 403 with no reason cost a
+    /// full diagnostic round, which is why this exists.
+    ///
+    /// Truncated so one malformed or oversized response cannot flood the
+    /// log, and length-described rather than force-decoded when the bytes
+    /// are not text.
+    nonisolated static func describeErrorBody(_ data: Data?) -> String {
+        guard let data, !data.isEmpty else { return "<empty body>" }
+        guard let text = String(data: data, encoding: .utf8) else {
+            return "<\(data.count) bytes, not UTF-8>"
+        }
+        let collapsed = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard collapsed.count > Self.bodyLogLimit else { return collapsed }
+        return String(collapsed.prefix(Self.bodyLogLimit))
+            + "… (truncated from \(collapsed.count) chars)"
+    }
+
+    /// Enough for any Spotify error object several times over; short enough
+    /// that an HTML error page from a proxy does not swamp the log.
+    nonisolated static let bodyLogLimit = 512
+
     private func get(_ urlString: String) async -> Data? {
         guard let token = await account.validAccessToken(),
               let url = URL(string: urlString) else { return nil }
@@ -190,10 +217,17 @@ final class SpotifyWebAPI {
               let status = (response as? HTTPURLResponse)?.statusCode
         else { return nil }
         guard status == 200 else {
-            // 204: nothing playing on this account. 429: rate limited.
-            // Either way there is nothing to show; stay quiet.
+            // 204 is the ordinary "nothing playing on this account" answer
+            // and stays silent. Everything else logs the status *and* the
+            // body at .error: the body is where Spotify says why, and .error
+            // persists to disk so the evidence survives a test session.
+            //
+            // Success stays exactly `status == 200`; this branch changes what
+            // is logged, never what is returned.
             if status != 204 {
-                Self.logger.notice("GET \(urlString, privacy: .public) -> \(status, privacy: .public)")
+                Self.logger.error(
+                    "GET \(urlString, privacy: .public) -> \(status, privacy: .public) body: \(Self.describeErrorBody(data), privacy: .public)"
+                )
             }
             return nil
         }
