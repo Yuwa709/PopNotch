@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 extension Color {
     /// The media accent: a warm peach, user-chosen against the Sapphire
@@ -291,35 +292,94 @@ private extension Double {
 /// The line being sung, under the progress bar in the accent — like the
 /// reference design. Absent entirely (no reserved space) when the track has
 /// no synced lyrics. The half-second tick exists only while this view does.
+/// Lyrics as a three-line ticker: previous above, active centred, next below.
+///
+/// Why this is not three labels swapping text: every line is positioned by
+/// its *distance* from the active index, so a single index change shifts
+/// every line by exactly one step under one spring. Lines are only inserted
+/// or removed two slots out, where opacity is already zero, so nothing
+/// appears or vanishes on screen. That is what makes it read as one scroll
+/// instead of three views changing content simultaneously.
 private struct MediaLyricsView: View {
     let module: MediaModule
+
+    /// One line height; the stack travels exactly this far per line change.
+    private let step: CGFloat = 15
+    /// How many lines either side of the active one are rendered. Two, so a
+    /// line has faded to nothing before it joins or leaves the ForEach.
+    private let window = 2
+
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    /// Soft enough to read as a scroll, tight enough to settle inside the
+    /// 0.5s timeline tick — beyond that the words drift behind the audio,
+    /// which is the one thing this view cannot afford. nil under Reduce
+    /// Motion makes the change instant (hard rule 8).
+    private var scroll: Animation? {
+        reduceMotion ? nil : .spring(response: 0.30, dampingFraction: 0.86, blendDuration: 0)
+    }
 
     var body: some View {
         if let lines = module.lyrics, !lines.isEmpty {
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 let elapsed = module.nowPlaying?.elapsedNow(at: context.date) ?? 0
-                let current = LyricsParser.currentLine(at: elapsed, in: lines)
-                // Tapping the line opens the full-lyrics takeover.
+                // -1 before the first timestamp, so the opening line sits one
+                // slot below centre and scrolls up into it rather than
+                // appearing already in place.
+                let active = LyricsParser.currentIndex(at: elapsed, in: lines) ?? -1
+                // Tapping anywhere in the ticker opens the full-lyrics takeover.
                 Button { module.toggleFullLyrics() } label: {
-                    Text(current?.text ?? "♪")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(module.artworkAccent ?? Color.mediaAccent)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
+                    ticker(lines: lines, active: active)
                 }
                 .buttonStyle(.plain)
-                .animation(.easeInOut(duration: 0.25), value: current?.time)
+                .animation(scroll, value: active)
             }
-            .frame(height: 14)
+            .frame(height: step * 3)
         }
     }
+
+    private func ticker(lines: [LyricsLine], active: Int) -> some View {
+        let lo = max(0, active - window)
+        let hi = min(lines.count - 1, active + window)
+        return ZStack {
+            // Run-in before the first timestamp; fades out as the opening
+            // line arrives at centre.
+            Text("♪")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(accent)
+                .opacity(active < 0 ? 1 : 0)
+
+            if lo <= hi {
+                ForEach(lo...hi, id: \.self) { i in
+                    line(lines[i].text, distance: i - active)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+    }
+
+    /// `distance` is signed: -1 is the line above, 0 the active one, +1 below.
+    /// Offset, opacity and scale are all pure functions of it, so they move
+    /// together off the same spring.
+    private func line(_ text: String, distance: Int) -> some View {
+        let magnitude = abs(distance)
+        // One font size scaled, never two sizes swapped: a font-size change
+        // does not interpolate between values, a scaleEffect does.
+        return Text(text)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(accent)
+            .lineLimit(1)
+            .scaleEffect(magnitude == 0 ? 1 : 0.85)
+            .opacity(magnitude == 0 ? 1 : (magnitude == 1 ? 0.35 : 0))
+            .offset(y: CGFloat(distance) * step)
+    }
+
+    private var accent: Color { module.artworkAccent ?? Color.mediaAccent }
 }
 
-/// The lyrics takeover: the whole notch becomes scrolling synced lyrics —
-/// current line large in the accent, neighbours dimmed, auto-centered as
-/// the song advances. A compact header keeps track identity and the way
-/// back; the panel stays pinned open while this shows.
 struct MediaFullLyricsView: View {
     let module: MediaModule
 
