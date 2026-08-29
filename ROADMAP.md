@@ -309,11 +309,18 @@ These are on their list and stay off ours, on top of everything already in *Deli
 
 ---
 
+## Deferred
+
+Not cut — revisited after PopNotch ships.
+
+- **Per-app audio mixer** (per-app volume, EQ, routing). Deferred, not started — see [docs/FUTURE-audio-mixer.md](docs/FUTURE-audio-mixer.md), which also corrects this roadmap's former claim that it needs a signed HAL driver.
+
+---
+
 ## Deliberately out of scope
 
 These were considered and cut. Do not add them without an explicit decision to reverse this.
 
-- **Per-app volume and EQ.** Requires a CoreAudio HAL plugin shipped as a system extension with a driver entitlement. Two to four months, and bugs break audio system-wide. Not worth it.
 - **Battery charge limiting.** Requires a privileged helper via `SMAppService.daemon`, XPC, and undocumented SMC writes. Hardware risk.
 - **Face ID unlock.** Three hard problems: recognition, anti-spoofing, and the authorization plugin system. A bug can lock the user out of their own machine.
 - **Android file sharing.** Requires implementing an undocumented protocol. Three to six months.
