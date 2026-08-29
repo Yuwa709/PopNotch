@@ -33,6 +33,9 @@ final class MusicAdapter: MediaSource {
 
     private var observer: NSObjectProtocol?
     private var lastSnapshot: NowPlaying?
+    /// One-shot re-anchor after a transport command; see the note on
+    /// `reanchorAfterTransport`.
+    private var reanchorTask: Task<Void, Never>?
     /// Keyed by persistent ID so artwork is pulled once per track, never on
     /// pause/resume. Artwork here is raw bytes from the app, not a URL.
     private var artworkCache: (trackID: String, data: Data)?
@@ -58,6 +61,8 @@ final class MusicAdapter: MediaSource {
     func stopObserving() {
         if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
         observer = nil
+        reanchorTask?.cancel()
+        reanchorTask = nil
     }
 
     // MARK: - Pull
@@ -233,9 +238,80 @@ final class MusicAdapter: MediaSource {
         case .nextTrack: verb = "next track"
         case .previousTrack: verb = "previous track"
         }
-        if case .failure(let failure) = AppleScriptRunner.run("tell application \"Music\" to \(verb)"),
-           failure.isPermissionDenied {
-            permissionDenied = true
+        if case .failure(let failure) = AppleScriptRunner.run("tell application \"Music\" to \(verb)") {
+            if failure.isPermissionDenied { permissionDenied = true }
+            return
+        }
+        switch command {
+        case .nextTrack, .previousTrack: reanchorAfterTransport()
+        case .play, .pause, .togglePlayPause: break
+        }
+    }
+
+    // MARK: - Re-anchor after transport
+
+    /// Same reasoning as `SpotifyAdapter`: position is projected locally from
+    /// `(elapsed, capturedAt)`, so a transport command that moves the
+    /// playhead without producing a notification leaves the notch counting up
+    /// from a stale anchor. Applied here for parity — Music's notification
+    /// behaviour on a restarting "previous" has not been measured, and
+    /// assuming it is better than Spotify's is exactly the assumption this
+    /// project keeps getting burned by.
+    ///
+    /// One delayed shot, never a poll, and only on a transport press.
+    private func reanchorAfterTransport() {
+        reanchorTask?.cancel()
+        reanchorTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.transportSettleMS))
+            guard !Task.isCancelled else { return }
+            self?.reanchor()
+        }
+    }
+
+    private static let transportSettleMS = 350
+
+    /// `persistent ID` is wrapped in a `try` on purpose. It is still in the
+    /// UNVERIFIED column of the property audit (docs/BLOCKED.md), and the
+    /// `starred` incident showed that one unimplemented property aborts the
+    /// entire `return`. Degrading to an empty id costs a track-change check;
+    /// taking the whole script down would cost the position too.
+    private static let anchorScript = """
+        tell application "Music"
+            if player state is stopped then return "stopped"
+            set tid to ""
+            try
+                set tid to (persistent ID of current track as text)
+            end try
+            return (player position as text) & "\\n" & tid
+        end tell
+        """
+
+    private func reanchor() {
+        guard isPlayerRunning else { return }
+        switch AppleScriptRunner.run(Self.anchorScript) {
+        case .success(let descriptor):
+            guard let output = descriptor.stringValue,
+                  let anchor = MusicParsing.parseAnchor(output) else { return }
+
+            // A known, changed id means a new track: the full pull publishes
+            // complete metadata and MediaModule's new-track path handles
+            // lyrics. An empty id means the property failed, so fall through
+            // to re-anchoring position only — which is the stale value.
+            if let trackID = anchor.trackID, trackID != lastSnapshot?.artworkIdentifier {
+                Self.logger.notice("Transport changed track; pulling full state")
+                refresh()
+                return
+            }
+            guard var snapshot = lastSnapshot else { return }
+            snapshot.elapsed = anchor.position
+            snapshot.capturedAt = Date()
+            lastSnapshot = snapshot
+            onUpdate?(snapshot)
+            Self.logger.notice(
+                "Re-anchored same track at \(anchor.position, format: .fixed(precision: 2), privacy: .public)s"
+            )
+        case .failure(let failure):
+            Self.logger.error("Re-anchor pull failed (\(failure.code, privacy: .public))")
         }
     }
 
@@ -277,6 +353,19 @@ final class MusicAdapter: MediaSource {
 
 /// Pure parsing, split out for tests.
 enum MusicParsing {
+
+    /// Parses the two-field anchor output: position in seconds, track id.
+    /// The id is optional — see the note on `MusicAdapter.anchorScript`.
+    /// A stopped Music reports `missing value` for position, which is not a
+    /// number and correctly yields nil rather than zero.
+    static func parseAnchor(_ output: String) -> (position: TimeInterval, trackID: String?)? {
+        guard output != "stopped" else { return nil }
+        let lines = output.components(separatedBy: "\n")
+        guard lines.count >= 2,
+              let position = Double(lines[0].replacingOccurrences(of: ",", with: "."))
+        else { return nil }
+        return (position, lines[1].isEmpty ? nil : lines[1])
+    }
 
     /// Field order matches `MusicAdapter.queryScript`: state, title, artist,
     /// album, duration-s, position-s, persistent ID, favorited, next title,

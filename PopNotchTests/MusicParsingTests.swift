@@ -50,6 +50,29 @@ final class MusicParsingTests: XCTestCase {
         XCTAssertEqual(parsed?.snapshot.title, "3005", "the rest of the snapshot survives")
     }
 
+    func testAnchorParsesPositionAndPersistentID() {
+        let anchor = MusicParsing.parseAnchor("61.536\nA1B2C3D4E5F6")
+        XCTAssertEqual(anchor?.position ?? -1, 61.536, accuracy: 0.001)
+        XCTAssertEqual(anchor?.trackID, "A1B2C3D4E5F6")
+    }
+
+    func testAnchorSurvivesAFailedPersistentID() {
+        // persistent ID is still UNVERIFIED against a live Music track, so
+        // the script wraps it in a try. An empty id must still yield a usable
+        // position rather than discarding the whole anchor - the lesson from
+        // `starred`, where one failing property took eight good fields down.
+        let anchor = MusicParsing.parseAnchor("61.536\n")
+        XCTAssertEqual(anchor?.position ?? -1, 61.536, accuracy: 0.001)
+        XCTAssertNil(anchor?.trackID)
+    }
+
+    func testStoppedMusicYieldsNoAnchor() {
+        // Verified live: a stopped Music reports "missing value" for player
+        // position. That must read as absent, never as zero.
+        XCTAssertNil(MusicParsing.parseAnchor("stopped"))
+        XCTAssertNil(MusicParsing.parseAnchor("missing value\nA1B2C3"))
+    }
+
     func testCommaDecimalLocale() {
         let parsed = MusicParsing.parse(scriptOutput: output(duration: "212,45", position: "12,607"))
         XCTAssertEqual(parsed?.snapshot.duration ?? -1, 212.45, accuracy: 0.001)
@@ -146,6 +169,38 @@ final class SpotifyCapabilityTests: XCTestCase {
         // live app, which takes artwork down with it.
         XCTAssertFalse(SpotifyAdapter.queryScriptSource.contains("starred"),
                        "starred is unimplemented by Spotify; it must never return to the query")
+    }
+
+    // MARK: - Transport re-anchor parsing
+    //
+    // Spotify sends no notification when "previous" restarts the current
+    // track (measured: 6.1s -> 0 with nothing in 15s), so the adapter pulls
+    // position and track id back itself. These pin that parse.
+
+    func testAnchorParsesPositionAndTrackID() {
+        let anchor = SpotifyParsing.parseAnchor("61.535999298096\nspotify:track:abc123")
+        XCTAssertEqual(anchor?.position ?? -1, 61.536, accuracy: 0.001)
+        XCTAssertEqual(anchor?.trackID, "spotify:track:abc123")
+    }
+
+    func testAnchorHandlesCommaDecimalLocale() {
+        let anchor = SpotifyParsing.parseAnchor("61,536\nspotify:track:abc")
+        XCTAssertEqual(anchor?.position ?? -1, 61.536, accuracy: 0.001)
+    }
+
+    func testAnchorAtZeroIsValidNotFalsy() {
+        // The restart case is exactly position 0; it must not read as "no
+        // data", which is the whole bug this parses for.
+        let anchor = SpotifyParsing.parseAnchor("0.0\nspotify:track:abc")
+        XCTAssertEqual(anchor?.position ?? -1, 0, accuracy: 0.001)
+        XCTAssertEqual(anchor?.trackID, "spotify:track:abc")
+    }
+
+    func testAnchorRejectsStoppedAndGarbage() {
+        XCTAssertNil(SpotifyParsing.parseAnchor("stopped"))
+        XCTAssertNil(SpotifyParsing.parseAnchor("not a number\nspotify:track:abc"))
+        XCTAssertNil(SpotifyParsing.parseAnchor("12.0"), "one field is not an anchor")
+        XCTAssertNil(SpotifyParsing.parseAnchor("12.0\n"), "an empty id is unusable for Spotify")
     }
 
     @MainActor

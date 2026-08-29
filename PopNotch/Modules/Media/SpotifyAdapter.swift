@@ -47,6 +47,9 @@ final class SpotifyAdapter: MediaSource {
     private var artworkCache: (url: String, data: Data)?
     private var lastSnapshot: NowPlaying?
     private var artworkTask: URLSessionDataTask?
+    /// One-shot re-anchor after a transport command. Cancelled and replaced
+    /// on rapid skipping so only the last press pulls.
+    private var reanchorTask: Task<Void, Never>?
 
     /// Constant: Spotify exposes no readable favourite over AppleScript at
     /// all (see the header note on `starred`). With an account connected the
@@ -78,6 +81,8 @@ final class SpotifyAdapter: MediaSource {
         if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
         observer = nil
         artworkTask?.cancel()
+        reanchorTask?.cancel()
+        reanchorTask = nil
     }
 
     private func handleNotification(_ userInfo: [AnyHashable: Any]) {
@@ -231,9 +236,84 @@ final class SpotifyAdapter: MediaSource {
         case .nextTrack: verb = "next track"
         case .previousTrack: verb = "previous track"
         }
-        if case .failure(let failure) = AppleScriptRunner.run("tell application \"Spotify\" to \(verb)"),
-           failure.isPermissionDenied {
-            permissionDenied = true
+        if case .failure(let failure) = AppleScriptRunner.run("tell application \"Spotify\" to \(verb)") {
+            if failure.isPermissionDenied { permissionDenied = true }
+            return
+        }
+        // Play/pause always broadcast, so they need nothing. Next and
+        // previous move the playhead and cannot be trusted to: see
+        // `reanchorAfterTransport`.
+        switch command {
+        case .nextTrack, .previousTrack: reanchorAfterTransport()
+        case .play, .pause, .togglePlayPause: break
+        }
+    }
+
+    // MARK: - Re-anchor after transport
+
+    /// Spotify broadcasts `PlaybackStateChanged` on play, pause, and any real
+    /// track change — but **not** when `previous track` restarts the track
+    /// already playing, which is what it does whenever you are more than a
+    /// few seconds in. Measured 2026-08-29: position went 6.1s -> 0 with no
+    /// notification in the following 15 seconds.
+    ///
+    /// Position is projected locally from `(elapsed, capturedAt)`, so with no
+    /// notification that anchor stays on the old value and the bar keeps
+    /// counting *up* past where the audio actually is, until a play/pause
+    /// happens to re-anchor it. `seek(to:)` already solves this same class of
+    /// problem optimistically; this is the transport equivalent, except the
+    /// new position has to be read back rather than assumed, because
+    /// "previous" means restart-or-step-back depending on the position.
+    ///
+    /// One delayed shot, never a poll: the player needs a moment to settle
+    /// before it reports the new position (notifications for real track
+    /// changes were measured at 137-259ms), and this runs only in response to
+    /// a transport button being pressed.
+    private func reanchorAfterTransport() {
+        reanchorTask?.cancel()
+        reanchorTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.transportSettleMS))
+            guard !Task.isCancelled else { return }
+            self?.reanchor()
+        }
+    }
+
+    private static let transportSettleMS = 350
+
+    /// Two fields only. Everything else the notch shows is either unchanged
+    /// (same track) or arrives with the full pull (new track).
+    private static let anchorScript = """
+        tell application "Spotify"
+            if player state is stopped then return "stopped"
+            return (player position as text) & "\\n" & (id of current track as text)
+        end tell
+        """
+
+    private func reanchor() {
+        guard isPlayerRunning else { return }
+        switch AppleScriptRunner.run(Self.anchorScript) {
+        case .success(let descriptor):
+            guard let output = descriptor.stringValue,
+                  let anchor = SpotifyParsing.parseAnchor(output) else { return }
+
+            // Track changed: hand off to the full pull, which publishes
+            // complete metadata. MediaModule's existing new-track path then
+            // sees the changed identifier and re-fetches lyrics.
+            guard anchor.trackID == lastSnapshot?.artworkIdentifier else {
+                Self.logger.notice("Transport changed track; pulling full state")
+                refresh()
+                return
+            }
+            guard var snapshot = lastSnapshot else { return }
+            snapshot.elapsed = anchor.position
+            snapshot.capturedAt = Date()
+            lastSnapshot = snapshot
+            onUpdate?(snapshot)
+            Self.logger.notice(
+                "Re-anchored same track at \(anchor.position, format: .fixed(precision: 2), privacy: .public)s"
+            )
+        case .failure(let failure):
+            Self.logger.error("Re-anchor pull failed (\(failure.code, privacy: .public))")
         }
     }
 }
@@ -259,6 +339,19 @@ enum SpotifyParsing {
         snapshot.artworkIdentifier = userInfo["Track ID"] as? String
         snapshot.sourceBundleID = SpotifyAdapter.bundleID
         return snapshot.hasContent ? snapshot : nil
+    }
+
+    /// Parses the two-field anchor output: position in seconds, track id.
+    /// Nil when the player is stopped or the output is not what we asked for.
+    static func parseAnchor(_ output: String) -> (position: TimeInterval, trackID: String)? {
+        guard output != "stopped" else { return nil }
+        let lines = output.components(separatedBy: "\n")
+        guard lines.count >= 2,
+              // AppleScript renders reals with the locale's decimal separator.
+              let position = Double(lines[0].replacingOccurrences(of: ",", with: ".")),
+              !lines[1].isEmpty
+        else { return nil }
+        return (position, lines[1])
     }
 
     /// Parses the query script's newline-separated output:
