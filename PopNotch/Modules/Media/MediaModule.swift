@@ -90,6 +90,10 @@ final class MediaModule: NotchModule {
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private let account: SpotifyAccount?
+    /// Injected, not owned: the coordinator owns the capture lifecycle
+    /// (panel visibility); this reference exists only so the expanded header
+    /// can render the bars where the wave indicator used to sit. Nil in tests.
+    @ObservationIgnored let visualizer: AudioVisualizerService?
     @ObservationIgnored private let webAPI: SpotifyWebAPI?
     @ObservationIgnored private var lastTrackKey: String?
     @ObservationIgnored private var hadPresence = false
@@ -124,9 +128,12 @@ final class MediaModule: NotchModule {
         sources.contains { $0.isPlayerRunning && $0.permissionDenied }
     }
 
-    init(sources: [MediaSource], account: SpotifyAccount? = nil) {
+    init(sources: [MediaSource],
+         account: SpotifyAccount? = nil,
+         visualizer: AudioVisualizerService? = nil) {
         self.sources = sources
         self.account = account
+        self.visualizer = visualizer
         self.webAPI = account.map(SpotifyWebAPI.init(account:))
         for source in sources {
             source.onUpdate = { [weak self, weak source] snapshot in
@@ -219,6 +226,10 @@ final class MediaModule: NotchModule {
 
     private func handleUpdate(_ snapshot: NowPlaying?) {
         nowPlaying = snapshot
+        // The visualiser's tap is whole-system, so it is gated on the player
+        // the notch is actually showing: paused, stopped or empty means the
+        // tap comes down rather than reacting to unrelated system audio.
+        visualizer?.setPlaying(snapshot?.isPlaying == true)
 
         // Recompute the accent only when the artwork bytes actually change —
         // a 24x24 downsample pass, cheap, but not worth repeating per tick.

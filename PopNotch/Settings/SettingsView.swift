@@ -9,11 +9,13 @@ struct SettingsView: View {
     let settings: SettingsStore
     let spotify: SpotifyAccount
 
+    let visualizer: AudioVisualizerService
+
     var body: some View {
         TabView {
             GeneralSettingsTab(coordinator: coordinator, settings: settings)
                 .tabItem { Label("General", systemImage: "gearshape") }
-            ModulesSettingsTab(coordinator: coordinator, settings: settings)
+            ModulesSettingsTab(coordinator: coordinator, settings: settings, visualizer: visualizer)
                 .tabItem { Label("Modules", systemImage: "square.stack") }
             PermissionsSettingsTab()
                 .tabItem { Label("Permissions", systemImage: "lock.shield") }
@@ -75,6 +77,7 @@ struct ModulesSettingsTab: View {
     let coordinator: NotchCoordinator
     /// Observed so the rows re-render when a preference is written.
     @Bindable var settings: SettingsStore
+    let visualizer: AudioVisualizerService
 
     var body: some View {
         Form {
@@ -87,9 +90,27 @@ struct ModulesSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section {
+                Toggle("Audio Visualizer", isOn: visualizerBinding)
+            } footer: {
+                Text("Shows a live spectrum of what's playing. Needs the System Audio Recording permission (System Settings → Privacy & Security → Screen & System Audio Recording). Off by default.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// Persists the choice and applies it live in one place.
+    private var visualizerBinding: Binding<Bool> {
+        Binding(
+            get: { settings.settings.visualizerEnabled },
+            set: { on in
+                settings.update { $0.visualizerEnabled = on }
+                visualizer.setEnabled(on)
+            }
+        )
     }
 
     private func binding(for id: ModuleID, current: Bool) -> Binding<Bool> {

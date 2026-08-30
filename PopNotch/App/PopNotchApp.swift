@@ -28,7 +28,8 @@ struct PopNotchApp: App {
             SettingsView(
                 coordinator: appDelegate.coordinator,
                 settings: appDelegate.settings,
-                spotify: appDelegate.spotifyAccount
+                spotify: appDelegate.spotifyAccount,
+                visualizer: appDelegate.audioViz
             )
         }
     }

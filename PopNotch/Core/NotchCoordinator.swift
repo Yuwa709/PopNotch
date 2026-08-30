@@ -35,12 +35,18 @@ final class NotchCoordinator {
     /// control renders as panel chrome whenever the panel is expanded rather
     /// than living inside a module's view. Nil in tests.
     private let caffeinate: CaffeinateService?
+    /// The coordinator owns only the capture LIFECYCLE — the tap must die
+    /// with the panel (setPanelVisible in applyState). Rendering moved into
+    /// the media header, where the wave indicator used to be. Nil in tests.
+    private let audioVisualizer: AudioVisualizerService?
 
     init(settings: SettingsStore,
          arbiter: NotchArbiter? = nil,
-         caffeinate: CaffeinateService? = nil) {
+         caffeinate: CaffeinateService? = nil,
+         audioVisualizer: AudioVisualizerService? = nil) {
         self.settings = settings
         self.caffeinate = caffeinate
+        self.audioVisualizer = audioVisualizer
         self.arbiter = arbiter ?? NotchArbiter()
         self.arbiter.onPresentationChange = { [weak self] presentation in
             self?.presentationChanged(presentation)
@@ -199,6 +205,9 @@ final class NotchCoordinator {
         }
         panel.setState(state, on: screen, expandedContentSize: expandedContentSize)
         lastAppliedState = state
+        // Capture must not run for a panel nobody can see (hard rule 9's
+        // spirit): the service tears the tap down whenever this goes false.
+        audioVisualizer?.setPanelVisible(state == .expanded)
     }
 
     /// Measures what the expanded panel is about to display by laying the

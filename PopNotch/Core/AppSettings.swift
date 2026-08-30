@@ -18,7 +18,8 @@ struct AppSettings: Codable, Equatable {
 
     /// Bump on every shape change. See the note above.
     /// v2: added spotifyClientID.
-    static let currentSchemaVersion = 2
+    /// v3: added visualizerEnabled.
+    static let currentSchemaVersion = 3
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -38,10 +39,15 @@ struct AppSettings: Codable, Equatable {
     /// Settings; account features stay hidden while empty.
     var spotifyClientID: String = ""
 
+    /// Audio visualiser. Off by default on purpose: it needs the System
+    /// Audio Recording permission, and a capture permission is opt-in, never
+    /// something the app assumes.
+    var visualizerEnabled: Bool = false
+
     // MARK: - Decoding
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, moduleEnablement, hoverEnterDelay, spotifyClientID
+        case schemaVersion, moduleEnablement, hoverEnterDelay, spotifyClientID, visualizerEnabled
     }
 
     init() {}
@@ -60,6 +66,8 @@ struct AppSettings: Codable, Equatable {
             ?? 0.35
         spotifyClientID = (try? container.decode(String.self, forKey: .spotifyClientID))
             ?? ""
+        visualizerEnabled = (try? container.decode(Bool.self, forKey: .visualizerEnabled))
+            ?? false
     }
 
     // MARK: - Migration
@@ -81,6 +89,10 @@ struct AppSettings: Codable, Equatable {
         case 1:
             // v2 added spotifyClientID; the lenient decoder fills "" for v1
             // JSON, which is exactly the not-configured state. Nothing moves.
+            fallthrough
+        case 2:
+            // v3 added visualizerEnabled; the lenient decoder fills false for
+            // v2 JSON, which is exactly the off-by-default state. Nothing moves.
             fallthrough
         default:
             break

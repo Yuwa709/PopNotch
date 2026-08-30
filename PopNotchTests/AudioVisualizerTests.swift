@@ -109,4 +109,57 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
         service.setPanelVisible(false)
         XCTAssertFalse(service.isRunning)
     }
+
+    // MARK: - Playback gate
+    //
+    // The tap is whole-system, so it is gated on the tracked player. Without
+    // this the bars would dance to a YouTube tab or a notification chime
+    // while the notch showed a paused track.
+    //
+    // These deliberately never set all three conditions true at once: doing
+    // so would open a real system-audio tap inside the test process.
+
+    func testEnabledAndVisibleButNotPlayingDoesNotCapture() {
+        let service = AudioVisualizerService()
+        service.setEnabled(true)
+        service.setPanelVisible(true)
+        XCTAssertFalse(service.isRunning,
+                       "nothing playing means no tap, however visible the panel is")
+    }
+
+    func testPlayingAloneDoesNotCapture() {
+        // Playback is necessary, not sufficient: the panel must be open and
+        // the feature enabled.
+        let service = AudioVisualizerService()
+        service.setPlaying(true)
+        XCTAssertFalse(service.isRunning)
+        XCTAssertFalse(service.isEnabled)
+    }
+
+    func testPlayingWithoutBeingEnabledDoesNotCapture() {
+        let service = AudioVisualizerService()
+        service.setPanelVisible(true)
+        service.setPlaying(true)
+        XCTAssertFalse(service.isRunning, "an off feature must never open a tap")
+    }
+
+    func testPauseAfterPlayingLeavesNothingRunning() {
+        let service = AudioVisualizerService()
+        service.setEnabled(true)
+        service.setPanelVisible(true)
+        service.setPlaying(true)
+        service.setPlaying(false)
+        XCTAssertFalse(service.isRunning)
+    }
+
+    func testBandsRestAtSilentBaselineWhenNotPlaying() {
+        // The view keeps drawing while enabled and healthy, so the zeroed
+        // bands are what makes the bars rest rather than react.
+        let service = AudioVisualizerService()
+        service.setEnabled(true)
+        service.setPanelVisible(true)
+        service.setPlaying(false)
+        XCTAssertTrue(service.bands.allSatisfy { $0 == 0 },
+                      "silent baseline, not stale magnitudes")
+    }
 }

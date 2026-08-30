@@ -117,7 +117,13 @@ struct MediaExpandedView: View {
                             }
                             .frame(maxWidth: 110, alignment: .trailing)
                         }
-                        MediaWingWaveform(module: module)
+                        // The four-dot wave indicator lived here; the real
+                        // spectrum replaces it. (The compact wing keeps the
+                        // wave — it is the collapsed-state indicator.)
+                        if let visualizer = module.visualizer {
+                            AudioVisualizerBarsView(service: visualizer,
+                                                    accent: module.artworkAccent)
+                        }
                     }
                 }
                 MediaProgressBar(module: module)

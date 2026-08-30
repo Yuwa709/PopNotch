@@ -34,10 +34,18 @@ import os
 /// which describe this. Authorization therefore shows up as
 /// `AudioDeviceStart` failing, which is handled as a logged, quiet decline.
 ///
-/// **Lifetime.** Off by default. Capture runs only while explicitly enabled
-/// *and* the panel is visible, and is torn down on disable, on the panel
-/// going away, and on deinit — hard rule 9's "nothing runs when nobody is
+/// **Lifetime.** Off by default. Capture runs only while all three of
+/// enabled, panel-visible and *actively playing* hold, and is torn down the
+/// moment any of them stops — hard rule 9's "nothing runs when nobody is
 /// looking", expressed without a timer.
+///
+/// The playback condition matters beyond tidiness. The tap is whole-system:
+/// with only enabled-and-visible gating, the bars would dance to a YouTube
+/// tab, a notification chime, or a video call while the notch showed a
+/// paused track. Gating on the tracked player's state keeps the spectrum
+/// honestly about the music the notch is displaying. Per-app isolation is a
+/// different thing entirely and stays deferred — see
+/// `docs/FUTURE-audio-mixer.md`.
 @MainActor
 @Observable
 final class AudioVisualizerService {
@@ -60,10 +68,31 @@ final class AudioVisualizerService {
 
     @ObservationIgnored private(set) var isEnabled = false
     @ObservationIgnored private var panelVisible = false
+    /// Driven by the media module from the active source's player state.
+    @ObservationIgnored private var isPlaying = false
     @ObservationIgnored private var capture: SystemAudioTap?
     /// Throttles the verification logging; no timer, just a clock check on
     /// buffers that are arriving anyway.
     @ObservationIgnored private var lastLogged = Date.distantPast
+
+    /// Per-band reference levels in dB: the ceiling each band is normalised
+    /// against, with `dynamicWindow` of range below it.
+    ///
+    /// **Measured, not assumed** (2026-08-29, live playback through the tap):
+    /// musical energy tilts ~67 dB across the spectrum — band 0 peaked at
+    /// +35 dB while band 14 peaked at -32 dB. The old single mapping,
+    /// `(db + 60) / 60`, assumed a flat -60 floor: it pinned bands 0-7 at
+    /// 1.0 permanently and let the treble barely move. These references are
+    /// the measured peak envelope, lightly smoothed, so every band's musical
+    /// peak lands near the top of its own bar.
+    nonisolated static let referenceDB: [Float] = [
+        36, 36, 33, 28, 22, 17, 14, 12,
+        11, 9, 4, -2, -9, -17, -24, -18,
+    ]
+
+    /// How far below its reference a band stays visible. 45 dB reaches down
+    /// to the quiet parts of a mix without letting noise light the bars.
+    nonisolated static let dynamicWindow: Float = 45
 
     /// Folds FFT bins into log-spaced bands, normalised to roughly 0...1.
     ///
@@ -83,10 +112,11 @@ final class AudioVisualizerService {
             var sum: Float = 0
             for bin in lo..<upper { sum += magnitudes[bin] }
             let mean = sum / Float(upper - lo)
-            // dB, then squashed into 0...1. Raw magnitudes span orders of
-            // magnitude and would render as one tall bar and fifteen flat ones.
+            // dB against this band's own reference, so the spectral tilt of
+            // real music does not pin the bass and starve the treble.
             let db = 20 * log10f(max(mean, 1e-9))
-            bands[band] = min(1, max(0, (db + 60) / 60))
+            let reference = band < Self.referenceDB.count ? Self.referenceDB[band] : 0
+            bands[band] = min(1, max(0, (db - (reference - Self.dynamicWindow)) / Self.dynamicWindow))
         }
         return bands
     }
@@ -108,14 +138,28 @@ final class AudioVisualizerService {
         reconcile()
     }
 
-    private var shouldRun: Bool { isEnabled && panelVisible }
+    /// Called by the media module whenever the active source's play state
+    /// changes. Not a poll: this rides the adapter's existing push updates.
+    func setPlaying(_ playing: Bool) {
+        guard playing != isPlaying else { return }
+        isPlaying = playing
+        reconcile()
+    }
+
+    private var shouldRun: Bool { isEnabled && panelVisible && isPlaying }
 
     private func reconcile() {
         if shouldRun {
             if capture == nil { start() }
         } else if capture != nil {
-            stop(reason: isEnabled ? "panel not visible" : "disabled")
+            stop(reason: stopReason)
         }
+    }
+
+    private var stopReason: String {
+        if !isEnabled { return "disabled" }
+        if !panelVisible { return "panel not visible" }
+        return "playback stopped"
     }
 
     // MARK: - Capture

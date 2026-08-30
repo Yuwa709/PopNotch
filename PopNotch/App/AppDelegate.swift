@@ -10,17 +10,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "AppDelegate")
 
     let settings = SettingsStore()
-    private(set) lazy var coordinator = NotchCoordinator(settings: settings, caffeinate: caffeinate)
+    private(set) lazy var coordinator = NotchCoordinator(settings: settings, caffeinate: caffeinate, audioVisualizer: audioViz)
     private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
     private let statsService = SystemStatsService()
     /// App-level. The control renders as panel chrome via the coordinator,
     /// so no module needs to know about it.
     private(set) lazy var caffeinate = CaffeinateService()
 
-    // TEMP-VERIFY: forced on at launch so real band magnitudes can be
-    // confirmed in the log before any UI exists. This deliberately breaks the
-    // service's own "off by default, never enabled at launch" contract and
-    // must be removed once the data is confirmed.
+    /// Panel-level, like caffeinate: enabled from the stored setting, made
+    /// visible by the coordinator only while the panel is expanded.
     private(set) lazy var audioViz = AudioVisualizerService()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -29,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Modules register here, one line each — the Phase 2 goal made real.
         // Order is not precedence: MediaModule arbitrates by what is actually
         // playing. See MediaModule.shouldTakeOver(_:from:).
-        let media = MediaModule(sources: [SpotifyAdapter(), MusicAdapter()], account: spotifyAccount)
+        let media = MediaModule(sources: [SpotifyAdapter(), MusicAdapter()], account: spotifyAccount, visualizer: audioViz)
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)
         }
@@ -49,9 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
 
-        // TEMP-VERIFY: see the note on `audioViz`.
-        audioViz.setEnabled(true)
-        audioViz.setPanelVisible(true)
+        // The stored preference; off by default. Visibility is the
+        // coordinator's job, so no setPanelVisible here.
+        audioViz.setEnabled(settings.settings.visualizerEnabled)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

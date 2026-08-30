@@ -142,4 +142,25 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(AppSettings.migrate(settings, from: AppSettings.currentSchemaVersion), settings)
     }
+
+    // MARK: - v2 -> v3
+
+    func testV2JSONMigratesWithNothingDropped() throws {
+        // Real v2 shape: no visualizerEnabled key.
+        let v2 = Data("""
+        {"schemaVersion": 2,
+         "moduleEnablement": {"system-stats": false},
+         "hoverEnterDelay": 0.1,
+         "spotifyClientID": "abc123"}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: v2)
+        let migrated = AppSettings.migrate(decoded, from: 2)
+
+        XCTAssertEqual(migrated.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertEqual(migrated.moduleEnablement["system-stats"], false, "nothing dropped")
+        XCTAssertEqual(migrated.hoverEnterDelay, 0.1, accuracy: 0.0001, "nothing dropped")
+        XCTAssertEqual(migrated.spotifyClientID, "abc123", "nothing dropped")
+        XCTAssertFalse(migrated.visualizerEnabled,
+                       "the new field arrives OFF: a capture permission is opt-in")
+    }
 }
