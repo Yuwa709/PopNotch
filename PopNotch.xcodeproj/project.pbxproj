@@ -30,6 +30,16 @@
 		C6F40E2E3040DB3900F801FD /* PopNotch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PopNotch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		C68E1F723043E851009A6579 /* Exceptions for "PopNotch" folder in "PopNotch" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = C6F40DC630402B2F00F801FD /* PopNotch */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C68E1E9A3040F191009A6579 /* PopNotchTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -38,6 +48,9 @@
 		};
 		C6F40DC930402B2F00F801FD /* PopNotch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C68E1F723043E851009A6579 /* Exceptions for "PopNotch" folder in "PopNotch" target */,
+			);
 			path = PopNotch;
 			sourceTree = "<group>";
 		};
@@ -381,6 +394,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PopNotch/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "PopNotch controls playback in Music and Spotify.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "PopNotch shows your upcoming events in the notch.";
@@ -415,6 +429,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PopNotch/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "PopNotch controls playback in Music and Spotify.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "PopNotch shows your upcoming events in the notch.";
