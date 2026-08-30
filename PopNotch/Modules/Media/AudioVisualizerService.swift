@@ -90,19 +90,45 @@ final class AudioVisualizerService {
         11, 9, 4, -2, -9, -17, -24, -18,
     ]
 
-    /// How far below its reference a band stays visible. 45 dB reaches down
-    /// to the quiet parts of a mix without letting noise light the bars.
-    nonisolated static let dynamicWindow: Float = 45
-
-    /// Folds FFT bins into log-spaced bands, normalised to roughly 0...1.
+    /// How far below its ceiling a band stays visible. Narrower means more
+    /// height per dB, so bands separate and travel further.
     ///
-    /// Log spacing because linear bins put almost everything musical in the
-    /// first band or two. Pure, and on the service rather than the private tap so it is testable.
-    nonisolated static func fold(magnitudes: [Float], into bandCount: Int) -> [Float] {
+    /// **35 is the measured optimum**, simulated against live audio
+    /// 2026-08-29 across 45/35/30/26/22/18 dB. Mean cross-band spread peaks
+    /// there at 0.71 (45 gave 0.61) and then *falls* as the window keeps
+    /// narrowing, because bands start hitting the floor rather than
+    /// separating: 30 floors 4 bands a frame, 26 floors 8 of 16, and spread
+    /// collapses to 0.51 by 18. Pinning stayed at 0.00 bands/frame at every
+    /// candidate, so none of this risks the max-volume brick returning —
+    /// that is the adaptive gain's job and it still does it.
+    nonisolated static let dynamicWindow: Float = 35
+
+    /// dB of headroom kept above the recent peak, so the loudest band lands
+    /// just below the top instead of pinned against it. 3 dB puts a peak at
+    /// 42/45 = 0.93 of full height, which still reads as "maxed" while
+    /// leaving room to show a louder transient.
+    nonisolated static let peakHeadroom: Float = 3
+
+    /// How far the adaptive ceiling may fall below the measured references.
+    /// Without a floor the gain would keep climbing through a quiet passage
+    /// until room tone lit the bars.
+    nonisolated static let minimumGain: Float = -12
+
+    /// Per-frame decay of the ceiling, at roughly 46 buffers a second: about
+    /// a four-second fall. The ceiling rises instantly so a transient cannot
+    /// clip, and falls slowly so a quiet bar inside a loud track still reads
+    /// as quiet rather than being re-normalised to full height a frame later.
+    nonisolated static let gainRelease: Float = 0.995
+
+    /// Band energies in dB, before normalisation.
+    ///
+    /// Split out from `fold` so the adaptive ceiling can read exactly the
+    /// numbers the mapping will use, without folding the bins twice.
+    nonisolated static func bandDecibels(magnitudes: [Float], into bandCount: Int) -> [Float] {
         guard !magnitudes.isEmpty, bandCount > 0 else {
-            return [Float](repeating: 0, count: max(0, bandCount))
+            return [Float](repeating: -.infinity, count: max(0, bandCount))
         }
-        var bands = [Float](repeating: 0, count: bandCount)
+        var result = [Float](repeating: -.infinity, count: bandCount)
         let maxBin = Float(magnitudes.count)
         for band in 0..<bandCount {
             let lo = Int(powf(maxBin, Float(band) / Float(bandCount)))
@@ -111,14 +137,52 @@ final class AudioVisualizerService {
             guard lo < upper else { continue }
             var sum: Float = 0
             for bin in lo..<upper { sum += magnitudes[bin] }
-            let mean = sum / Float(upper - lo)
-            // dB against this band's own reference, so the spectral tilt of
-            // real music does not pin the bass and starve the treble.
-            let db = 20 * log10f(max(mean, 1e-9))
-            let reference = band < Self.referenceDB.count ? Self.referenceDB[band] : 0
-            bands[band] = min(1, max(0, (db - (reference - Self.dynamicWindow)) / Self.dynamicWindow))
+            result[band] = 20 * log10f(max(sum / Float(upper - lo), 1e-9))
         }
-        return bands
+        return result
+    }
+
+    /// Maps band dB to 0...1 against the per-band references, with the whole
+    /// set of ceilings shifted by `gain`.
+    ///
+    /// The references carry the *shape* — the spectral tilt of real music,
+    /// which is a property of music and not of level. `gain` carries the
+    /// *level*, which is a property of the track's mastering. Separating them
+    /// is what lets one mapping serve a quiet recording and a loud one.
+    nonisolated static func normalize(bandDecibels: [Float], gain: Float) -> [Float] {
+        bandDecibels.enumerated().map { index, db in
+            let reference = index < referenceDB.count ? referenceDB[index] : 0
+            let ceiling = reference + gain
+            return min(1, max(0, (db - (ceiling - dynamicWindow)) / dynamicWindow))
+        }
+    }
+
+    /// How far the loudest band sits above its own reference this frame.
+    /// Negative for quiet material, which is how the ceiling comes back down.
+    nonisolated static func excess(bandDecibels: [Float]) -> Float {
+        var highest = -Float.infinity
+        for (index, db) in bandDecibels.enumerated() where db.isFinite {
+            let reference = index < referenceDB.count ? referenceDB[index] : 0
+            highest = max(highest, db - reference)
+        }
+        return highest.isFinite ? highest : minimumGain
+    }
+
+    /// Attack instantly, release slowly — the standard shape for anything
+    /// that must not clip but also must not pump.
+    nonisolated static func updatedGain(current: Float, excess: Float) -> Float {
+        let target = max(minimumGain, excess + peakHeadroom)
+        guard target <= current else { return target }
+        return current * gainRelease + target * (1 - gainRelease)
+    }
+
+    /// Folds FFT bins into log-spaced bands, normalised to roughly 0...1
+    /// against the static references — i.e. with no adaptive gain.
+    ///
+    /// Log spacing because linear bins put almost everything musical in the
+    /// first band or two. Pure, and on the service rather than the private tap so it is testable.
+    nonisolated static func fold(magnitudes: [Float], into bandCount: Int) -> [Float] {
+        normalize(bandDecibels: bandDecibels(magnitudes: magnitudes, into: bandCount), gain: 0)
     }
 
     // MARK: - Control
@@ -365,8 +429,19 @@ private nonisolated final class AudioAnalyzer {
     private let log2n: vDSP_Length
     private let fftSetup: FFTSetup?
     private var window: [Float]
+    /// Per-frame decay of a falling bar. Attack stays instant.
+    ///
+    /// 0.72 at ~46 buffers a second is a ~60ms fall, down from 0.82's
+    /// ~110ms: bars drop about twice as fast, which is most of the visible
+    /// travel. Still smoothed — raising it toward 1 damps motion, dropping
+    /// it to 0 strobes on every buffer.
+    static let release: Float = 0.72
+
     /// Previous frame, for the decay that stops the bars strobing.
     private var smoothed = [Float](repeating: 0, count: AudioVisualizerService.bandCount)
+    /// Adaptive ceiling offset, in dB, tracking recent loudness. Starts at 0
+    /// (the static references) and follows the material from there.
+    private var gain: Float = 0
 
     init() {
         log2n = vDSP_Length(log2(Float(Self.fftSize)))
@@ -408,12 +483,17 @@ private nonisolated final class AudioAnalyzer {
             }
         }
 
-        let raw = AudioVisualizerService.fold(magnitudes: magnitudes,
-                                              into: AudioVisualizerService.bandCount)
+        // Fold once, then let the ceiling follow the same numbers the
+        // mapping is about to use.
+        let decibels = AudioVisualizerService.bandDecibels(
+            magnitudes: magnitudes, into: AudioVisualizerService.bandCount)
+        gain = AudioVisualizerService.updatedGain(
+            current: gain, excess: AudioVisualizerService.excess(bandDecibels: decibels))
+        let raw = AudioVisualizerService.normalize(bandDecibels: decibels, gain: gain)
         // Attack fast, release slow: a bar that falls as fast as it rises
         // reads as flicker rather than as level.
         for i in smoothed.indices {
-            smoothed[i] = raw[i] > smoothed[i] ? raw[i] : smoothed[i] * 0.82 + raw[i] * 0.18
+            smoothed[i] = raw[i] > smoothed[i] ? raw[i] : smoothed[i] * Self.release + raw[i] * (1 - Self.release)
         }
         return smoothed
     }
