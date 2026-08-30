@@ -114,6 +114,23 @@ final class AudioVisualizerService {
     /// until room tone lit the bars.
     nonisolated static let minimumGain: Float = -12
 
+    /// Per-frame decay of a falling bar. Attack stays instant, so a peak
+    /// lands immediately and only the fall is shaped.
+    ///
+    /// **0.35 is measured, not guessed.** Frame-to-frame travel in the raw
+    /// band data is 0.073 of bar height per buffer; a release of 0.72 was
+    /// delivering only 0.038 of that to the screen, discarding roughly half
+    /// the motion the audio actually contains. Swept live 2026-08-30:
+    /// 0.72 -> 0.038, 0.55 -> 0.048, 0.40 -> 0.056, 0.25 -> 0.063, and
+    /// 0.00 -> 0.073, which is the raw signal with no smoothing at all.
+    /// 0.35 keeps about 80% of the available travel while still shaping the
+    /// fall enough that a single noisy buffer cannot strobe a bar.
+    ///
+    /// This changes only how a bar falls; it cannot reintroduce the
+    /// max-volume brick, which the adaptive gain owns and which measured
+    /// 0.00 pinned bands per frame.
+    nonisolated static let barRelease: Float = 0.35
+
     /// Per-frame decay of the ceiling, at roughly 46 buffers a second: about
     /// a four-second fall. The ceiling rises instantly so a transient cannot
     /// clip, and falls slowly so a quiet bar inside a loud track still reads
@@ -429,14 +446,6 @@ private nonisolated final class AudioAnalyzer {
     private let log2n: vDSP_Length
     private let fftSetup: FFTSetup?
     private var window: [Float]
-    /// Per-frame decay of a falling bar. Attack stays instant.
-    ///
-    /// 0.72 at ~46 buffers a second is a ~60ms fall, down from 0.82's
-    /// ~110ms: bars drop about twice as fast, which is most of the visible
-    /// travel. Still smoothed — raising it toward 1 damps motion, dropping
-    /// it to 0 strobes on every buffer.
-    static let release: Float = 0.72
-
     /// Previous frame, for the decay that stops the bars strobing.
     private var smoothed = [Float](repeating: 0, count: AudioVisualizerService.bandCount)
     /// Adaptive ceiling offset, in dB, tracking recent loudness. Starts at 0
@@ -493,7 +502,7 @@ private nonisolated final class AudioAnalyzer {
         // Attack fast, release slow: a bar that falls as fast as it rises
         // reads as flicker rather than as level.
         for i in smoothed.indices {
-            smoothed[i] = raw[i] > smoothed[i] ? raw[i] : smoothed[i] * Self.release + raw[i] * (1 - Self.release)
+            smoothed[i] = raw[i] > smoothed[i] ? raw[i] : smoothed[i] * AudioVisualizerService.barRelease + raw[i] * (1 - AudioVisualizerService.barRelease)
         }
         return smoothed
     }

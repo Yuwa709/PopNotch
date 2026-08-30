@@ -60,9 +60,12 @@ struct AudioVisualizerBarsView: View {
         // the row's layout — same trick the wave indicator used.
         .frame(height: Self.maxHeight)
         .shadow(color: (accent ?? .white).opacity(0.4), radius: 3)
-        // Buffers arrive ~46 times a second; a short linear blend turns the
-        // steps into rise and fall. Hard rule 8: instant under Reduce Motion.
-        .animation(reduceMotion ? nil : .linear(duration: 0.06), value: service.bands)
+        // Buffers arrive every ~22ms. A 60ms blend was interpolating across
+        // nearly three of them, averaging away motion the data contained;
+        // 30ms lets each buffer substantially arrive before the next, while
+        // still avoiding visible stepping. Hard rule 8: instant under
+        // Reduce Motion.
+        .animation(reduceMotion ? nil : .linear(duration: 0.03), value: service.bands)
         .accessibilityLabel("Audio visualizer")
         .allowsHitTesting(false)
     }

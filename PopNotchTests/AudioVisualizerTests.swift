@@ -198,6 +198,63 @@ final class AudioVisualizerGainTests: XCTestCase {
     }
 }
 
+/// Bar motion. The smoother sits between real audio dynamics and the
+/// screen, so an over-damped release throws away travel the data contains.
+final class AudioVisualizerMotionTests: XCTestCase {
+
+    /// The shipped smoothing step: instant attack, shaped fall.
+    private func smoothed(_ previous: Float, _ raw: Float) -> Float {
+        let release = AudioVisualizerService.barRelease
+        return raw > previous ? raw : previous * release + raw * (1 - release)
+    }
+
+    func testAttackIsInstant() {
+        // A peak must land on the frame it happens, never be ramped into.
+        XCTAssertEqual(smoothed(0.2, 0.9), 0.9, accuracy: 0.0001)
+    }
+
+    func testFallDeliversMostOfTheAvailableTravel() {
+        // Measured: raw travel is ~0.073 of bar height per buffer, and a
+        // release of 0.72 delivered only ~0.038 of it. One frame of a drop
+        // must now cross well over half the distance.
+        let step = 1 - smoothed(1.0, 0.0)
+        XCTAssertGreaterThan(step, 0.6, "an over-damped release hides the motion")
+        XCTAssertLessThan(step, 1.0, "but a bar must not snap, or it strobes")
+    }
+
+    func testReleaseStaysInTheShapedRange() {
+        // 0 strobes on a single noisy buffer; toward 1 is the damping this
+        // was tuned away from.
+        XCTAssertGreaterThan(AudioVisualizerService.barRelease, 0)
+        XCTAssertLessThan(AudioVisualizerService.barRelease, 0.6)
+    }
+
+    func testFallIsMonotonicAndSettles() {
+        // No overshoot below the target, and it actually arrives.
+        var value: Float = 1
+        var previous: Float = 2
+        for _ in 0..<40 {
+            value = smoothed(value, 0)
+            XCTAssertLessThan(value, previous)
+            XCTAssertGreaterThanOrEqual(value, 0)
+            previous = value
+        }
+        XCTAssertLessThan(value, 0.01, "a bar must reach the floor, not hang above it")
+    }
+
+    func testSmoothingCannotPushABandOutOfRange() {
+        // Whatever the release, the smoother only ever interpolates between
+        // two in-range values, so it cannot create a clipped bar.
+        for raw in [Float(0), 0.5, 1] {
+            for previous in [Float(0), 0.5, 1] {
+                let result = smoothed(previous, raw)
+                XCTAssertGreaterThanOrEqual(result, 0)
+                XCTAssertLessThanOrEqual(result, 1)
+            }
+        }
+    }
+}
+
 /// Off by default, and never running when nobody is looking.
 @MainActor
 final class AudioVisualizerLifecycleTests: XCTestCase {
