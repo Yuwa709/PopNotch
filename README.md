@@ -5,7 +5,7 @@ A native macOS utility that turns the camera notch into something useful. Hover 
 <!-- TODO(user): screenshot of the expanded notch over the bezel goes here.
      docs/screenshot.png — needs a human with eyes on the real display. -->
 
-Built with Swift and SwiftUI, no web runtime, no Electron. The whole app idles under 1% CPU, because an overlay that costs you battery is worse than no overlay.
+Built with Swift and SwiftUI, no web runtime, no Electron. An overlay that costs you battery is worse than no overlay, so nothing samples in the background: system-stat polling stops entirely when the stats aren't on screen or the display is asleep, and playback updates arrive as notifications from the player rather than by polling it.
 
 ## What it does
 
