@@ -34,6 +34,21 @@ final class NotchCoordinator {
     /// the app, not of anything the notch happens to be showing, so the
     /// control renders as panel chrome whenever the panel is expanded rather
     /// than living inside a module's view. Nil in tests.
+    /// Where the expanded panel is, beyond what the arbiter chose.
+    ///
+    /// `.standby` is the arbitrated default (media, stats, live activities).
+    /// Every other case is a full-panel screen a chrome control navigated
+    /// to. Future screens add a case here and a branch in `content(for:)` —
+    /// the reset-on-collapse and disabled-module fallbacks come for free.
+    enum Destination: Equatable {
+        case standby
+        case clipboard
+    }
+
+    /// Owned here because the coordinator already owns what the panel shows.
+    /// Not persisted: a screen is a place you went, not a preference.
+    private(set) var destination: Destination = .standby
+
     private let caffeinate: CaffeinateService?
     /// The coordinator owns only the capture LIFECYCLE — the tap must die
     /// with the panel (setPanelVisible in applyState). Rendering moved into
@@ -108,6 +123,9 @@ final class NotchCoordinator {
         guard let module = arbiter.module(for: id) else { return }
         module.isEnabled = enabled
         settings.setEnabled(enabled, for: id)
+        if !enabled, destination == .clipboard, id == "clipboard" {
+            destination = .standby
+        }
         arbiter.enablementDidChange()
         renderContent()
         applyState()
@@ -197,11 +215,24 @@ final class NotchCoordinator {
     /// tell an entrance (play the reveal) from an in-place update (do not).
     private var lastAppliedState: NotchPanel.State = .idle
 
+    /// Chrome controls call this; it re-renders and re-measures, since
+    /// destinations differ in size.
+    func navigate(to destination: Destination) {
+        guard destination != self.destination else { return }
+        self.destination = destination
+        renderContent()
+        applyState()
+    }
+
     private func applyState() {
         guard let panel, let screen = currentScreen else { return }
         let state = desiredState()
         if lastAppliedState == .expanded && state != .expanded {
             arbiter.registeredModules.forEach { $0.notchDidCollapse() }
+            // A screen is not a place to still be on the next hover — the
+            // panel reopens on the arbitrated default, matching how the
+            // full-lyrics takeover resets.
+            destination = .standby
         }
         panel.setState(state, on: screen, expandedContentSize: expandedContentSize)
         lastAppliedState = state
@@ -258,12 +289,30 @@ final class NotchCoordinator {
             let entering = lastAppliedState != .expanded
                 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             panel.setContent(view, neckHeight: neck, reveal: entering,
+                             topLeadingAccessory: leadingAccessory(),
                              topTrailingAccessory: caffeinateAccessory())
         case .compact:
             let wings = standbyWings()
             panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing, neckHeight: neck)
         case .idle:
             panel.setContent(nil, neckHeight: neck)
+        }
+    }
+
+    /// Top-left chrome, mirroring caffeinate on the right: the way into a
+    /// navigated screen, or the way back out of one.
+    private func leadingAccessory() -> AnyView? {
+        switch destination {
+        case .standby:
+            // The door only exists while the feature behind it is on.
+            guard arbiter.module(for: "clipboard")?.isEnabled == true else { return nil }
+            return AnyView(PanelChromeButton(symbol: "doc.on.clipboard", help: "Clipboard history") {
+                [weak self] in self?.navigate(to: .clipboard)
+            })
+        case .clipboard:
+            return AnyView(PanelChromeButton(symbol: "chevron.backward", help: "Back") {
+                [weak self] in self?.navigate(to: .standby)
+            })
         }
     }
 
@@ -292,6 +341,13 @@ final class NotchCoordinator {
             // panel around it) the moment the cursor left a pinned lyrics
             // view: user-observed bug.
             if desiredState() == .expanded {
+                // A navigated screen replaces the arbitrated stack wholesale.
+                // Falls through if its module got disabled underneath it, so
+                // the panel can never show a screen whose feature is off.
+                if destination == .clipboard,
+                   let clipboard = arbiter.module(for: "clipboard"), clipboard.isEnabled {
+                    return clipboard.makeExpandedView()
+                }
                 // Stacked, not side by side: several expanded modules in a row
                 // overflow the panel and truncate (observed with media plus
                 // five stats). The notch grows downward, so height is the

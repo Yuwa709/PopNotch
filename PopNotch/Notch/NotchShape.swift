@@ -77,9 +77,11 @@ struct NotchOverlayView: View {
     /// Play the emerge-from-the-notch entrance on this content.
     var revealContent: Bool = false
     /// Panel-level chrome for the expanded state, drawn in the band beside
-    /// the housing on the trailing side. That band is free here: the wings
-    /// that use it render only while compact, and this renders only while
-    /// expanded, so the two can never overlap.
+    /// the housing. That band is free here: the wings that use it render
+    /// only while compact, and these render only while expanded, so the two
+    /// can never overlap. Leading holds navigation (clipboard, back);
+    /// trailing holds caffeinate.
+    var topLeadingAccessory: AnyView?
     var topTrailingAccessory: AnyView?
 
     /// The panel's visible side border. Shared by the content column and the
@@ -111,10 +113,11 @@ struct NotchOverlayView: View {
                 .padding(.horizontal, NotchPanel.compactEdgeExtra)
                 .frame(height: neckHeight)
             }
-            if expanded, let topTrailingAccessory {
+            if expanded, topLeadingAccessory != nil || topTrailingAccessory != nil {
                 HStack(spacing: 0) {
+                    if let topLeadingAccessory { topLeadingAccessory }
                     Spacer(minLength: 0)
-                    topTrailingAccessory
+                    if let topTrailingAccessory { topTrailingAccessory }
                 }
                 // The content's own inset, so the control's right edge lines
                 // up with the right edge of the content column below it.
