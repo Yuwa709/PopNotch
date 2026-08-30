@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>Privacy - Audio Capture Usage Description</key>
+	<key>NSAudioCaptureUsageDescription</key>
 	<string>PopNotch reads system audio to display a live music visualizer.</string>
 </dict>
 </plist>

@@ -12,7 +12,7 @@ PopNotch, by Techie. A native macOS menu bar utility that draws an interactive o
 - Build system: Xcode project (`PopNotch.xcodeproj`)
 - Bundle identifier: `com.techie.PopNotch`
 - Logger subsystem: `com.techie.PopNotch`
-- Minimum target: macOS 14.0
+- Minimum target: macOS 14.2 (raised from 14.0 on 2026-08-29: Core Audio process taps, which the audio visualiser needs, are 14.2+)
 - Architecture: arm64 only. No Intel Mac has a notch, so `x86_64` is dead weight
 - Platform: macOS only. Not iOS, not visionOS
 

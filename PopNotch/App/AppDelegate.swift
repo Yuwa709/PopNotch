@@ -17,6 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// so no module needs to know about it.
     private(set) lazy var caffeinate = CaffeinateService()
 
+    // TEMP-VERIFY: forced on at launch so real band magnitudes can be
+    // confirmed in the log before any UI exists. This deliberately breaks the
+    // service's own "off by default, never enabled at launch" contract and
+    // must be removed once the data is confirmed.
+    private(set) lazy var audioViz = AudioVisualizerService()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator.start()
 
@@ -42,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modules.forEach { coordinator.register($0) }
 
         Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
+
+        // TEMP-VERIFY: see the note on `audioViz`.
+        audioViz.setEnabled(true)
+        audioViz.setPanelVisible(true)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

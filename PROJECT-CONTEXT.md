@@ -25,7 +25,7 @@ Resolved in Phase 0.5, commits `dbd88ec` and `0a06545`. The project had been sca
 | Setting | Value | Why |
 |---|---|---|
 | `PRODUCT_BUNDLE_IDENTIFIER` | `com.techie.PopNotch` | Permanent. See Identity above |
-| `MACOSX_DEPLOYMENT_TARGET` | `14.0` | The floor, not the ceiling. Every notch Mac runs it, and `@Observable` needs 14 |
+| `MACOSX_DEPLOYMENT_TARGET` | `14.2` | Raised from 14.0 on 2026-08-29. `@Observable` needs 14; **Core Audio process taps need 14.2**, and gating that one feature cost a type-erased `AnyObject` plus three casts for an OS that shipped in December 2023. Set at project level, so targets inherit rather than drifting apart — which is exactly what happened when only the app target was raised |
 | `SDKROOT` / `SUPPORTED_PLATFORMS` | `macosx` | Not iOS, not visionOS |
 | `ARCHS` | `arm64` | No Intel Mac has a notch |
 | `SWIFT_VERSION` | `5.0` | Language mode, not compiler version. Valid values are 4.0, 4.2, 5.0, 6.0 — there is no 5.9 |
@@ -110,7 +110,7 @@ If a decision forces a tradeoff, media wins.
 | SwiftUI with AppKit interop | SwiftUI for views, AppKit for everything about the window itself |
 | No SwiftData, no Core Data | Settings are one `Codable` struct in UserDefaults. Notch data is live system state and is not persisted |
 | No third-party dependencies | Apple frameworks only. Sparkle in Phase 5 is the single pre-approved exception |
-| macOS 14.0 minimum | Modern SwiftUI without cutting off too many users. Every notch Mac can run it |
+| macOS 14.2 minimum | Modern SwiftUI without cutting off too many users. Every notch Mac can run it. Raised from 14.0 for Core Audio process taps |
 | arm64 only | No Intel Mac has a notch |
 | Module system before features | A dozen things compete for one small window. Arbitration must exist before there is anything to arbitrate |
 | `LSUIElement = YES` | Background agent, no Dock icon |
