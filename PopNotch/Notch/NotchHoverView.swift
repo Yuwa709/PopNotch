@@ -39,6 +39,30 @@ final class NotchHoverView: NSView {
         ))
     }
 
+    /// Whether the cursor still counts as over the panel, for the purpose of
+    /// confirming an exit.
+    ///
+    /// `NSRect.contains` is half-open on maxY, and this panel's top edge sits
+    /// flush with the screen's maxY. A cursor pinned to the top screen edge
+    /// therefore reports `y == maxY` and reads as *outside* in every panel
+    /// state, at every size — measured 2026-08-29: enter fired with
+    /// `contains=false`, the panel expanded, the verification agreed the
+    /// cursor was outside, and it collapsed straight back, oscillating on a
+    /// ~320ms cycle one pixel row from the top.
+    ///
+    /// The enter path uses the tracking area, which is inclusive at its edge;
+    /// this test was exclusive. Closing that one-row disagreement is the
+    /// entire fix. Nothing is widened downward or sideways: the x test keeps
+    /// `contains`'s own half-open semantics, and the y extension reaches only
+    /// from the panel's top to the screen's, which is normally the same row.
+    nonisolated static func isInsideForExit(mouse: NSPoint,
+                                            panel: NSRect,
+                                            screenTop: CGFloat) -> Bool {
+        if panel.contains(mouse) { return true }
+        return mouse.x >= panel.minX && mouse.x < panel.maxX
+            && mouse.y >= panel.maxY && mouse.y <= screenTop
+    }
+
     override func mouseEntered(with event: NSEvent) {
         // Re-entry cancels a pending exit — the cursor never really left.
         pendingExit?.cancel()
@@ -66,7 +90,12 @@ final class NotchHoverView: NSView {
         pendingExit?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isHovering, let window = self.window else { return }
-            guard !window.frame.contains(NSEvent.mouseLocation) else {
+            // The screen the panel is on; falling back to the panel's own top
+            // still closes the exact-maxY case, which is the one that breaks.
+            let screenTop = window.screen?.frame.maxY ?? window.frame.maxY
+            guard !Self.isInsideForExit(mouse: NSEvent.mouseLocation,
+                                        panel: window.frame,
+                                        screenTop: screenTop) else {
                 Self.logger.debug("Spurious exit ignored; cursor still inside panel")
                 return
             }
