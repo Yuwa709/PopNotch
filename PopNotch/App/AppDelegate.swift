@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) lazy var coordinator = NotchCoordinator(settings: settings, caffeinate: caffeinate, audioVisualizer: audioViz)
     private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
     private let statsService = SystemStatsService()
+    private let clipboardService = ClipboardService()
     /// App-level. The control renders as panel chrome via the coordinator,
     /// so no module needs to know about it.
     private(set) lazy var caffeinate = CaffeinateService()
@@ -37,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         media.onContentReflow = { [weak self] in
             self?.coordinator.refreshPresentation()
         }
+        let clipboard = ClipboardModule(service: clipboardService)
         let modules: [any NotchModule] = [
             media,
             SystemStatsModule(service: statsService)
@@ -44,6 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // register() applies the stored preference itself, so a module can
         // never start in a state that disagrees with the user's choice.
         modules.forEach { coordinator.register($0) }
+        // Off by default: it records everything the user copies, which is
+        // not something to opt someone into. Its `isEnabled` setter is what
+        // starts and stops the poll, so registering it disabled leaves no
+        // timer running.
+        coordinator.register(clipboard, enabledByDefault: false)
 
         Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
 
