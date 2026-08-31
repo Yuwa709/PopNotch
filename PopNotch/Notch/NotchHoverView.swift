@@ -1,7 +1,8 @@
 import AppKit
 import os
 
-/// Fills the notch panel and reports debounced hover state.
+/// Fills the notch panel and reports debounced hover state, from the cursor
+/// or from a file drag.
 ///
 /// Entry is debounced: the cursor must dwell `enterDebounce` seconds before
 /// hover reports true, so passing traffic across the top of the screen does
@@ -9,6 +10,15 @@ import os
 /// while animating, which makes AppKit fire spurious mouseExited events —
 /// an exit only counts if the cursor is really outside the panel frame
 /// `exitGrace` later.
+///
+/// A file drag opens the notch through exactly the same debounced path. A
+/// tracking area sees only the pointer, and during a drag session AppKit
+/// delivers dragging messages instead of mouse-entered ones, so without this
+/// the panel stays shut and the shelf's drop zones are unreachable — there
+/// is no way to drop a file into a panel that will not open. Routing drags
+/// through `beginEnter`/`beginExit` rather than a parallel mechanism is what
+/// keeps the debounce, the exit verification and the top-edge fix applying
+/// identically to both.
 final class NotchHoverView: NSView {
 
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "Hover")
@@ -21,9 +31,32 @@ final class NotchHoverView: NSView {
     /// Fires on every debounced state change.
     var onHoverChange: ((Bool) -> Void)?
 
+    /// Fires the instant a file drag arrives over the notch, and again when
+    /// it leaves — ahead of the debounced expansion, so a listener can choose
+    /// what the panel should open *to* before it opens.
+    ///
+    /// Separate from `onHoverChange` on purpose: a pointer and a file
+    /// arriving are different intents, and the panel should answer them
+    /// differently. Folding this into the hover callback would make every
+    /// listener re-derive which one happened.
+    var onFileDragChange: ((Bool) -> Void)?
+
     private var isHovering = false
     private var pendingEnter: DispatchWorkItem?
     private var pendingExit: DispatchWorkItem?
+    /// True between a file drag entering and leaving, so the exit path is
+    /// only driven once per session however AppKit reports the ending.
+    private var isDragActive = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // File URLs only. Registering for everything would open the notch on
+        // a text selection dragged across the menu bar.
+        registerForDraggedTypes([.fileURL])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unused") }
 
     // Tracking areas do not follow a resized or moved window. AppKit calls
     // this on every geometry change, so rebuilding here keeps the area
@@ -64,6 +97,11 @@ final class NotchHoverView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        beginEnter(fromDrag: false)
+    }
+
+    /// The one way the notch opens, whether the pointer or a file arrived.
+    private func beginEnter(fromDrag: Bool) {
         // Re-entry cancels a pending exit — the cursor never really left.
         pendingExit?.cancel()
         pendingExit = nil
@@ -73,7 +111,7 @@ final class NotchHoverView: NSView {
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.isHovering else { return }
             self.isHovering = true
-            Self.logger.notice("Hover began")
+            Self.logger.notice("\(fromDrag ? "Drag expanded the notch" : "Hover began", privacy: .public)")
             self.onHoverChange?(true)
         }
         pendingEnter = work
@@ -81,6 +119,10 @@ final class NotchHoverView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        beginExit()
+    }
+
+    private func beginExit() {
         pendingEnter?.cancel()
         pendingEnter = nil
         guard isHovering else { return }
@@ -110,5 +152,55 @@ final class NotchHoverView: NSView {
     deinit {
         pendingEnter?.cancel()
         pendingExit?.cancel()
+    }
+
+    // MARK: - Dragging destination
+
+    /// A file drag arriving over the collapsed notch opens it, so the
+    /// shelf's drop zones become reachable.
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard Self.carriesFiles(sender) else { return [] }
+        isDragActive = true
+        Self.logger.notice("Drag entered the notch")
+        // Announced before the expansion is scheduled, so the destination is
+        // already chosen by the time the panel opens.
+        onFileDragChange?(true)
+        beginEnter(fromDrag: true)
+        // `.copy` keeps the session tracking us so `draggingExited` arrives.
+        // It does not mean this view will take the drop: that is refused
+        // below, leaving the expanded content's own zones to accept it.
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        endDrag(reason: "exited")
+    }
+
+    /// Belt and braces: a session that ends by dropping elsewhere, or is
+    /// cancelled, may not send `draggingExited`. Without this the notch
+    /// would stay open until the pointer happened to leave.
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        endDrag(reason: "ended")
+    }
+
+    private func endDrag(reason: String) {
+        guard isDragActive else { return }
+        isDragActive = false
+        Self.logger.notice("Drag \(reason, privacy: .public); collapsing by the normal exit rules")
+        onFileDragChange?(false)
+        // The same verified, grace-delayed exit the pointer uses, so the
+        // top-edge fix and the spurious-exit guard apply unchanged.
+        beginExit()
+    }
+
+    /// This view never consumes a drop. It exists to open the panel; the
+    /// shelf's own zones, which sit above it once expanded, do the accepting.
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { false }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { false }
+
+    static func carriesFiles(_ sender: NSDraggingInfo) -> Bool {
+        sender.draggingPasteboard.canReadObject(
+            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
     }
 }

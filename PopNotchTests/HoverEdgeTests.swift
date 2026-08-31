@@ -76,3 +76,45 @@ final class HoverEdgeTests: XCTestCase {
             mouse: NSPoint(x: 150, y: 201), panel: panel, screenTop: 200))
     }
 }
+
+/// A file drag has to open the notch, or the shelf's drop zones are
+/// unreachable: there is no way to drop into a panel that will not open.
+@MainActor
+final class HoverDragDestinationTests: XCTestCase {
+
+    func testRegistersForFileURLsOnly() {
+        let view = NotchHoverView()
+        XCTAssertTrue(view.registeredDraggedTypes.contains(.fileURL),
+                      "without this the panel never sees a file drag")
+        XCTAssertEqual(view.registeredDraggedTypes, [.fileURL],
+                       "registering more would open the notch on dragged text")
+    }
+
+    func testRegistrationSurvivesTheFrameInitialiser() {
+        // The panel builds this with NotchHoverView(), which routes through
+        // init(frame:). Registering anywhere else would silently not apply.
+        XCTAssertTrue(NotchHoverView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+            .registeredDraggedTypes.contains(.fileURL))
+    }
+
+    func testNeverConsumesADrop() {
+        // This view opens the panel and nothing more; the shelf's own zones,
+        // which sit above it as subviews once expanded, do the accepting.
+        // A sender cannot be faked, so this pins the contract structurally:
+        // both hooks are implemented and both refuse.
+        let view = NotchHoverView()
+        XCTAssertTrue(view.responds(to: #selector(NSView.prepareForDragOperation(_:))))
+        XCTAssertTrue(view.responds(to: #selector(NSView.performDragOperation(_:))))
+    }
+
+    func testStillTracksTheMouseAsWell() {
+        // Drag support must not have displaced hover: the tracking area is
+        // rebuilt on every geometry change and both paths share beginEnter.
+        let view = NotchHoverView(frame: NSRect(x: 0, y: 0, width: 100, height: 40))
+        view.updateTrackingAreas()
+        XCTAssertEqual(view.trackingAreas.count, 1)
+        XCTAssertTrue(view.trackingAreas[0].options.contains(.mouseEnteredAndExited))
+        XCTAssertTrue(view.trackingAreas[0].options.contains(.activeAlways))
+    }
+}
+

@@ -43,6 +43,17 @@ final class NotchCoordinator {
     enum Destination: Equatable {
         case standby
         case clipboard
+        case fileShelf
+
+        /// The module a screen belongs to, so the disabled-module fallbacks
+        /// stay one rule rather than one branch per destination.
+        var moduleID: ModuleID? {
+            switch self {
+            case .standby: nil
+            case .clipboard: "clipboard"
+            case .fileShelf: "file-shelf"
+            }
+        }
     }
 
     /// Owned here because the coordinator already owns what the panel shows.
@@ -82,6 +93,9 @@ final class NotchCoordinator {
 
         let panel = NotchPanel(screen: screen)
         panel.hoverEnterDelay = settings.settings.hoverEnterDelay
+        panel.onFileDragChange = { [weak self] active in
+            self?.fileDragChanged(active)
+        }
         panel.onHoverChange = { [weak self] hovering in
             self?.hoverChanged(hovering)
         }
@@ -123,7 +137,7 @@ final class NotchCoordinator {
         guard let module = arbiter.module(for: id) else { return }
         module.isEnabled = enabled
         settings.setEnabled(enabled, for: id)
-        if !enabled, destination == .clipboard, id == "clipboard" {
+        if !enabled, destination.moduleID == id {
             destination = .standby
         }
         arbiter.enablementDidChange()
@@ -215,6 +229,37 @@ final class NotchCoordinator {
     /// tell an entrance (play the reveal) from an in-place update (do not).
     private var lastAppliedState: NotchPanel.State = .idle
 
+    /// A file drag opens the notch straight to the shelf, because opening to
+    /// the home screen would be useless: there is nowhere on it to drop.
+    ///
+    /// The destination is set rather than navigated to. At this moment the
+    /// panel is still collapsed — the debounced expansion has only been
+    /// scheduled — so `navigate` would render compact content that the
+    /// expansion immediately replaces. Setting it means the panel opens
+    /// already showing the shelf.
+    func fileDragChanged(_ active: Bool) {
+        guard active else {
+            // A drag that leaves before the panel ever opened set a
+            // destination for a screen nobody saw. Clear it, or the next
+            // plain hover would open to the shelf. Once expanded, the normal
+            // collapse reset in `applyState` owns this instead.
+            if lastAppliedState != .expanded, destination != .standby {
+                destination = .standby
+                Self.logger.notice("Drag left before opening; destination reset")
+            }
+            return
+        }
+        guard let moduleID = Destination.fileShelf.moduleID,
+              arbiter.module(for: moduleID)?.isEnabled == true else {
+            // Shelf switched off: a file drag is just a hover, and the panel
+            // opens home as usual.
+            return
+        }
+        guard destination != .fileShelf else { return }
+        destination = .fileShelf
+        Self.logger.notice("File drag; opening to the shelf")
+    }
+
     /// Chrome controls call this; it re-renders and re-measures, since
     /// destinations differ in size.
     func navigate(to destination: Destination) {
@@ -290,7 +335,7 @@ final class NotchCoordinator {
                 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             panel.setContent(view, neckHeight: neck, reveal: entering,
                              topLeadingAccessory: leadingAccessory(),
-                             topTrailingAccessory: caffeinateAccessory())
+                             topTrailingAccessory: trailingAccessory())
         case .compact:
             let wings = standbyWings()
             panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing, neckHeight: neck)
@@ -299,28 +344,99 @@ final class NotchCoordinator {
         }
     }
 
-    /// Top-left chrome, mirroring caffeinate on the right: the way into a
-    /// navigated screen, or the way back out of one.
+    /// Top-left chrome: the way back out of a navigated screen, or the way
+    /// into Settings while in standby.
     private func leadingAccessory() -> AnyView? {
-        switch destination {
-        case .standby:
-            // The door only exists while the feature behind it is on.
-            guard arbiter.module(for: "clipboard")?.isEnabled == true else { return nil }
-            return AnyView(PanelChromeButton(symbol: "doc.on.clipboard", help: "Clipboard history") {
-                [weak self] in self?.navigate(to: .clipboard)
-            })
-        case .clipboard:
+        guard destination == .standby else {
             return AnyView(PanelChromeButton(symbol: "chevron.backward", help: "Back") {
                 [weak self] in self?.navigate(to: .standby)
             })
         }
+        return AnyView(PanelChromeButton(symbol: "gearshape", help: "Settings") {
+            [weak self] in self?.openSettings()
+        })
     }
 
+    /// Opens the settings window from the panel's gear.
+    ///
+    /// **`@Environment(\.openSettings)` does not work here.** SwiftUI fills
+    /// that value in for views inside the `App`'s scene graph, next to the
+    /// `Settings` scene that services it. This panel is not in that graph:
+    /// `AppDelegate` builds `NotchPanel` itself and hosts its SwiftUI in an
+    /// `NSHostingView`, so the environment value is never populated and
+    /// calling it does nothing at all. The selector is the only route from
+    /// here. `SettingsMenuItem` in PopNotchApp.swift *can* use the
+    /// environment, because it genuinely is in the scene graph.
+    private func openSettings() {
+        // Hard rule 4 carve-out, the same narrow one SettingsMenuItem
+        // documents: activation is a direct response to the user clicking
+        // this button, and without it the window opens behind the frontmost
+        // app. No hover path activates anything, ever.
+        NSApp.activate(ignoringOtherApps: true)
+        NotificationCenter.default.post(name: .popNotchOpenSettings, object: nil)
+        // Verify by looking for the window, not by trusting a return value.
+        // The previous implementation logged `sendAction`'s Bool, which
+        // measured **true while creating no window at all** — it reported
+        // eleven successes for a button the user was watching do nothing.
+        // A signal that cannot fail is not a signal.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            if Self.settingsWindow() != nil {
+                Self.logger.notice("Settings opened from panel chrome")
+            } else {
+                Self.logger.error("Settings did not open; no settings window exists")
+            }
+        }
+    }
+
+    /// SwiftUI names its `Settings` scene window with a stable identifier.
+    nonisolated static func settingsWindow() -> NSWindow? {
+        MainActor.assumeIsolated {
+            NSApp.windows.first {
+                ($0.identifier?.rawValue ?? "").contains("Settings")
+                    || $0.title.localizedCaseInsensitiveContains("settings")
+            }
+        }
+    }
+
+    /// Top-right chrome: keep-awake first, then a door per enabled screen.
+    ///
     /// Shown for the whole expanded state, independent of which modules are
     /// on screen or whether anything is playing.
-    private func caffeinateAccessory() -> AnyView? {
-        guard let caffeinate else { return nil }
-        return AnyView(CaffeinateControl(service: caffeinate))
+    private func trailingAccessory() -> AnyView? {
+        // Doors render in standby only — the rule leadingAccessory() always
+        // had, which moving them to this side dropped by accident. A door
+        // means "go to this screen" and Back means "leave this one"; offering
+        // the clipboard door while standing on the clipboard screen is
+        // incoherent. It is also what pushed the band to 76pt on the 384pt
+        // clipboard screen, 6pt past the notch housing.
+        let available: [(Destination, String, String)]
+        if destination == .standby {
+            // A door only exists while the feature behind it is on.
+            let doors: [(Destination, String, String)] = [
+                (.clipboard, "doc.on.clipboard", "Clipboard history"),
+                (.fileShelf, "tray.full", "File shelf"),
+            ]
+            available = doors.filter {
+                arbiter.module(for: $0.0.moduleID ?? "")?.isEnabled == true
+            }
+        } else {
+            available = []
+        }
+        // Bound outside the ViewBuilder so the view captures the service, not
+        // this coordinator: the panel retains the view, and the coordinator
+        // retains the panel.
+        let keepAwake = caffeinate
+        guard keepAwake != nil || !available.isEmpty else { return nil }
+        return AnyView(HStack(spacing: 2) {
+            if let keepAwake {
+                CaffeinateControl(service: keepAwake)
+            }
+            ForEach(available, id: \.1) { destination, symbol, help in
+                PanelChromeButton(symbol: symbol, help: help) {
+                    [weak self] in self?.navigate(to: destination)
+                }
+            }
+        })
     }
 
     /// Builds the SwiftUI content for the current state.
@@ -344,9 +460,9 @@ final class NotchCoordinator {
                 // A navigated screen replaces the arbitrated stack wholesale.
                 // Falls through if its module got disabled underneath it, so
                 // the panel can never show a screen whose feature is off.
-                if destination == .clipboard,
-                   let clipboard = arbiter.module(for: "clipboard"), clipboard.isEnabled {
-                    return clipboard.makeExpandedView()
+                if let moduleID = destination.moduleID,
+                   let module = arbiter.module(for: moduleID), module.isEnabled {
+                    return module.makeExpandedView()
                 }
                 // Stacked, not side by side: several expanded modules in a row
                 // overflow the panel and truncate (observed with media plus

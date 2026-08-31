@@ -122,7 +122,6 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
         XCTAssertEqual(settings.moduleEnablement["stats"], false)
         XCTAssertEqual(settings.hoverEnterDelay, 0.5)
-        XCTAssertEqual(settings.spotifyClientID, "", "new field defaults to unconfigured")
     }
 
     func testMigrationStampsCurrentVersion() {
@@ -159,8 +158,42 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(migrated.schemaVersion, AppSettings.currentSchemaVersion)
         XCTAssertEqual(migrated.moduleEnablement["system-stats"], false, "nothing dropped")
         XCTAssertEqual(migrated.hoverEnterDelay, 0.1, accuracy: 0.0001, "nothing dropped")
-        XCTAssertEqual(migrated.spotifyClientID, "abc123", "nothing dropped")
         XCTAssertFalse(migrated.visualizerEnabled,
                        "the new field arrives OFF: a capture permission is opt-in")
+    }
+
+    // MARK: - v3 -> v4
+
+    /// v4 removed spotifyClientID. The key is still present in every existing
+    /// install's JSON, so the decoder must ignore it rather than throw — if it
+    /// threw, the store would fall back to defaults and the user would lose
+    /// every other preference, which is precisely the silent wipe CLAUDE.md
+    /// forbids.
+    func testV3JSONMigratesWithEveryOtherPreferenceIntact() throws {
+        // Real v3 shape, including the field that no longer exists.
+        let v3 = Data("""
+        {"schemaVersion": 3,
+         "moduleEnablement": {"system-stats": false, "clipboard": true},
+         "hoverEnterDelay": 0.1,
+         "spotifyClientID": "290ab45ba19d43599f66bb341cb33c77",
+         "visualizerEnabled": true}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: v3)
+        let migrated = AppSettings.migrate(decoded, from: 3)
+
+        XCTAssertEqual(migrated.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertEqual(migrated.moduleEnablement["system-stats"], false, "nothing dropped")
+        XCTAssertEqual(migrated.moduleEnablement["clipboard"], true, "nothing dropped")
+        XCTAssertEqual(migrated.hoverEnterDelay, 0.1, accuracy: 0.0001, "nothing dropped")
+        XCTAssertTrue(migrated.visualizerEnabled, "nothing dropped")
+    }
+
+    /// The whole point of the change: the Client ID is the app's own, so it is
+    /// present without anyone configuring anything. A fresh install used to
+    /// have no ID at all, which left Connect permanently disabled.
+    func testBuiltInClientIDIsPresentOnAFreshInstall() {
+        XCTAssertEqual(store().settings, AppSettings(), "fresh install, nothing persisted")
+        XCTAssertFalse(SpotifyAccount.clientID.isEmpty,
+                       "Connect must work with no user configuration")
     }
 }

@@ -19,7 +19,7 @@ struct SettingsView: View {
                 .tabItem { Label("Modules", systemImage: "square.stack") }
             PermissionsSettingsTab()
                 .tabItem { Label("Permissions", systemImage: "lock.shield") }
-            SpotifySettingsTab(settings: settings, account: spotify)
+            SpotifySettingsTab(account: spotify)
                 .tabItem { Label("Spotify", systemImage: "music.note") }
         }
         .frame(width: 460, height: 320)
@@ -27,11 +27,14 @@ struct SettingsView: View {
 }
 
 /// Connecting a Spotify account for queue and likes: official OAuth with
-/// PKCE. The Client ID is the user's own developer-app registration —
-/// public information under PKCE, no secret involved.
+/// PKCE.
+///
+/// There is deliberately nothing to configure. The Client ID is PopNotch's
+/// own and is built into the app (see `SpotifyAccount.clientID`); it used to
+/// be a text field here, which meant a fresh install could not connect at all
+/// until the user went and registered their own developer app.
 struct SpotifySettingsTab: View {
 
-    @Bindable var settings: SettingsStore
     @Bindable var account: SpotifyAccount
 
     var body: some View {
@@ -46,11 +49,8 @@ struct SpotifySettingsTab: View {
                     }
                 }
             } else {
-                TextField("Client ID", text: clientIDBinding, prompt: Text("Spotify app Client ID"))
-                    .textFieldStyle(.roundedBorder)
                 Button("Connect Spotify…") { account.beginAuthorization() }
-                    .disabled(settings.settings.spotifyClientID.trimmingCharacters(in: .whitespaces).isEmpty)
-                Text("Create a free app at developer.spotify.com/dashboard, add the redirect URI \(SpotifyAccount.redirectURI) exactly, then paste its Client ID here.")
+                Text("Opens Spotify in your browser to authorize PopNotch. Enables Up Next and liking the current track. You can disconnect at any time.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -60,13 +60,6 @@ struct SpotifySettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
-    }
-
-    private var clientIDBinding: Binding<String> {
-        Binding(
-            get: { settings.settings.spotifyClientID },
-            set: { value in settings.update { $0.spotifyClientID = value } }
-        )
     }
 }
 

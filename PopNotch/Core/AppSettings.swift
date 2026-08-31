@@ -19,7 +19,8 @@ struct AppSettings: Codable, Equatable {
     /// Bump on every shape change. See the note above.
     /// v2: added spotifyClientID.
     /// v3: added visualizerEnabled.
-    static let currentSchemaVersion = 3
+    /// v4: removed spotifyClientID — the Client ID is the app's own, built in.
+    static let currentSchemaVersion = 4
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -34,10 +35,11 @@ struct AppSettings: Codable, Equatable {
     /// 0.35 on hardware; 0.2 let too much passing traffic through.
     var hoverEnterDelay: TimeInterval = 0.35
 
-    /// The Spotify developer app's Client ID (public information under
-    /// PKCE — there is no secret). Empty until the user pastes theirs in
-    /// Settings; account features stay hidden while empty.
-    var spotifyClientID: String = ""
+    // `spotifyClientID` lived here until v4. It was a per-user field, which
+    // was the wrong model: the Client ID identifies *PopNotch* to Spotify, not
+    // the user, so every install needs the same one. Shipping it empty meant a
+    // fresh install had no Client ID at all and Connect was permanently
+    // disabled. It is now a build-time constant on `SpotifyAccount`.
 
     /// Audio visualiser. Off by default on purpose: it needs the System
     /// Audio Recording permission, and a capture permission is opt-in, never
@@ -47,7 +49,7 @@ struct AppSettings: Codable, Equatable {
     // MARK: - Decoding
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, moduleEnablement, hoverEnterDelay, spotifyClientID, visualizerEnabled
+        case schemaVersion, moduleEnablement, hoverEnterDelay, visualizerEnabled
     }
 
     init() {}
@@ -64,8 +66,9 @@ struct AppSettings: Codable, Equatable {
             ?? [:]
         hoverEnterDelay = (try? container.decode(TimeInterval.self, forKey: .hoverEnterDelay))
             ?? 0.35
-        spotifyClientID = (try? container.decode(String.self, forKey: .spotifyClientID))
-            ?? ""
+        // A v2/v3 payload still carries spotifyClientID. It has no CodingKey
+        // any more, so it is ignored rather than throwing — the lenient
+        // contract above already covers keys this version does not know.
         visualizerEnabled = (try? container.decode(Bool.self, forKey: .visualizerEnabled))
             ?? false
     }
@@ -93,6 +96,14 @@ struct AppSettings: Codable, Equatable {
         case 2:
             // v3 added visualizerEnabled; the lenient decoder fills false for
             // v2 JSON, which is exactly the off-by-default state. Nothing moves.
+            fallthrough
+        case 3:
+            // v4 removed spotifyClientID. Nothing to move: the value it held
+            // was either empty (the broken default) or a hand-pasted copy of
+            // an ID the app now supplies itself, and in both cases the built-in
+            // constant supersedes it. This is the one case where dropping a
+            // stored value is correct rather than a silent wipe — the field
+            // no longer has a meaning for the user to have configured.
             fallthrough
         default:
             break

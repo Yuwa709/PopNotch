@@ -98,6 +98,12 @@ final class NotchPanel: NSPanel {
         set { (contentView as? NotchHoverView)?.onHoverChange = newValue }
     }
 
+    /// A file drag arriving over the notch, or leaving it.
+    var onFileDragChange: ((Bool) -> Void)? {
+        get { (contentView as? NotchHoverView)?.onFileDragChange }
+        set { (contentView as? NotchHoverView)?.onFileDragChange = newValue }
+    }
+
     /// The notch's frame in screen coordinates, derived from the gap between
     /// the auxiliary top-left and top-right areas. Falls back to a centered
     /// strip on screens without a notch so development on external displays

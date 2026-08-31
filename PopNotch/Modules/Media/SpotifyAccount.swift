@@ -89,29 +89,41 @@ final class SpotifyAccount {
     @ObservationIgnored static let redirectURI = "http://127.0.0.1:7391/callback"
     @ObservationIgnored static let scopes = "user-read-playback-state user-library-read user-library-modify"
 
+    /// PopNotch's own Spotify application, built in and identical for every
+    /// install.
+    ///
+    /// **This is not a secret and is meant to be here.** Under PKCE the Client
+    /// ID is public by design: it identifies the *application* to Spotify and
+    /// is sent in the clear in the browser's authorize URL, where any user can
+    /// read it. The client *secret* is the credential that must never ship in
+    /// a distributed app, and this flow deliberately has none — the code
+    /// exchange is authenticated by the PKCE verifier instead, which is
+    /// generated fresh per authorization and never leaves the machine.
+    ///
+    /// It was a per-user settings field until v4. That was a category error:
+    /// it identifies PopNotch, not the person using it, so asking each user to
+    /// register their own developer app was asking them to do the developer's
+    /// paperwork — and a fresh install, which had no ID at all, simply could
+    /// not connect.
+    @ObservationIgnored static let clientID = "290ab45ba19d43599f66bb341cb33c77"
+
     private(set) var isConnected: Bool
     private(set) var lastError: String?
 
-    @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private var accessToken: String?
     @ObservationIgnored private var accessExpiry = Date.distantPast
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var pendingVerifier: String?
     @ObservationIgnored private var pendingState: String?
 
-    init(settings: SettingsStore) {
-        self.settings = settings
+    init() {
         self.isConnected = SpotifyTokenStore.load() != nil
     }
 
     // MARK: - Authorization
 
     func beginAuthorization() {
-        let clientID = settings.settings.spotifyClientID.trimmingCharacters(in: .whitespaces)
-        guard !clientID.isEmpty else {
-            lastError = "Paste your Spotify app's Client ID first."
-            return
-        }
+        let clientID = Self.clientID
         lastError = nil
         stopListener()
 
@@ -247,8 +259,7 @@ final class SpotifyAccount {
     func validAccessToken() async -> String? {
         if let accessToken, Date() < accessExpiry { return accessToken }
         guard let refresh = SpotifyTokenStore.load() else { return nil }
-        let clientID = settings.settings.spotifyClientID.trimmingCharacters(in: .whitespaces)
-        guard !clientID.isEmpty else { return nil }
+        let clientID = Self.clientID
 
         do {
             let token = try await postToken(

@@ -11,9 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let settings = SettingsStore()
     private(set) lazy var coordinator = NotchCoordinator(settings: settings, caffeinate: caffeinate, audioVisualizer: audioViz)
-    private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
+    private(set) lazy var spotifyAccount = SpotifyAccount()
     private let statsService = SystemStatsService()
     private let clipboardService = ClipboardService()
+    private let fileShelfService = FileShelfService()
     /// App-level. The control renders as panel chrome via the coordinator,
     /// so no module needs to know about it.
     private(set) lazy var caffeinate = CaffeinateService()
@@ -51,6 +52,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // starts and stops the poll, so registering it disabled leaves no
         // timer running.
         coordinator.register(clipboard, enabledByDefault: false)
+        // Off by default too: it touches the user's files, and holding
+        // references to them is opt-in.
+        coordinator.register(FileShelfModule(service: fileShelfService),
+                             enabledByDefault: false)
 
         Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
 
