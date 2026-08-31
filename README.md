@@ -23,26 +23,44 @@ Built with Swift and SwiftUI, no web runtime, no Electron. An overlay that costs
 
 ## Install
 
-Right now, PopNotch is built from source (binary releases will be attached to GitHub Releases once they exist):
+Download the latest `PopNotch-<version>.dmg` from [Releases](https://github.com/Yuwa709/PopNotch/releases), drag PopNotch to Applications, then run this once:
 
 ```bash
-git clone <this repo>
+xattr -cr /Applications/PopNotch.app
+```
+
+**That command is not optional.** PopNotch is signed ad-hoc and not notarized, so macOS quarantines the download and blocks the first launch. Because the app has no Dock icon and no window, a blocked launch looks exactly like nothing happening — see below if you skipped it. Clearing the quarantine attribute up front avoids the whole detour.
+
+Then launch it yourself (`open /Applications/PopNotch.app`, or via Spotlight) — that way macOS attributes the permission prompts to you.
+
+Updates after that are handled in-app: **Settings → About → Check for Updates**. PopNotch never checks on its own, and the update path clears quarantine for you, so `xattr` is a first-install step only.
+
+### Building from source instead
+
+```bash
+git clone https://github.com/Yuwa709/PopNotch.git
 cd PopNotch
 ./scripts/install.sh
 open /Applications/PopNotch.app
 ```
 
-`install.sh` builds the app, replaces any running copy, and installs to `/Applications`. Launch it yourself afterwards — that way macOS attributes the permission prompts to you.
+`install.sh` builds the app, replaces any running copy, and installs to `/Applications`. Builds you compile yourself are never quarantined, so they skip the `xattr` step entirely.
 
 ### "Nothing happened when I opened it"
 
 PopNotch is signed ad-hoc, not notarized (notarization needs a $99/year Apple Developer account, which this project doesn't have yet). If you downloaded a build rather than compiling it, macOS will block the first launch — and because PopNotch has **no Dock icon and no window**, a blocked launch looks like *nothing happening at all*. It's not broken:
 
+```bash
+xattr -cr /Applications/PopNotch.app
+```
+
+Then open it again. If you would rather not run a terminal command:
+
 1. Open **System Settings → Privacy & Security**.
 2. Scroll down: you'll see *"PopNotch" was blocked to protect your Mac*.
 3. Click **Open Anyway**, then confirm.
 
-This is a one-time step per download. On macOS 15 and later the old right-click → Open trick no longer works; the System Settings route is the only one. Builds you compile yourself with `install.sh` don't hit this at all.
+Either way this is a one-time step per download. On macOS 15 and later the old right-click → Open trick no longer works. Builds you compile yourself with `install.sh` don't hit this at all, and neither do updates installed through Sparkle.
 
 ## Permissions it asks for, and why
 
@@ -58,17 +76,17 @@ Nothing leaves your machine except the feature-essential requests: album artwork
 
 Playback control needs no account. Connecting one adds Up Next, like/unlike from the notch, and artist info, via Spotify's **official** Web API with OAuth (PKCE).
 
-You register your own (free) Spotify developer app for this: create one at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), add the redirect URI `http://127.0.0.1:7391/callback` exactly, and paste its Client ID into PopNotch's Spotify settings tab.
+There is nothing to configure: PopNotch ships its own Spotify Client ID, so connecting is one button in **Settings → Music**. (A Client ID is public information under PKCE — it identifies the app, not you, and there is no client secret anywhere in this app.)
 
-**Why your own app registration?** Spotify caps apps in development mode at **25 users**, so shipping one shared Client ID would stop working almost immediately. Registering your own means your usage counts only against you. The token stays in your Keychain; there is no server side.
+Your token stays in your Keychain; there is no server side. **Note:** Spotify caps apps in development mode at **25 users**, so until PopNotch's registration is granted extended quota, connecting only works for accounts explicitly allowlisted on its Spotify dashboard. Everything else in the app works without connecting at all.
 
 ## Known limitations
 
 - **Spotify artwork requires the Automation permission.** Track metadata arrives without it (Spotify broadcasts it), but artwork is fetched via AppleScript.
-- **Spotify's Web API extras cap at 25 users per registered app** (their development-mode limit) — which is why you bring your own Client ID, see above.
+- **Spotify's Web API extras cap at 25 users** until the app's registration is granted extended quota (their development-mode limit), so Connect may fail for accounts that are not allowlisted. See above.
 - **Pandora and YouTube Music are not supported.** They have no scriptable Mac app, and Apple gated the private framework that once made universal now-playing possible (macOS 15.4+). If Apple relents, the adapter slot is already there.
 - **Lyrics coverage is whatever LRCLIB has.** Instrumentals and obscure tracks may show none; plain-text-only lyrics are treated as none, since the notch can't scroll untimed text.
-- **Un-notarized.** See the Gatekeeper section above. Auto-updates (Sparkle) are planned but not wired yet, so updating means pulling and re-running `install.sh`.
+- **Un-notarized.** See the Gatekeeper section above; first install needs `xattr -cr`. Updates go through Sparkle and are **manual only** — PopNotch never checks on its own, so nothing phones home unless you press the button in Settings → About.
 - **The notch is the product.** External displays get a plain fallback strip, not the full experience.
 
 ## License
