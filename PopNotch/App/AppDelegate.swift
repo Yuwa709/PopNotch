@@ -10,7 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "AppDelegate")
 
     let settings = SettingsStore()
-    private(set) lazy var coordinator = NotchCoordinator(settings: settings, caffeinate: caffeinate, audioVisualizer: audioViz)
+    /// Session-only; see PinState. Held here so the menu bar and the panel
+    /// chrome read the same flag.
+    let pinState = PinState()
+    private(set) lazy var coordinator = NotchCoordinator(settings: settings, caffeinate: caffeinate, audioVisualizer: audioViz, pinState: pinState)
     private(set) lazy var spotifyAccount = SpotifyAccount()
     private let statsService = SystemStatsService()
     private let clipboardService = ClipboardService()

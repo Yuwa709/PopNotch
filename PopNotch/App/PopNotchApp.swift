@@ -31,6 +31,13 @@ struct PopNotchApp: App {
         // panel is created by AppDelegate; this menu bar item is the only
         // other UI surface.
         MenuBarExtra {
+            // Backup escape hatch: if the pin button is ever unreachable —
+            // the panel is pinned somewhere awkward, or the chrome is not
+            // where the user expects — this always is.
+            PinMenuItem(pinState: appDelegate.pinState) {
+                appDelegate.coordinator.setPinned($0)
+            }
+            Divider()
             SettingsMenuItem()
             Divider()
             Button("Quit PopNotch") {
@@ -67,6 +74,22 @@ private struct SettingsOpenBridge: View {
             .onReceive(NotificationCenter.default.publisher(for: .popNotchOpenSettings)) { _ in
                 openSettings()
             }
+    }
+}
+
+/// Mirrors the panel's pin button. Reads `PinState` directly so the
+/// checkmark tracks the button, and writes through the coordinator so both
+/// routes re-evaluate collapse identically.
+private struct PinMenuItem: View {
+
+    let pinState: PinState
+    let onToggle: (Bool) -> Void
+
+    var body: some View {
+        Toggle("Pin Notch", isOn: Binding(
+            get: { pinState.isPinned },
+            set: { onToggle($0) }
+        ))
     }
 }
 

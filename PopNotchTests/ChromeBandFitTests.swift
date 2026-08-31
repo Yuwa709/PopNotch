@@ -44,20 +44,33 @@ final class ChromeBandFitTests: XCTestCase {
     /// Gap between the trailing band's left edge and the housing's right edge.
     ///
     /// The panel centres on the housing via `opticalCenterOffset`, so the
-    /// housing sits that far right of panel centre — which is the side the
+    /// housing sits that far right of panel centre — which is the side this
     /// band is on, and therefore costs clearance rather than granting it.
     private func trailingClearance(panelWidth W: CGFloat, buttons: Int) -> CGFloat {
         let housingRightEdge = W / 2 - NotchPanel.opticalCenterOffset + notchWidth / 2
-        let bandLeftEdge = W - NotchOverlayView.contentSideInset - bandWidth(buttons: buttons)
+        let bandLeftEdge = W - NotchOverlayView.accessorySideInset - bandWidth(buttons: buttons)
         return bandLeftEdge - housingRightEdge
     }
 
+    /// The mirror on the leading side, where the optical offset works *for*
+    /// the band: the housing sits 2pt right of panel centre, so this side has
+    /// 2pt more room than the trailing one at the same button count.
+    private func leadingClearance(panelWidth W: CGFloat, buttons: Int) -> CGFloat {
+        let housingLeftEdge = W / 2 + NotchPanel.opticalCenterOffset - notchWidth / 2
+        let bandRightEdge = NotchOverlayView.accessorySideInset + bandWidth(buttons: buttons)
+        return housingLeftEdge - bandRightEdge
+    }
+
     /// Anchors the arithmetic to a real observation: the standby panel
-    /// measured `{{507, 681}, {452, 275}}` on hardware with all three buttons
-    /// showing, and read as +28pt clear.
+    /// measured `{{507, 681}, {452, 275}}` on hardware. At the time it
+    /// carried three trailing buttons at the 32pt content inset and read as
+    /// +28pt clear; the band has since moved out to `accessorySideInset`, so
+    /// the same arrangement now reads 8pt roomier.
     func testClearanceFormulaMatchesTheHardwareMeasurement() {
-        XCTAssertEqual(trailingClearance(panelWidth: 452, buttons: 3), 28, accuracy: 0.5,
-                       "formula must reproduce the measured standby panel")
+        let atOldInset = trailingClearance(panelWidth: 452, buttons: 3)
+            - (NotchOverlayView.contentSideInset - NotchOverlayView.accessorySideInset)
+        XCTAssertEqual(atOldInset, 28, accuracy: 0.5,
+                       "formula must still reproduce the measured standby panel")
     }
 
     func testCaffeineOnlyFitsOnEveryScreen() {
@@ -76,18 +89,19 @@ final class ChromeBandFitTests: XCTestCase {
     /// the housing.
     func testNavigatedClipboardScreenFits() {
         let width = panelWidth(for: ClipboardExpandedView(service: ClipboardService()))
-        let clearance = trailingClearance(panelWidth: width, buttons: 1)
+        // Keep-awake plus the pin; the doors are a standby-only group.
+        let clearance = trailingClearance(panelWidth: width, buttons: 2)
         // 484 since the filter-tab redesign widened the content 320 -> 420;
         // it was 384 before that, and the tight case that motivated this file.
         XCTAssertEqual(width, 484, accuracy: 0.5, "clipboard screen width")
         XCTAssertGreaterThanOrEqual(clearance, 0,
-            "clipboard screen is \(width)pt; caffeine alone overruns by \(-clearance)pt")
-        XCTAssertEqual(clearance, 96, accuracy: 0.5, "caffeine alone clears by 96pt")
+            "clipboard screen is \(width)pt; the band overruns by \(-clearance)pt")
+        XCTAssertEqual(clearance, 78, accuracy: 0.5, "keep-awake plus pin clears by 78pt")
     }
 
     func testNavigatedFileShelfScreenFits() {
         let width = panelWidth(for: FileShelfExpandedView(service: FileShelfService()))
-        let clearance = trailingClearance(panelWidth: width, buttons: 1)
+        let clearance = trailingClearance(panelWidth: width, buttons: 2)
         XCTAssertEqual(width, 690, accuracy: 0.5,
             "shelf content is 626pt by design — the panel width ceiling")
         XCTAssertGreaterThanOrEqual(clearance, 0,
@@ -110,10 +124,40 @@ final class ChromeBandFitTests: XCTestCase {
     }
 
 
-    /// Standby is the only state that shows all three, and it is the widest
-    /// of the expanded screens, measured at 452pt on hardware.
-    func testStandbyBandWithBothDoorsFits() {
-        XCTAssertGreaterThanOrEqual(trailingClearance(panelWidth: 452, buttons: 3), 0,
-            "standby carries caffeine plus both doors")
+    /// Splitting the band across both sides is what bought back the headroom
+    /// the pin had eaten.
+    ///
+    /// Everything on the trailing side was 4 controls / 102pt clearing the
+    /// housing by **2pt** on the 452pt standby screen — no margin at all.
+    /// Navigation now lives leading (settings + both doors, 76pt) and the
+    /// panel-level toggles trailing (keep-awake + pin, 50pt), so the worst
+    /// case is +36 instead of +2.
+    func testStandbySplitBandClearsBothSides() {
+        XCTAssertEqual(leadingClearance(panelWidth: 452, buttons: 3), 36, accuracy: 0.5,
+                       "settings plus both doors")
+        XCTAssertEqual(trailingClearance(panelWidth: 452, buttons: 2), 62, accuracy: 0.5,
+                       "keep-awake plus pin")
+    }
+
+    /// Navigated screens replace the whole leading group with Back, so both
+    /// sides get roomier still.
+    func testNavigatedScreensClearBothSides() {
+        for width in [CGFloat(484), 540, 690] {
+            XCTAssertGreaterThanOrEqual(leadingClearance(panelWidth: width, buttons: 1), 0,
+                "Back must clear the housing at \(width)pt")
+            XCTAssertGreaterThanOrEqual(trailingClearance(panelWidth: width, buttons: 2), 0,
+                "keep-awake plus pin must clear the housing at \(width)pt")
+        }
+    }
+
+    /// The band sits nearer the corner than the content column, and must not
+    /// reach the rounded corner itself.
+    func testAccessoryInsetIsOutsideTheCornerRadius() {
+        XCTAssertLessThan(NotchOverlayView.accessorySideInset,
+                          NotchOverlayView.contentSideInset,
+                          "chrome hugs the corner more tightly than content")
+        XCTAssertGreaterThan(NotchOverlayView.accessorySideInset,
+                             NotchShape.expandedTopRadius,
+                             "inside the corner radius the control gets clipped")
     }
 }

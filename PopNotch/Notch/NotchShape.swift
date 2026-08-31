@@ -84,9 +84,22 @@ struct NotchOverlayView: View {
     var topLeadingAccessory: AnyView?
     var topTrailingAccessory: AnyView?
 
-    /// The panel's visible side border. Shared by the content column and the
-    /// top-trailing accessory so they align on the same vertical.
+    /// The panel's visible side border, used by the content column.
+    ///
+    /// Must stay in lockstep with the coordinator's measuring probe, which
+    /// hardcodes the same 32 — they disagree and the measured panel no longer
+    /// fits the rendered content.
     static let contentSideInset: CGFloat = 32
+
+    /// The chrome band sits nearer the corners than the content column does
+    /// (user-requested). Its own constant rather than a smaller
+    /// `contentSideInset`, because that one is pinned to the measuring probe
+    /// and the band does not feed measurement at all.
+    ///
+    /// Floored by the corner: `expandedTopRadius` is 14, so anything below
+    /// roughly 20 puts a 24pt control into the curve and clips it — the
+    /// failure the old comment here recorded when this was tried at 2pt.
+    static let accessorySideInset: CGFloat = 24
 
     var body: some View {
         // Expanded (has content) draws the softer card; compact and idle
@@ -119,14 +132,11 @@ struct NotchOverlayView: View {
                     Spacer(minLength: 0)
                     if let topTrailingAccessory { topTrailingAccessory }
                 }
-                // The content's own inset, so the control's right edge lines
-                // up with the right edge of the content column below it.
-                //
-                // NOT compactEdgeExtra (2pt): that is how much the *compact*
-                // panel exceeds its wings, and the expanded panel is far
-                // wider, so using it here pinned the control to the extreme
-                // edge and the expandedTopRadius corner clipped half of it.
-                .padding(.horizontal, NotchOverlayView.contentSideInset)
+                // Nearer the corners than the content column below, so the
+                // chrome reads as belonging to the panel edge rather than to
+                // the content. See accessorySideInset for why it is its own
+                // constant and how far it can safely go.
+                .padding(.horizontal, NotchOverlayView.accessorySideInset)
                 .frame(height: neckHeight)
             }
             if let content {

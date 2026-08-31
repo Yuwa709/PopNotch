@@ -60,6 +60,27 @@ final class NotchCoordinator {
     /// Not persisted: a screen is a place you went, not a preference.
     private(set) var destination: Destination = .standby
 
+    /// Session-only pin. Nil in tests that do not care about it.
+    private let pinState: PinState?
+
+    /// Whether the notch is currently held open.
+    var isPinned: Bool { pinState?.isPinned ?? false }
+
+    /// Pins or unpins, then re-evaluates.
+    ///
+    /// Unpinning needs no cursor check of its own: hover bookkeeping keeps
+    /// running underneath a pin (nothing suppresses it), so `isHovered` is
+    /// already correct here. `applyState` therefore collapses when the cursor
+    /// is away and holds when it is inside, which is exactly the required
+    /// behaviour, for free.
+    func setPinned(_ pinned: Bool) {
+        guard let pinState, pinState.isPinned != pinned else { return }
+        pinState.isPinned = pinned
+        Self.logger.notice("Notch \(pinned ? "pinned open" : "unpinned", privacy: .public)")
+        renderContent()
+        applyState()
+    }
+
     private let caffeinate: CaffeinateService?
     /// The coordinator owns only the capture LIFECYCLE — the tap must die
     /// with the panel (setPanelVisible in applyState). Rendering moved into
@@ -69,8 +90,10 @@ final class NotchCoordinator {
     init(settings: SettingsStore,
          arbiter: NotchArbiter? = nil,
          caffeinate: CaffeinateService? = nil,
-         audioVisualizer: AudioVisualizerService? = nil) {
+         audioVisualizer: AudioVisualizerService? = nil,
+         pinState: PinState? = nil) {
         self.settings = settings
+        self.pinState = pinState
         self.caffeinate = caffeinate
         self.audioVisualizer = audioVisualizer
         self.arbiter = arbiter ?? NotchArbiter()
@@ -216,10 +239,30 @@ final class NotchCoordinator {
     /// Expanded while hovered or during a live activity; compact wings when
     /// a standby module has something worth flanking the housing with;
     /// otherwise invisible.
+    /// The one place expansion is decided, and therefore the one place the
+    /// pin is honoured.
+    ///
+    /// Every collapse in the app — hover exit, `endDrag`, the drag-out
+    /// re-arm, an arbiter presentation change, a module toggle, navigation,
+    /// a screen reconfiguration, a shelf mode swap — routes through
+    /// `applyState`, which is the sole caller of `panel.setState`. Guarding
+    /// here covers all of them; guarding at each trigger would mean nine
+    /// checks and one of them eventually missed.
     private func desiredState() -> NotchPanel.State {
-        if isHovered || isShowingLiveActivity { return .expanded }
+        if Self.shouldExpand(isPinned: isPinned,
+                             isHovered: isHovered,
+                             hasLiveActivity: isShowingLiveActivity) { return .expanded }
         if standbyWings() != nil { return .compact }
         return .idle
+    }
+
+    /// Factored out and `nonisolated` — the way `isInsideForExit` is — so the
+    /// pin's precedence over every other input is a test rather than a
+    /// reading of the branch above.
+    nonisolated static func shouldExpand(isPinned: Bool,
+                                         isHovered: Bool,
+                                         hasLiveActivity: Bool) -> Bool {
+        isPinned || isHovered || hasLiveActivity
     }
 
     /// Measured size of the current expanded content, set by renderContent.
@@ -381,9 +424,29 @@ final class NotchCoordinator {
                 [weak self] in self?.navigate(to: .standby)
             })
         }
-        return AnyView(PanelChromeButton(symbol: "gearshape", help: "Settings") {
-            [weak self] in self?.openSettings()
+        // Settings first, then a door per enabled screen. Doors are
+        // navigation and so is Back, which replaces this whole group on a
+        // navigated screen — they belong on the same side, not opposite the
+        // control that undoes them.
+        let doors = availableDoors()
+        return AnyView(HStack(spacing: 2) {
+            PanelChromeButton(symbol: "gearshape", help: "Settings") {
+                [weak self] in self?.openSettings()
+            }
+            ForEach(doors, id: \.1) { destination, symbol, help in
+                PanelChromeButton(symbol: symbol, help: help) {
+                    [weak self] in self?.navigate(to: destination)
+                }
+            }
         })
+    }
+
+    /// Screens reachable right now: a door only exists while the feature
+    /// behind it is on.
+    private func availableDoors() -> [(Destination, String, String)] {
+        [(.clipboard, "doc.on.clipboard", "Clipboard history"),
+         (.fileShelf, "tray.full", "File shelf")]
+            .filter { arbiter.module(for: $0.0.moduleID ?? "")?.isEnabled == true }
     }
 
     /// Opens the settings window from the panel's gear.
@@ -427,42 +490,26 @@ final class NotchCoordinator {
         }
     }
 
-    /// Top-right chrome: keep-awake first, then a door per enabled screen.
+    /// Top-right chrome: the panel-level toggles, hard into the corner.
     ///
     /// Shown for the whole expanded state, independent of which modules are
-    /// on screen or whether anything is playing.
+    /// on screen or whether anything is playing. Navigation lives on the
+    /// leading side; these two change how the panel itself behaves.
     private func trailingAccessory() -> AnyView? {
-        // Doors render in standby only — the rule leadingAccessory() always
-        // had, which moving them to this side dropped by accident. A door
-        // means "go to this screen" and Back means "leave this one"; offering
-        // the clipboard door while standing on the clipboard screen is
-        // incoherent. It is also what pushed the band to 76pt on the 384pt
-        // clipboard screen, 6pt past the notch housing.
-        let available: [(Destination, String, String)]
-        if destination == .standby {
-            // A door only exists while the feature behind it is on.
-            let doors: [(Destination, String, String)] = [
-                (.clipboard, "doc.on.clipboard", "Clipboard history"),
-                (.fileShelf, "tray.full", "File shelf"),
-            ]
-            available = doors.filter {
-                arbiter.module(for: $0.0.moduleID ?? "")?.isEnabled == true
-            }
-        } else {
-            available = []
-        }
         // Bound outside the ViewBuilder so the view captures the service, not
         // this coordinator: the panel retains the view, and the coordinator
         // retains the panel.
         let keepAwake = caffeinate
-        guard keepAwake != nil || !available.isEmpty else { return nil }
+        let pinned = isPinned
+        let canPin = pinState != nil
+        guard keepAwake != nil || canPin else { return nil }
         return AnyView(HStack(spacing: 2) {
             if let keepAwake {
                 CaffeinateControl(service: keepAwake)
             }
-            ForEach(available, id: \.1) { destination, symbol, help in
-                PanelChromeButton(symbol: symbol, help: help) {
-                    [weak self] in self?.navigate(to: destination)
+            if canPin {
+                PinControl(isPinned: pinned) { [weak self] in
+                    self?.setPinned(!pinned)
                 }
             }
         })

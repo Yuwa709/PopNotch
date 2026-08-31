@@ -150,3 +150,46 @@ final class DragOutSuppressionTests: XCTestCase {
         XCTAssertFalse(panel.isDraggingOut, "and clear again")
     }
 }
+
+/// The pin, and the single funnel it relies on.
+///
+/// Nine things collapse the panel — hover exit, `endDrag`, the drag-out
+/// re-arm, arbiter presentation changes, module toggles, navigation, screen
+/// reconfiguration, shelf mode swaps — and every one routes through
+/// `applyState`, the sole caller of `panel.setState`, which asks
+/// `desiredState`. So the pin is honoured in exactly one place, and these
+/// pin that precedence rather than trusting a reading of the branch.
+@MainActor
+final class PinStateTests: XCTestCase {
+
+    func testPinBeatsEveryOtherInput() {
+        // Cursor away, nothing playing: the case that would otherwise collapse.
+        XCTAssertTrue(NotchCoordinator.shouldExpand(
+            isPinned: true, isHovered: false, hasLiveActivity: false),
+            "a pinned notch stays open with the cursor nowhere near it")
+        XCTAssertTrue(NotchCoordinator.shouldExpand(
+            isPinned: true, isHovered: true, hasLiveActivity: true))
+    }
+
+    func testUnpinnedBehavesExactlyAsBefore() {
+        XCTAssertFalse(NotchCoordinator.shouldExpand(
+            isPinned: false, isHovered: false, hasLiveActivity: false),
+            "unpinned with the cursor away must still collapse")
+        XCTAssertTrue(NotchCoordinator.shouldExpand(
+            isPinned: false, isHovered: true, hasLiveActivity: false),
+            "hover still expands")
+        XCTAssertTrue(NotchCoordinator.shouldExpand(
+            isPinned: false, isHovered: false, hasLiveActivity: true),
+            "a live activity still expands")
+    }
+
+    func testStartsUnpinnedAndIsNotPersisted() {
+        XCTAssertFalse(PinState().isPinned, "a fresh session is never pinned")
+        // The guard against someone adding it to AppSettings later: a pinned
+        // panel surviving a relaunch has no visible cause.
+        let encoded = try? JSONEncoder().encode(AppSettings())
+        let json = encoded.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        XCTAssertFalse(json.lowercased().contains("pin"),
+                       "pin state must never reach persisted settings")
+    }
+}
