@@ -61,6 +61,33 @@ MSG
 fi
 echo "    $GENERATE_APPCAST"
 
+# --- launch smoke test ---------------------------------------------------
+# The check that would have caught 1.0.0. A signature can be individually valid
+# on every component and still refuse to load — only actually starting the
+# process proves dyld accepts it. Briefly runs a second PopNotch, which draws
+# its own notch panel for a few seconds before being killed.
+smoke_launch() {
+    local app="$1" label="$2" err pid
+    err=$(mktemp)
+    "$app/Contents/MacOS/PopNotch" >/dev/null 2>"$err" &
+    pid=$!
+    sleep 4
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        # Let the kernel release the volume this ran from before any detach.
+        sleep 1
+        rm -f "$err"
+        echo "    launch OK: $label"
+    else
+        echo "!! LAUNCH FAILED: $label" >&2
+        echo "   The bundle is signed but dyld will not run it:" >&2
+        sed 's/^/   /' "$err" >&2
+        rm -f "$err"
+        exit 1
+    fi
+}
+
 # --- build -------------------------------------------------------------------
 # CFBundleShortVersionString and CFBundleVersion come from these two build
 # settings (GENERATE_INFOPLIST_FILE synthesizes the plist from them); neither
@@ -105,6 +132,32 @@ echo "    $APP"
 # refuses Apple Events without it and the media feature dies with a silent
 # -1743, no prompt and no Automation pane entry.
 FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+
+# Release-only entitlement, derived here rather than added to the checked-in
+# file so Debug builds stay unweakened.
+#
+# WHY IT IS REQUIRED: Hardened Runtime turns on Library Validation, which
+# demands that every loaded library share the main executable's Team ID.
+# Ad-hoc signatures have NO Team ID, so an ad-hoc app cannot load its own
+# ad-hoc framework and dyld refuses with "mapping process and mapped file
+# (non-platform) have different Team IDs" — the 1.0.0 launch failure. Signing
+# inside-out with one identity does not fix it, because the problem is the
+# absence of a team, not a mismatch between two.
+#
+# Disabling library validation is the narrow fix: it drops that one check and
+# keeps the rest of Hardened Runtime (DYLD injection blocking, unsigned
+# executable memory). Dropping `-o runtime` instead would fix the launch too,
+# but forfeits all of those.
+#
+# REMOVE THIS when a Developer ID exists: signing app and framework with the
+# same real identity gives them a matching Team ID, library validation passes
+# on its own, and this entitlement becomes an unnecessary weakening.
+RELEASE_ENTITLEMENTS=$(mktemp -t popnotch-release-entitlements)
+cp "$ENTITLEMENTS" "$RELEASE_ENTITLEMENTS"
+/usr/libexec/PlistBuddy -c \
+    "Add :com.apple.security.cs.disable-library-validation bool true" \
+    "$RELEASE_ENTITLEMENTS" >/dev/null
+
 echo "==> Ad-hoc signing"
 for COMPONENT in \
     "$FRAMEWORK/Versions/B/XPCServices/Downloader.xpc" \
@@ -120,7 +173,8 @@ done
 codesign -f -s - -o runtime --timestamp=none "$FRAMEWORK"
 echo "    signed Sparkle.framework"
 codesign -f -s - -o runtime --timestamp=none \
-    --entitlements "$ENTITLEMENTS" "$APP"
+    --entitlements "$RELEASE_ENTITLEMENTS" "$APP"
+rm -f "$RELEASE_ENTITLEMENTS"
 echo "    signed PopNotch.app"
 
 # --- verify ------------------------------------------------------------------
@@ -132,6 +186,19 @@ if ! codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
     echo "!! codesign --verify --deep --strict FAILED. Refusing to package." >&2
     exit 1
 fi
+
+# codesign --verify --deep --strict validates each signature INDIVIDUALLY and
+# never checks that nested code is loadable by its container. It passed on the
+# broken 1.0.0 build. This does check that.
+team_of() { codesign -dv "$1" 2>&1 | awk -F= '/^TeamIdentifier/ { print $2 }'; }
+APP_TEAM=$(team_of "$APP")
+FRAMEWORK_TEAM=$(team_of "$FRAMEWORK")
+if [[ "$APP_TEAM" != "$FRAMEWORK_TEAM" ]]; then
+    echo "!! Team ID mismatch: app='$APP_TEAM' framework='$FRAMEWORK_TEAM'." >&2
+    echo "   dyld would refuse to load the framework. Refusing to package." >&2
+    exit 1
+fi
+echo "    team IDs agree (app and framework: ${APP_TEAM:-not set})"
 
 if ! codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "apple-events"; then
     echo "!! The apple-events entitlement is missing after signing." >&2
@@ -158,6 +225,9 @@ if [[ -z "$PUBKEY" || "$PUBKEY" == "PLACEHOLDER" ]]; then
     exit 1
 fi
 echo "    SUPublicEDKey present"
+
+echo "==> Launch smoke test (signed bundle)"
+smoke_launch "$APP" "build products"
 
 # --- package -----------------------------------------------------------------
 # ditto, not zip: a plain zip does not preserve the extended attributes and
@@ -196,10 +266,27 @@ echo "    $DMG ($(stat -f%z "$DMG") bytes)"
 # signature that breaks in packaging is invisible until a user's machine
 # refuses the app or Sparkle refuses the update.
 VERIFY_DIR=$(mktemp -d)
-MOUNT_DIR=$(mktemp -d)
+# Resolved with pwd -P: mktemp hands back /var/folders/..., but `mount` reports
+# the same volume as /private/var/folders/..., so an unresolved path never
+# matches the mount table and the cleanup below would try to rm a live volume.
+MOUNT_DIR=$(cd "$(mktemp -d)" && pwd -P)
+# Detaching right after killing a process launched FROM the volume fails: the
+# kernel has not released it yet, and a plain `rm -rf` then tries to delete a
+# still-mounted read-only volume and spews errors. Retry, force, and never
+# remove a path that is still a mountpoint.
+detach_dmg() {
+    local point="$1" i
+    for i in 1 2 3 4 5; do
+        mount | grep -q " on $point " || return 0
+        hdiutil detach "$point" -quiet 2>/dev/null && return 0
+        sleep 1
+    done
+    hdiutil detach "$point" -force -quiet 2>/dev/null || true
+}
 cleanup() {
-    hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || true
-    rm -rf "$VERIFY_DIR" "$MOUNT_DIR"
+    detach_dmg "$MOUNT_DIR"
+    rm -rf "$VERIFY_DIR"
+    mount | grep -q " on $MOUNT_DIR " || rm -rf "$MOUNT_DIR"
 }
 trap cleanup EXIT
 
@@ -209,6 +296,7 @@ if ! codesign --verify --deep --strict "$VERIFY_DIR/PopNotch.app" 2>&1 | sed 's/
     exit 1
 fi
 echo "    signature intact after unzip"
+smoke_launch "$VERIFY_DIR/PopNotch.app" "unzipped"
 
 hdiutil attach "$DMG" -nobrowse -quiet -mountpoint "$MOUNT_DIR"
 if ! codesign --verify --deep --strict "$MOUNT_DIR/PopNotch.app" 2>&1 | sed 's/^/    /'; then
@@ -216,7 +304,8 @@ if ! codesign --verify --deep --strict "$MOUNT_DIR/PopNotch.app" 2>&1 | sed 's/^
     exit 1
 fi
 echo "    signature intact inside DMG"
-hdiutil detach "$MOUNT_DIR" -quiet
+smoke_launch "$MOUNT_DIR/PopNotch.app" "inside DMG"
+detach_dmg "$MOUNT_DIR"
 
 # --- appcast -----------------------------------------------------------------
 # Signs the zip with the private EdDSA key from the login keychain and writes
