@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Sparkle
 import os
 
 /// Thin by design: it owns the app's long-lived objects and nothing else.
@@ -26,6 +27,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Panel-level, like caffeinate: enabled from the stored setting, made
     /// visible by the coordinator only while the panel is expanded.
     private(set) lazy var audioViz = AudioVisualizerService()
+
+    // MARK: - Updates
+
+    /// Sparkle's updater, owned here because it must outlive any view.
+    ///
+    /// **Manual checks only** — `startingUpdater: true` starts the updater so
+    /// a check can be requested, and `automaticallyChecksForUpdates` is forced
+    /// off in `applicationDidFinishLaunching`. Scheduled background checks are
+    /// deliberately not enabled: Sparkle logs a specific warning for
+    /// `LSUIElement` apps that schedule them without implementing gentle
+    /// reminders, because an update alert behind other windows is easy to miss
+    /// when there is no Dock icon to bounce. Turning them on is a separate
+    /// decision that owes the user a visible surface — most likely the notch.
+    ///
+    /// Both delegates are nil: the feed URL and public key come from
+    /// `PopNotch/Info.plist` (`SUFeedURL`, `SUPublicEDKey`), and the standard
+    /// user driver's own UI is what we want.
+    private(set) lazy var updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
+
+    /// Whether a check can be started right now. The About tab's button binds
+    /// to this so it disables while one is already running.
+    var canCheckForUpdates: Bool { updaterController.updater.canCheckForUpdates }
+
+    /// User-initiated check. Sparkle activates the app itself when showing its
+    /// windows for a background app (`SPUStandardUserDriver` calls
+    /// `_activateApplication` when `activationPolicy == .accessory`), which is
+    /// the same narrow click-driven carve-out to hard rule 4 that the settings
+    /// gear and menu item already document. No hover path reaches this.
+    func checkForUpdates() {
+        Self.logger.notice("Update check requested from Settings")
+        updaterController.checkForUpdates(nil)
+    }
 
     // MARK: - Settings window
 
@@ -60,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 settings: settings,
                 spotify: spotifyAccount,
                 visualizer: audioViz,
+                updater: updaterController.updater,
                 onQuit: { NSApp.terminate(nil) }
             ))
             // Closing must not deallocate it; this delegate holds the only
@@ -84,6 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator.start()
+
+        // Manual only. Set every launch rather than once, so a stale stored
+        // preference — or a future Sparkle default — cannot quietly turn
+        // background checking on for an app with no Dock icon to notify from.
+        updaterController.updater.automaticallyChecksForUpdates = false
 
         // The panel's gear posts this. Observed here rather than in a view so
         // it survives whatever the scene graph is doing.

@@ -89,7 +89,7 @@ final class SettingsWindowTests: XCTestCase {
         // AboutSettingsTab owns the only guaranteed Quit; building it proves
         // the affordance exists and is wired to something.
         var quit = false
-        _ = AboutSettingsTab(onQuit: { quit = true })
+        _ = AboutSettingsTab(updater: nil, onQuit: { quit = true })
         XCTAssertFalse(quit, "constructing must not fire it")
     }
 }

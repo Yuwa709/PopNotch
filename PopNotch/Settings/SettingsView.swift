@@ -1,5 +1,7 @@
 import SwiftUI
 import ServiceManagement
+import Sparkle
+import Combine
 import os
 
 /// One sidebar row. An enum rather than free-floating views so the order,
@@ -44,6 +46,10 @@ struct SettingsView: View {
     let spotify: SpotifyAccount
 
     let visualizer: AudioVisualizerService
+    /// Optional so the tab stays constructible without a live Sparkle
+    /// updater — tests build it with nil, and the Check for Updates row
+    /// simply does not render.
+    let updater: SPUUpdater?
     /// Injected rather than calling `NSApp.terminate` inline, so the view
     /// stays free of app lifecycle and a test can build one.
     let onQuit: () -> Void
@@ -80,7 +86,7 @@ struct SettingsView: View {
         case .permissions:
             PermissionsSettingsTab()
         case .about:
-            AboutSettingsTab(onQuit: onQuit)
+            AboutSettingsTab(updater: updater, onQuit: onQuit)
         }
     }
 }
@@ -279,6 +285,7 @@ struct GeneralSettingsTab: View {
 /// not exist is not reachable. The spacer below is the room for it.
 struct AboutSettingsTab: View {
 
+    let updater: SPUUpdater?
     let onQuit: () -> Void
 
     private var version: String {
@@ -299,13 +306,21 @@ struct AboutSettingsTab: View {
                 Text("MIT licensed. Free and open source.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Link("github.com/joshuatp/PopNotch",
-                     destination: URL(string: "https://github.com/joshuatp/PopNotch")!)
+                // Must stay the same account the appcast is served from
+                // (SUFeedURL in Info.plist), or the About tab points somewhere
+                // other than where updates come from.
+                Link("github.com/Yuwa709/PopNotch",
+                     destination: URL(string: "https://github.com/Yuwa709/PopNotch")!)
                     .font(.callout)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Room for Check for Updates; keeps Quit pinned to the bottom.
+            if let updater {
+                Spacer(minLength: 16)
+                UpdateCheckRow(updater: updater)
+            }
+
+            // Keeps Quit pinned to the bottom.
             Spacer(minLength: 16)
 
             Divider()
@@ -316,5 +331,57 @@ struct AboutSettingsTab: View {
             .padding(.top, 12)
         }
         .padding()
+    }
+}
+
+
+/// Manual update check, in About because the menu bar icon is optional — an
+/// updater reachable only from a menu that may not exist is not reachable.
+///
+/// Its own view so the `@StateObject` below only exists when there is an
+/// updater to observe.
+private struct UpdateCheckRow: View {
+
+    let updater: SPUUpdater
+    @StateObject private var model: UpdateCheckModel
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        _model = StateObject(wrappedValue: UpdateCheckModel(updater: updater))
+    }
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Updates")
+                    .font(.callout)
+                Text("PopNotch does not check on its own.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!model.canCheckForUpdates)
+        }
+    }
+}
+
+/// Bridges Sparkle's `canCheckForUpdates` into SwiftUI.
+///
+/// The property is KVO-compliant but `SPUUpdater` is not an
+/// `ObservableObject`, so a button bound straight to it would never re-render
+/// — it would sit enabled through a running check and disabled forever after
+/// one. This is the bridge Sparkle's own SwiftUI guidance describes.
+@MainActor
+private final class UpdateCheckModel: ObservableObject {
+
+    @Published var canCheckForUpdates: Bool
+    private var cancellable: AnyCancellable?
+
+    init(updater: SPUUpdater) {
+        canCheckForUpdates = updater.canCheckForUpdates
+        cancellable = updater.publisher(for: \.canCheckForUpdates)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] value in self?.canCheckForUpdates = value }
     }
 }

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C64F4B9330456D900094539B /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C64F4B9230456D900094539B /* Sparkle */; };
 		C6F40DE030402E2900F801FD /* CLAUDE.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DDF30402E2900F801FD /* CLAUDE.md */; };
 		C6F40DE53040B8FF00F801FD /* ROADMAP.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DE43040B8FF00F801FD /* ROADMAP.md */; };
 		C6F40DE73040B91000F801FD /* PROJECT-CONTEXT.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */; };
@@ -68,6 +69,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C64F4B9330456D900094539B /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -130,6 +132,7 @@
 			);
 			name = PopNotch;
 			packageProductDependencies = (
+				C64F4B9230456D900094539B /* Sparkle */,
 			);
 			productName = PopNotch;
 			productReference = C6F40E2E3040DB3900F801FD /* PopNotch.app */;
@@ -163,6 +166,9 @@
 			);
 			mainGroup = C6F40DBE30402B2F00F801FD;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C64F4B9130456D8F0094539B /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C6F40DBE30402B2F00F801FD;
 			projectDirPath = "";
@@ -483,6 +489,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C64F4B9130456D8F0094539B /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.6;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C64F4B9230456D900094539B /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C64F4B9130456D8F0094539B /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = C6F40DBF30402B2F00F801FD /* Project object */;
 }

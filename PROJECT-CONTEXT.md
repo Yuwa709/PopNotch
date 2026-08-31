@@ -33,7 +33,23 @@ Resolved in Phase 0.5, commits `dbd88ec` and `0a06545`. The project had been sca
 | `ENABLE_APP_SANDBOX` | `NO` | Sandbox is App Store only, and would block Apple Events to Music and Spotify — the primary feature |
 | `INFOPLIST_KEY_LSUIElement` | `YES` | Background agent, no Dock icon |
 
-Usage strings for Calendar, Location, and Apple Events are set as `INFOPLIST_KEY_*` build settings. There is no Info.plist file; `GENERATE_INFOPLIST_FILE = YES` synthesizes one at build time.
+Usage strings for Calendar, Location, and Apple Events are set as
+`INFOPLIST_KEY_*` build settings, and `GENERATE_INFOPLIST_FILE = YES`
+synthesizes the bundle's Info.plist at build time.
+
+**There is also a real `PopNotch/Info.plist`, wired to the app target**, whose
+contents are merged into the generated one. It was added for Sparkle and
+currently holds `SUFeedURL`, `SUPublicEDKey`, and
+`NSAudioCaptureUsageDescription`. This paragraph previously claimed no
+Info.plist file existed, which is stale.
+
+It exists because `INFOPLIST_KEY_*` **silently ignores keys Apple does not
+know about**. Measured 2026-08-31: building with
+`INFOPLIST_KEY_SUFeedURL=…` succeeded and the key was simply absent from the
+built bundle. Sparkle's `SUPublicEDKey` has no programmatic override either —
+`SUHost.publicEDKey` reads `objectForInfoDictionaryKey:` and no delegate hook
+exists — so a real file is the only route for it. Custom, non-Apple keys go
+in the file; Apple's own usage strings stay as build settings.
 
 **Verify, do not assume.** The table above is a claim about `project.pbxproj`, not a fact guaranteed by this document:
 
