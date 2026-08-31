@@ -98,6 +98,13 @@ final class NotchPanel: NSPanel {
         set { (contentView as? NotchHoverView)?.onHoverChange = newValue }
     }
 
+    /// True while the panel is the *source* of a drag. Exposed here so the
+    /// shelf's drag source does not reach into `contentView` itself.
+    var isDraggingOut: Bool {
+        get { (contentView as? NotchHoverView)?.isDraggingOut ?? false }
+        set { (contentView as? NotchHoverView)?.isDraggingOut = newValue }
+    }
+
     /// A file drag arriving over the notch, or leaving it.
     var onFileDragChange: ((Bool) -> Void)? {
         get { (contentView as? NotchHoverView)?.onFileDragChange }
@@ -212,7 +219,10 @@ final class NotchPanel: NSPanel {
     static func expandedRect(on screen: NSScreen, contentSize: CGSize) -> NSRect {
         let base = notchRect(on: screen)
         let minWidth = base.width + (leadingWingWidth + 24) * 2
-        let width = (min(max(contentSize.width, minWidth), 540)).rounded(.up)
+        // Ceiling raised from 540 for the shelf redesign (2026-08-30): the
+        // reference layout puts the resting shelf at ~687pt measured from
+        // full-screen captures at this display's 0.735 px-to-point scale.
+        let width = (min(max(contentSize.width, minWidth), 690)).rounded(.up)
         let minHeight = base.height + 56
         // Ceiling raised from 300: the lyrics takeover needs more, and
         // clamping below the content's real height compressed it upward

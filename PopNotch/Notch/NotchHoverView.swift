@@ -48,6 +48,36 @@ final class NotchHoverView: NSView {
     /// only driven once per session however AppKit reports the ending.
     private var isDragActive = false
 
+    /// True while this panel is the *source* of a drag rather than a
+    /// destination for one.
+    ///
+    /// Collapse is suppressed for the duration: a drag-out leaves the panel
+    /// bounds by design, and the normal exit rules would tear down the very
+    /// view that started the drag. Clearing it re-evaluates collapse against
+    /// the real cursor position — see the `didSet`, which is the re-arm that
+    /// stops the panel hanging open after every drag-out.
+    ///
+    /// Owned by `ShelfDragSource`, which sets it in
+    /// `draggingSession(_:willBeginAt:)` and clears it in
+    /// `draggingSession(_:endedAt:operation:)` — the one deterministic place
+    /// a session is known to be over, however it ended.
+    var isDraggingOut = false {
+        didSet {
+            guard Self.clearingShouldRearmCollapse(was: oldValue, now: isDraggingOut) else { return }
+            beginExit()
+        }
+    }
+
+    /// Whether a change to `isDraggingOut` should re-evaluate collapse.
+    ///
+    /// Only the true -> false edge does. Factored out and `nonisolated` — the
+    /// way `isInsideForExit` is — because the panel hanging open forever after
+    /// a drag-out is precisely what a missing re-arm looks like, and that is
+    /// worth a test rather than a reading of the `didSet`.
+    nonisolated static func clearingShouldRearmCollapse(was: Bool, now: Bool) -> Bool {
+        was && !now
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         // File URLs only. Registering for everything would open the notch on
@@ -123,6 +153,10 @@ final class NotchHoverView: NSView {
     }
 
     private func beginExit() {
+        // A drag-out is the panel acting as a source; the cursor being outside
+        // is the whole gesture, not a reason to close. The clear in
+        // `isDraggingOut` runs this again once the session really ends.
+        guard !isDraggingOut else { return }
         pendingEnter?.cancel()
         pendingEnter = nil
         guard isHovering else { return }
@@ -160,6 +194,12 @@ final class NotchHoverView: NSView {
     /// shelf's drop zones become reachable.
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard Self.carriesFiles(sender) else { return [] }
+        // A drag that started on this panel's own shelf: skip the drag
+        // bookkeeping entirely, so the chooser never replaces the homepage
+        // whose AirDrop bar is the drop target. The chooser is for files
+        // *arriving* at the notch. `.copy` still keeps the session tracking
+        // us so the shelf's own zones receive the drop.
+        guard !isDraggingOut else { return .copy }
         isDragActive = true
         Self.logger.notice("Drag entered the notch")
         // Announced before the expansion is scheduled, so the destination is
@@ -172,7 +212,22 @@ final class NotchHoverView: NSView {
         return .copy
     }
 
+    /// AppKit sends `draggingExited` to an outer destination the moment the
+    /// drag descends into a destination nested inside it — measured 18ms
+    /// after `draggingEntered`, session still live. Believing it tore the
+    /// chooser down exactly when the cursor reached one of its zones. So an
+    /// exit only counts if the cursor has really left the panel, using the
+    /// same inclusive top-edge carve-out the hover exit is documented with
+    /// (`contains` is half-open on maxY, and the panel tops out at the
+    /// screen edge).
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        if let window, Self.isInsideForExit(
+            mouse: NSEvent.mouseLocation,
+            panel: window.frame,
+            screenTop: window.screen?.frame.maxY ?? window.frame.maxY) {
+            Self.logger.debug("Drag exit ignored; cursor still over the panel")
+            return
+        }
         endDrag(reason: "exited")
     }
 

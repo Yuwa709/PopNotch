@@ -237,7 +237,15 @@ final class NotchCoordinator {
     /// scheduled — so `navigate` would render compact content that the
     /// expansion immediately replaces. Setting it means the panel opens
     /// already showing the shelf.
+    /// Fed the raw drag-over state so the shelf can swap between its resting
+    /// screen and the drop chooser. Set by AppDelegate; the coordinator does
+    /// not know the service, only that someone wants the signal.
+    var onFileDragActive: ((Bool) -> Void)?
+
     func fileDragChanged(_ active: Bool) {
+        // Before any render below, so a re-measure already sees the mode the
+        // view is about to display.
+        onFileDragActive?(active)
         guard active else {
             // A drag that leaves before the panel ever opened set a
             // destination for a screen nobody saw. Clear it, or the next
@@ -247,6 +255,9 @@ final class NotchCoordinator {
                 destination = .standby
                 Self.logger.notice("Drag left before opening; destination reset")
             }
+            // The chooser just swapped back to the resting shelf, which is a
+            // different size; re-measure or the panel keeps the old frame.
+            remeasureShelfIfShowing()
             return
         }
         guard let moduleID = Destination.fileShelf.moduleID,
@@ -255,9 +266,27 @@ final class NotchCoordinator {
             // opens home as usual.
             return
         }
-        guard destination != .fileShelf else { return }
-        destination = .fileShelf
-        Self.logger.notice("File drag; opening to the shelf")
+        if destination != .fileShelf {
+            destination = .fileShelf
+            Self.logger.notice("File drag; opening to the shelf")
+            // Panel already expanded on another screen when the drag arrived:
+            // swap to the shelf now. This is the chooser *appearing* — the
+            // one resize a live drag wants, and the cursor is still at the
+            // panel edge when it happens. Every later flip while the session
+            // is live re-renders by observation alone; resizing the panel
+            // mid-drag would move drop targets under the cursor.
+            remeasureShelfIfShowing()
+        }
+    }
+
+    /// Re-renders the shelf screen in place. The chooser and the resting
+    /// shelf are different widths, and the panel only resizes when someone
+    /// re-measures; destination changes do that, an in-place mode swap does
+    /// not.
+    private func remeasureShelfIfShowing() {
+        guard lastAppliedState == .expanded, destination == .fileShelf else { return }
+        renderContent()
+        applyState()
     }
 
     /// Chrome controls call this; it re-renders and re-measures, since

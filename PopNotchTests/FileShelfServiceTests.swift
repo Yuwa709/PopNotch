@@ -168,3 +168,22 @@ final class FileShelfModuleTests: XCTestCase {
                       "AirDrop must accept an ordinary local file")
     }
 }
+
+/// The drag-hover flag driving the chooser/shelf view swap.
+@MainActor
+final class FileShelfDragHoverTests: XCTestCase {
+
+    func testStartsAtRest() {
+        XCTAssertFalse(FileShelfService().dragHovering)
+    }
+
+    func testFlagFlipsWithTheDrag() {
+        let service = FileShelfService()
+        service.setDragHovering(true)
+        XCTAssertTrue(service.dragHovering, "drag over the panel shows the chooser")
+        service.setDragHovering(true)
+        XCTAssertTrue(service.dragHovering, "redundant set is harmless")
+        service.setDragHovering(false)
+        XCTAssertFalse(service.dragHovering, "drag leaving restores the shelf")
+    }
+}

@@ -38,7 +38,7 @@ final class ChromeBandFitTests: XCTestCase {
         )
         let measured = probe.fittingSize.width
         let minWidth = notchWidth + (NotchPanel.leadingWingWidth + 24) * 2
-        return min(max(measured, minWidth), 540).rounded(.up)
+        return min(max(measured, minWidth), 690).rounded(.up)
     }
 
     /// Gap between the trailing band's left edge and the housing's right edge.
@@ -62,7 +62,7 @@ final class ChromeBandFitTests: XCTestCase {
 
     func testCaffeineOnlyFitsOnEveryScreen() {
         // A fresh install has both doors off, so this is the shipped default.
-        for width in stride(from: CGFloat(320), through: 540, by: 4) {
+        for width in stride(from: CGFloat(320), through: 690, by: 4) {
             XCTAssertGreaterThanOrEqual(
                 trailingClearance(panelWidth: width, buttons: 1), 0,
                 "the lone caffeine cup must clear the housing at \(width)pt")
@@ -77,18 +77,38 @@ final class ChromeBandFitTests: XCTestCase {
     func testNavigatedClipboardScreenFits() {
         let width = panelWidth(for: ClipboardExpandedView(service: ClipboardService()))
         let clearance = trailingClearance(panelWidth: width, buttons: 1)
-        XCTAssertEqual(width, 384, accuracy: 0.5, "clipboard screen width")
+        // 484 since the filter-tab redesign widened the content 320 -> 420;
+        // it was 384 before that, and the tight case that motivated this file.
+        XCTAssertEqual(width, 484, accuracy: 0.5, "clipboard screen width")
         XCTAssertGreaterThanOrEqual(clearance, 0,
             "clipboard screen is \(width)pt; caffeine alone overruns by \(-clearance)pt")
-        XCTAssertEqual(clearance, 46, accuracy: 0.5, "caffeine alone clears by 46pt")
+        XCTAssertEqual(clearance, 96, accuracy: 0.5, "caffeine alone clears by 96pt")
     }
 
     func testNavigatedFileShelfScreenFits() {
         let width = panelWidth(for: FileShelfExpandedView(service: FileShelfService()))
         let clearance = trailingClearance(panelWidth: width, buttons: 1)
+        XCTAssertEqual(width, 690, accuracy: 0.5,
+            "shelf content is 626pt by design — the panel width ceiling")
         XCTAssertGreaterThanOrEqual(clearance, 0,
             "file shelf screen is \(width)pt; caffeine alone overruns by \(-clearance)pt")
     }
+
+    /// The two shelf modes are deliberately different sizes — the chooser
+    /// hugs its zones (user-requested), the resting shelf is wider. That is
+    /// safe only because a mode swap cannot happen under a mid-drag cursor
+    /// any more: a shelf-originated drag never shows the chooser, so its
+    /// transitions coincide with a drag arriving at or leaving the panel.
+    /// The pins keep both from drifting.
+    func testShelfModeWidthsArePinned() {
+        let service = FileShelfService()
+        XCTAssertEqual(panelWidth(for: FileShelfExpandedView(service: service)),
+                       690, accuracy: 0.5, "resting shelf: 626pt content")
+        service.setDragHovering(true)
+        XCTAssertEqual(panelWidth(for: FileShelfExpandedView(service: service)),
+                       540, accuracy: 0.5, "chooser hugs its 230×125 zones: 476pt content")
+    }
+
 
     /// Standby is the only state that shows all three, and it is the widest
     /// of the expanded screens, measured at 452pt on hardware.

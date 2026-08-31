@@ -56,6 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // references to them is opt-in.
         coordinator.register(FileShelfModule(service: fileShelfService),
                              enabledByDefault: false)
+        // The shelf's drag chooser needs to know when a drag is over the
+        // panel; the coordinator hears it, the service displays it.
+        coordinator.onFileDragActive = { [weak fileShelfService] active in
+            fileShelfService?.setDragHovering(active)
+        }
 
         Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
 

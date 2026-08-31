@@ -118,3 +118,35 @@ final class HoverDragDestinationTests: XCTestCase {
     }
 }
 
+
+/// The drag-out suppression flag, and specifically its re-arm.
+///
+/// `NotchHoverView.endDrag` is the only thing that schedules a collapse once a
+/// drag finishes, and during a drag-out it fires while suppression is on, so
+/// its `beginExit()` is dropped. If clearing the flag did not re-run that
+/// evaluation, the panel would stay open after every drag-out until the
+/// pointer wandered in and out again.
+@MainActor
+final class DragOutSuppressionTests: XCTestCase {
+
+    func testOnlyClearingTheFlagRearmsCollapse() {
+        XCTAssertTrue(NotchHoverView.clearingShouldRearmCollapse(was: true, now: false),
+                      "the session ending is the one edge that must re-evaluate collapse")
+        XCTAssertFalse(NotchHoverView.clearingShouldRearmCollapse(was: false, now: true),
+                       "starting a drag must never schedule a collapse")
+        XCTAssertFalse(NotchHoverView.clearingShouldRearmCollapse(was: true, now: true),
+                       "a redundant set mid-drag is not a session ending")
+        XCTAssertFalse(NotchHoverView.clearingShouldRearmCollapse(was: false, now: false),
+                       "nothing to re-arm when no drag was in flight")
+    }
+
+    func testPanelExposesTheFlagWithoutReachingIntoContentView() {
+        guard let screen = NSScreen.main else { return XCTFail("no screen") }
+        let panel = NotchPanel(screen: screen)
+        XCTAssertFalse(panel.isDraggingOut, "a fresh panel is not a drag source")
+        panel.isDraggingOut = true
+        XCTAssertTrue(panel.isDraggingOut, "set must reach the hover view")
+        panel.isDraggingOut = false
+        XCTAssertFalse(panel.isDraggingOut, "and clear again")
+    }
+}

@@ -1,79 +1,135 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The shelf screen: a wide AirDrop target across the top, and below it the
-/// shelf itself filling the rest of the panel, with entries laid out in a
-/// grid large enough to tell files apart.
+/// The shelf screen, in two modes keyed off the live drag state.
+///
+/// **Mid-drag** it is a chooser: two large zones side by side, *Add to Shelf*
+/// and *AirDrop*, so a file dragged at the notch picks its fate in one
+/// gesture. **At rest** it is the shelf itself: a "File Drops" header above
+/// one wide dashed region holding the parked files as tiles.
+///
+/// Layout replicated from user-supplied full-screen captures (2026-08-30) at
+/// this display's 0.735 px-to-point scale: 230×125 chooser zones in a snug
+/// 540pt panel, the resting shelf in a 690pt one.
+///
+/// The two modes are deliberately different sizes — Joshua asked for the
+/// chooser panel to hug its zones — and that is safe because a mode swap can
+/// no longer happen under a mid-drag cursor: a drag that starts on the shelf
+/// itself never shows the chooser (the homepage and its AirDrop bar stay
+/// up), so chooser transitions only occur when a drag arrives at or leaves
+/// the whole panel.
 struct FileShelfExpandedView: View {
+    @Bindable var service: FileShelfService
+
+    var body: some View {
+        Group {
+            if service.dragHovering {
+                DragChooserView(service: service)
+            } else {
+                ShelfHomeView(service: service)
+            }
+        }
+        .foregroundStyle(.white)
+    }
+}
+
+// MARK: - Mid-drag chooser
+
+/// Two drop zones, shown only while a file drag is over the panel.
+private struct DragChooserView: View {
     @Bindable var service: FileShelfService
 
     @State private var shelfTargeted = false
     @State private var airdropTargeted = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            airdrop
-            shelf
+        HStack(spacing: 16) {
+            DropZone(symbol: "tray.and.arrow.down", label: "Add to Shelf",
+                     dashed: true, targeted: shelfTargeted)
+                .onDrop(of: [.fileURL], isTargeted: $shelfTargeted) { providers in
+                    load(providers) { service.add($0) }
+                    return true
+                }
+            // No public "airdrop" SF Symbol exists (checked 2026-08-30), so
+            // the radio-waves glyph stands in for the concentric-arcs logo.
+            DropZone(symbol: "dot.radiowaves.left.and.right", label: "AirDrop",
+                     dashed: false, targeted: airdropTargeted)
+                .onDrop(of: [.fileURL], isTargeted: $airdropTargeted) { providers in
+                    shareDropped(providers, via: service)
+                    return true
+                }
         }
-        .frame(width: 440, alignment: .leading)
-        .foregroundStyle(.white)
+        // Hugs the zones: no dead black around the chooser (user-requested).
+        .frame(width: 476, height: 125)
     }
+}
 
-    private var header: some View {
-        HStack {
-            Text("SHELF")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white.opacity(0.5))
-            Spacer()
-            if !service.entries.isEmpty {
-                Button("Clear") { service.clear() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
-            }
+/// One chooser target. The shelf side is dashed ("this is a place things
+/// live"), the AirDrop side solid ("this is an action").
+private struct DropZone: View {
+    let symbol: String
+    let label: String
+    let dashed: Bool
+    let targeted: Bool
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 24, weight: .medium))
+            Text(label)
+                .font(.system(size: 13, weight: .semibold))
         }
-    }
-
-    // MARK: - AirDrop
-
-    private var airdrop: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "shareplay")
-                .font(.system(size: 16, weight: .medium))
-            Text("Drop here to AirDrop")
-                .font(.system(size: 11, weight: .semibold))
-        }
-        .foregroundStyle(.white.opacity(airdropTargeted ? 0.95 : 0.55))
-        .frame(maxWidth: .infinity)
-        .frame(height: 46)
+        .foregroundStyle(.white.opacity(targeted ? 0.95 : 0.65))
+        .frame(width: 230, height: 125)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                .foregroundStyle(.white.opacity(airdropTargeted ? 0.6 : 0.22))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(style: StrokeStyle(
+                    lineWidth: 1.5, dash: dashed ? [9, 7] : []))
+                .foregroundStyle(.white.opacity(targeted ? 0.65 : 0.28))
         )
-        .onDrop(of: [.fileURL], isTargeted: $airdropTargeted) { providers in
-            // A file dropped here is shared straight away, whether it came
-            // from the shelf or from outside; shelving it first would be a
-            // side effect the gesture did not ask for.
-            load(providers) { url in
-                let entry = FileShelfEntry(bookmark: (try? url.bookmarkData(
-                    options: [.withSecurityScope],
-                    includingResourceValuesForKeys: nil, relativeTo: nil)) ?? Data(),
-                                           name: url.lastPathComponent)
-                service.share(entry)
-            }
-            return true
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Resting shelf
+
+/// The shelf at rest: header plus one wide dashed region of file tiles.
+private struct ShelfHomeView: View {
+    @Bindable var service: FileShelfService
+
+    @State private var zoneTargeted = false
+
+    @State private var airdropTargeted = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            zone
+            airdropBar
         }
+        .frame(width: 626, alignment: .leading)
     }
 
-    // MARK: - Shelf
+    /// No clear-all control on purpose — one misclick emptying the whole
+    /// shelf is the wrong failure mode; each tile removes itself instead.
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "tray.full")
+                .font(.system(size: 15))
+                .foregroundStyle(.white.opacity(0.7))
+            Text("File Drops")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.92))
+            Spacer()
+        }
+        .frame(height: 24)
+    }
 
-    private var shelf: some View {
+    private var zone: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                .foregroundStyle(.white.opacity(shelfTargeted ? 0.6 : 0.22))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [9, 7]))
+                .foregroundStyle(.white.opacity(zoneTargeted ? 0.6 : 0.25))
             if service.entries.isEmpty {
                 Text("Drop files here")
                     .font(.system(size: 12))
@@ -86,25 +142,65 @@ struct FileShelfExpandedView: View {
                             ShelfItem(service: service, entry: entry)
                         }
                     }
-                    .padding(10)
+                    .padding(12)
                 }
             }
         }
-        .frame(height: 226)
+        .frame(height: 128)
         .frame(maxWidth: .infinity)
-        .onDrop(of: [.fileURL], isTargeted: $shelfTargeted) { providers in
+        // Belt and braces: drags normally swap this view for the chooser, but
+        // if that signal ever failed this keeps the shelf accepting drops.
+        .onDrop(of: [.fileURL], isTargeted: $zoneTargeted) { providers in
             load(providers) { service.add($0) }
             return true
         }
     }
 
-    /// Pulls file URLs off the drag providers and hands each to `action`.
-    private func load(_ providers: [NSItemProvider], action: @escaping (URL) -> Void) {
-        for provider in providers {
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url else { return }
-                Task { @MainActor in action(url) }
-            }
+    /// The way off the shelf: drag any tile onto this bar to AirDrop it. A
+    /// full-width target, because a tile drag keeps this screen up (see the
+    /// type comment) and the drop has to have somewhere obvious to land —
+    /// the per-tile hover button this replaces was too small to notice.
+    private var airdropBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "dot.radiowaves.left.and.right")
+                .font(.system(size: 14, weight: .medium))
+            Text("Drop here to AirDrop")
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .foregroundStyle(.white.opacity(airdropTargeted ? 0.95 : 0.6))
+        .frame(maxWidth: .infinity)
+        .frame(height: 46)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(lineWidth: 1.5)
+                .foregroundStyle(.white.opacity(airdropTargeted ? 0.65 : 0.28))
+        )
+        .onDrop(of: [.fileURL], isTargeted: $airdropTargeted) { providers in
+            shareDropped(providers, via: service)
+            return true
+        }
+    }
+}
+
+/// Shares every dropped file via AirDrop, straight away — shelving first
+/// would be a side effect the gesture did not ask for. Used by the chooser's
+/// AirDrop zone and the homepage's AirDrop bar alike.
+private func shareDropped(_ providers: [NSItemProvider], via service: FileShelfService) {
+    load(providers) { url in
+        let entry = FileShelfEntry(bookmark: (try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil, relativeTo: nil)) ?? Data(),
+                                   name: url.lastPathComponent)
+        service.share(entry)
+    }
+}
+
+/// Pulls file URLs off drag providers and hands each to `action`.
+private func load(_ providers: [NSItemProvider], action: @escaping (URL) -> Void) {
+    for provider in providers {
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            Task { @MainActor in action(url) }
         }
     }
 }
@@ -121,6 +217,15 @@ private struct ShelfItem: View {
         VStack(spacing: 5) {
             ZStack(alignment: .topTrailing) {
                 thumbnail
+                    // AppKit drag source, not SwiftUI's .onDrag: see
+                    // ShelfDragSource for the measurement that forced it.
+                    .overlay(ShelfDragSource(
+                        url: service.url(for: entry),
+                        thumbnail: service.thumbnail(for: entry),
+                        excludesHoverControls: hovering
+                    ) {
+                        service.noteDragOut(entry)
+                    })
                 if hovering {
                     Button { service.remove(entry) } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -140,14 +245,6 @@ private struct ShelfItem: View {
                 .frame(width: 84)
         }
         .onHover { hovering = $0 }
-        // Standard drag provider: the file already exists, so a promise
-        // would be indirection with nothing to promise.
-        .onDrag {
-            service.noteDragOut(entry)
-            guard let url = service.url(for: entry),
-                  let provider = NSItemProvider(contentsOf: url) else { return NSItemProvider() }
-            return provider
-        }
     }
 
     @ViewBuilder

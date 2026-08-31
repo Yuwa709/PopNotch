@@ -65,3 +65,14 @@ spawning an Apple-signed interpreter, to get around the caller-identity
 gate. It was already independently discovered and documented as "path 2"
 in `PopNotch/Modules/Media/FINDINGS.md` on 2026-08-27, from PopNotch's
 own measurements, before this analysis was read. It remains unchosen.
+
+## Shelf UI layout (2026-08-30)
+
+The drag-in chooser (Add to Shelf | AirDrop zones) and the "File Drops"
+resting-shelf layout were replicated from full-screen captures Joshua
+supplied of a third-party notch shelf UI (app unidentified). Dimensions
+were measured off the captures at this display's 0.735 px-to-point scale:
+540pt panel with 230x125 zones mid-drag, ~687pt panel at rest — the
+latter is why NotchPanel's expanded width ceiling rose 540 -> 690.
+Appearance only; no source was consulted, and the compact "1 File" state
+visible in the captures was deliberately not adopted.

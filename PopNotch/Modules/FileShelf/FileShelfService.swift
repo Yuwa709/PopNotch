@@ -46,6 +46,19 @@ final class FileShelfService {
 
     private(set) var entries: [FileShelfEntry] = []
 
+    /// True while a file drag is over the notch panel. The expanded view
+    /// switches on it: at rest it shows the shelf, mid-drag it shows the
+    /// Add-to-Shelf / AirDrop chooser. Fed by the coordinator (the only
+    /// thing that hears the panel's drag events) via AppDelegate wiring —
+    /// the module never touches the panel itself.
+    private(set) var dragHovering = false
+
+    func setDragHovering(_ hovering: Bool) {
+        guard hovering != dragHovering else { return }
+        dragHovering = hovering
+        Self.logger.notice("Drag chooser \(hovering ? "shown" : "dismissed", privacy: .public)")
+    }
+
     /// Resolved URLs whose security scope is currently held open, keyed by
     /// entry. Balanced in `release(_:)`, which every removal path goes
     /// through so a scope cannot leak.
@@ -187,7 +200,12 @@ final class FileShelfService {
         }
         service.delegate = shareDelegate
         activeShare = service
-        Self.logger.notice("AirDrop: sending \(entry.name, privacy: .public)")
+        // Permanent, and deliberately carries the resolved path: a share that
+        // silently sends nothing is the failure mode this whole feature has
+        // been bitten by twice — once by a picker that never presented, once
+        // by a drop whose payload arrived empty. The outcome itself is logged
+        // by ShareDelegate below.
+        Self.logger.notice("AirDrop: sending \(entry.name, privacy: .public) from \(url.path, privacy: .public)")
         service.perform(withItems: [url])
     }
 
