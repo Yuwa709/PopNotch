@@ -2,7 +2,41 @@ import SwiftUI
 import ServiceManagement
 import os
 
+/// One sidebar row. An enum rather than free-floating views so the order,
+/// the labels and the detail switch cannot drift apart.
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general, modules, music, permissions, about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .modules: "Modules"
+        case .music: "Music"
+        case .permissions: "Permissions"
+        case .about: "About"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .modules: "square.stack"
+        case .music: "music.note"
+        case .permissions: "lock.shield"
+        case .about: "info.circle"
+        }
+    }
+}
+
 /// The settings window.
+///
+/// A sidebar rather than a `TabView`: the tab bar collapsed into a toolbar
+/// overflow menu whenever the window was narrow, which put every section
+/// three clicks away. `minWidth` below is what guarantees the sidebar can
+/// never collapse into that state again, so it is load-bearing rather than
+/// cosmetic.
 struct SettingsView: View {
 
     let coordinator: NotchCoordinator
@@ -10,35 +44,76 @@ struct SettingsView: View {
     let spotify: SpotifyAccount
 
     let visualizer: AudioVisualizerService
+    /// Injected rather than calling `NSApp.terminate` inline, so the view
+    /// stays free of app lifecycle and a test can build one.
+    let onQuit: () -> Void
+
+    /// Optional because that is the shape `List` selection binds to; the
+    /// detail falls back to General so the pane is never blank.
+    @State private var selection: SettingsSection? = .general
 
     var body: some View {
-        TabView {
-            GeneralSettingsTab(coordinator: coordinator, settings: settings)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            ModulesSettingsTab(coordinator: coordinator, settings: settings, visualizer: visualizer)
-                .tabItem { Label("Modules", systemImage: "square.stack") }
-            PermissionsSettingsTab()
-                .tabItem { Label("Permissions", systemImage: "lock.shield") }
-            SpotifySettingsTab(account: spotify)
-                .tabItem { Label("Spotify", systemImage: "music.note") }
+        NavigationSplitView {
+            List(SettingsSection.allCases, selection: $selection) { section in
+                Label(section.title, systemImage: section.symbol)
+                    .tag(section)
+            }
+            .navigationSplitViewColumnWidth(min: 190, ideal: 205, max: 240)
+        } detail: {
+            detail(for: selection ?? .general)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(width: 460, height: 320)
+        // Roughly System Settings' own proportions. The minimum is the point:
+        // below it the split view starts collapsing the sidebar.
+        .frame(minWidth: 715, minHeight: 500)
+    }
+
+    @ViewBuilder
+    private func detail(for section: SettingsSection) -> some View {
+        switch section {
+        case .general:
+            GeneralSettingsTab(coordinator: coordinator, settings: settings)
+        case .modules:
+            ModulesSettingsTab(coordinator: coordinator, settings: settings)
+        case .music:
+            MusicSettingsTab(account: spotify, settings: settings, visualizer: visualizer)
+        case .permissions:
+            PermissionsSettingsTab()
+        case .about:
+            AboutSettingsTab(onQuit: onQuit)
+        }
     }
 }
 
-/// Connecting a Spotify account for queue and likes: official OAuth with
-/// PKCE.
+/// Everything about what is playing, in one place.
 ///
-/// There is deliberately nothing to configure. The Client ID is PopNotch's
-/// own and is built into the app (see `SpotifyAccount.clientID`); it used to
-/// be a text field here, which meant a fresh install could not connect at all
-/// until the user went and registered their own developer app.
-struct SpotifySettingsTab: View {
+/// Was a Spotify-only tab, with the audio visualiser stranded over in
+/// Modules despite being purely a now-playing concern. Both are here now;
+/// Modules keeps only the on/off switches that every feature has.
+///
+/// The Spotify half has deliberately nothing to configure. The Client ID is
+/// PopNotch's own and is built into the app (see `SpotifyAccount.clientID`);
+/// it used to be a text field here, which meant a fresh install could not
+/// connect at all until the user went and registered their own developer app.
+struct MusicSettingsTab: View {
 
     @Bindable var account: SpotifyAccount
+    @Bindable var settings: SettingsStore
+    let visualizer: AudioVisualizerService
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Show a live spectrum", isOn: visualizerBinding)
+            } header: {
+                Text("Audio Visualizer")
+            } footer: {
+                Text("Draws what's playing in the notch. Needs the System Audio Recording permission (System Settings → Privacy & Security → Screen & System Audio Recording). Off by default.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Spotify") {
             if account.isConnected {
                 LabeledContent("Account") {
                     HStack(spacing: 8) {
@@ -57,9 +132,22 @@ struct SpotifySettingsTab: View {
             if let error = account.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// Moved here from Modules unchanged: persists the choice and applies it
+    /// live in one place.
+    private var visualizerBinding: Binding<Bool> {
+        Binding(
+            get: { settings.settings.visualizerEnabled },
+            set: { on in
+                settings.update { $0.visualizerEnabled = on }
+                visualizer.setEnabled(on)
+            }
+        )
     }
 }
 
@@ -70,7 +158,6 @@ struct ModulesSettingsTab: View {
     let coordinator: NotchCoordinator
     /// Observed so the rows re-render when a preference is written.
     @Bindable var settings: SettingsStore
-    let visualizer: AudioVisualizerService
 
     var body: some View {
         Form {
@@ -83,27 +170,9 @@ struct ModulesSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section {
-                Toggle("Audio Visualizer", isOn: visualizerBinding)
-            } footer: {
-                Text("Shows a live spectrum of what's playing. Needs the System Audio Recording permission (System Settings → Privacy & Security → Screen & System Audio Recording). Off by default.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .formStyle(.grouped)
         .padding()
-    }
-
-    /// Persists the choice and applies it live in one place.
-    private var visualizerBinding: Binding<Bool> {
-        Binding(
-            get: { settings.settings.visualizerEnabled },
-            set: { on in
-                settings.update { $0.visualizerEnabled = on }
-                visualizer.setEnabled(on)
-            }
-        )
     }
 
     private func binding(for id: ModuleID, current: Bool) -> Binding<Bool> {
@@ -136,6 +205,14 @@ struct GeneralSettingsTab: View {
                     .foregroundStyle(.red)
             }
 
+            Section {
+                Toggle("Show menu bar icon", isOn: menuBarIconBinding)
+            } footer: {
+                Text("With it hidden, Settings is still reachable from the gear in the notch, and Quit lives in the About tab.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             LabeledContent("Hover delay") {
                 HStack(spacing: 10) {
                     Slider(value: hoverDelayBinding, in: 0...1, step: 0.05)
@@ -148,6 +225,15 @@ struct GeneralSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// Writes straight through to the store; `MenuBarExtra(isInserted:)`
+    /// observes the same value, so the icon appears and disappears live.
+    private var menuBarIconBinding: Binding<Bool> {
+        Binding(
+            get: { settings.settings.showMenuBarIcon },
+            set: { on in settings.update { $0.showMenuBarIcon = on } }
+        )
     }
 
     /// How long the cursor must dwell before the notch opens. Applies live.
@@ -176,5 +262,59 @@ struct GeneralSettingsTab: View {
             Self.logger.error("Launch at login \(enable ? "register" : "unregister", privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             launchAtLogin = !enable
         }
+    }
+}
+
+
+/// Identity, licence, and the app's only guaranteed way out.
+///
+/// Quit lives here because the menu bar icon is optional: with it hidden
+/// there is no Dock icon, no app menu, and no other menu to reach. It is a
+/// tab rather than a category of its own — a sidebar entry holding one
+/// destructive button would be worse than a footer under the information it
+/// belongs with.
+///
+/// **Check for Updates belongs beside it** when Sparkle lands (Phase 5), for
+/// exactly the same reason: an updater reachable only from a menu that may
+/// not exist is not reachable. The spacer below is the room for it.
+struct AboutSettingsTab: View {
+
+    let onQuit: () -> Void
+
+    private var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String ?? "—"
+        return "Version \(short) (build \(build))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("PopNotch")
+                    .font(.system(size: 20, weight: .semibold))
+                Text(version)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("MIT licensed. Free and open source.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Link("github.com/joshuatp/PopNotch",
+                     destination: URL(string: "https://github.com/joshuatp/PopNotch")!)
+                    .font(.callout)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Room for Check for Updates; keeps Quit pinned to the bottom.
+            Spacer(minLength: 16)
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("Quit PopNotch", role: .destructive, action: onQuit)
+            }
+            .padding(.top, 12)
+        }
+        .padding()
     }
 }

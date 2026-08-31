@@ -20,7 +20,8 @@ struct AppSettings: Codable, Equatable {
     /// v2: added spotifyClientID.
     /// v3: added visualizerEnabled.
     /// v4: removed spotifyClientID — the Client ID is the app's own, built in.
-    static let currentSchemaVersion = 4
+    /// v5: added showMenuBarIcon.
+    static let currentSchemaVersion = 5
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -41,6 +42,13 @@ struct AppSettings: Codable, Equatable {
     // fresh install had no Client ID at all and Connect was permanently
     // disabled. It is now a build-time constant on `SpotifyAccount`.
 
+    /// Whether the menu bar icon is inserted. **Defaults to on**: hiding it
+    /// is a deliberate choice, and an agent with no Dock icon, no menu bar
+    /// icon and no window is invisible to someone who has forgotten it is
+    /// running. Everything the menu offered is reachable without it — the
+    /// panel's gear opens Settings, and Quit lives in the About tab.
+    var showMenuBarIcon: Bool = true
+
     /// Audio visualiser. Off by default on purpose: it needs the System
     /// Audio Recording permission, and a capture permission is opt-in, never
     /// something the app assumes.
@@ -50,6 +58,7 @@ struct AppSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, moduleEnablement, hoverEnterDelay, visualizerEnabled
+        case showMenuBarIcon
     }
 
     init() {}
@@ -71,6 +80,9 @@ struct AppSettings: Codable, Equatable {
         // contract above already covers keys this version does not know.
         visualizerEnabled = (try? container.decode(Bool.self, forKey: .visualizerEnabled))
             ?? false
+        // Absent in v4 and earlier, which is exactly the shipped default.
+        showMenuBarIcon = (try? container.decode(Bool.self, forKey: .showMenuBarIcon))
+            ?? true
     }
 
     // MARK: - Migration
@@ -104,6 +116,10 @@ struct AppSettings: Codable, Equatable {
             // constant supersedes it. This is the one case where dropping a
             // stored value is correct rather than a silent wipe — the field
             // no longer has a meaning for the user to have configured.
+            fallthrough
+        case 4:
+            // v5 added showMenuBarIcon; the lenient decoder fills true for v4
+            // JSON, which is the on-by-default state. Nothing moves.
             fallthrough
         default:
             break

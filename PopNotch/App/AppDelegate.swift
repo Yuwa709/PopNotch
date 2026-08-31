@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import os
 
 /// Thin by design: it owns the app's long-lived objects and nothing else.
@@ -26,8 +27,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// visible by the coordinator only while the panel is expanded.
     private(set) lazy var audioViz = AudioVisualizerService()
 
+    // MARK: - Settings window
+
+    /// Owned here, not by a SwiftUI `Settings` scene.
+    ///
+    /// The scene version could not be opened from the notch panel:
+    /// `@Environment(\.openSettings)` is only populated inside the App's
+    /// scene graph, and the panel is an `NSHostingView` outside it. The
+    /// workaround was an observer living in `MenuBarExtra`'s label — which
+    /// dies the moment the menu bar icon becomes optional, silently taking
+    /// the panel's gear button with it. Owning the window here has no scene
+    /// dependency at all, so nothing about the icon can reach it.
+    private var settingsWindow: NSWindow?
+
+    /// Creates the window on first use and brings it forward.
+    func showSettings() {
+        // Hard rule 4 carve-out, the same narrow click-driven one as before:
+        // without activation the window opens behind the frontmost app. No
+        // hover path activates anything, ever.
+        NSApp.activate(ignoringOtherApps: true)
+
+        if settingsWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 715, height: 500),
+                styleMask: [.titled, .closable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "PopNotch Settings"
+            window.contentView = NSHostingView(rootView: SettingsView(
+                coordinator: coordinator,
+                settings: settings,
+                spotify: spotifyAccount,
+                visualizer: audioViz,
+                onQuit: { NSApp.terminate(nil) }
+            ))
+            // Closing must not deallocate it; this delegate holds the only
+            // reference and reopening has to work.
+            window.isReleasedWhenClosed = false
+            // contentMinSize, not minSize: the latter is the *frame*, so it
+            // silently gains the titlebar and stops matching the number the
+            // view asks for. Below this the split view collapses the sidebar
+            // into a toolbar menu, which is the failure the sidebar replaced.
+            window.contentMinSize = NSSize(width: 715, height: 500)
+            window.center()
+            window.setFrameAutosaveName("PopNotchSettings")
+            settingsWindow = window
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        Self.logger.notice("Settings window shown")
+    }
+
+    @objc private func openSettingsRequested() {
+        showSettings()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator.start()
+
+        // The panel's gear posts this. Observed here rather than in a view so
+        // it survives whatever the scene graph is doing.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(openSettingsRequested),
+            name: .popNotchOpenSettings,
+            object: nil
+        )
 
         // Modules register here, one line each — the Phase 2 goal made real.
         // Order is not precedence: MediaModule arbitrates by what is actually

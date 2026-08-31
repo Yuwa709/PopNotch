@@ -8,16 +8,19 @@
 import SwiftUI
 
 extension Notification.Name {
-    /// Asks the App scene graph to open Settings.
+    /// Asks AppDelegate to open Settings. Posted by the notch panel's gear.
     ///
-    /// The notch panel cannot do it itself. `@Environment(\.openSettings)` is
-    /// only populated for views inside the `App`'s scene graph, and the panel
-    /// is built by `AppDelegate` and hosted in an `NSHostingView` outside it.
-    /// The documented fallback — `NSApp.sendAction(Selector(("showSettingsWindow:")))`
-    /// — is worse than useless here: measured 2026-08-30 it returns **true**
-    /// while creating no window at all, so it reports success and does
-    /// nothing. This notification hands the request to a view that genuinely
-    /// has the environment action.
+    /// Two earlier routes are recorded here because both looked correct and
+    /// neither worked. `NSApp.sendAction(Selector(("showSettingsWindow:")))`
+    /// returns **true** while creating no window at all — measured
+    /// 2026-08-30, so it reports success and does nothing.
+    /// `@Environment(\.openSettings)` does work, but only inside the App's
+    /// scene graph, which the panel is not in; hosting the observer in
+    /// `MenuBarExtra`'s label fixed that until the icon became optional and
+    /// took the observer with it.
+    ///
+    /// AppDelegate now owns the window outright, so this reaches something
+    /// that exists for the whole session regardless of scenes.
     static let popNotchOpenSettings = Notification.Name("com.techie.PopNotch.openSettings")
 }
 
@@ -30,81 +33,18 @@ struct PopNotchApp: App {
         // Background agent (LSUIElement): no main window, ever. The notch
         // panel is created by AppDelegate; this menu bar item is the only
         // other UI surface.
-        MenuBarExtra {
-            // Backup escape hatch: if the pin button is ever unreachable —
-            // the panel is pinned somewhere awkward, or the chrome is not
-            // where the user expects — this always is.
-            PinMenuItem(pinState: appDelegate.pinState) {
-                appDelegate.coordinator.setPinned($0)
-            }
+        // Optional (see `showMenuBarIcon`), so nothing load-bearing may live
+        // in here. Settings is owned by AppDelegate and Quit has a home in
+        // the About tab; the pin has its button in the panel chrome.
+        MenuBarExtra(isInserted: Binding(
+            get: { appDelegate.settings.settings.showMenuBarIcon },
+            set: { on in appDelegate.settings.update { $0.showMenuBarIcon = on } }
+        )) {
+            Button("Settings…") { appDelegate.showSettings() }
             Divider()
-            SettingsMenuItem()
-            Divider()
-            Button("Quit PopNotch") {
-                NSApp.terminate(nil)
-            }
+            Button("Quit PopNotch") { NSApp.terminate(nil) }
         } label: {
-            // The label, not the menu content: content is built lazily when
-            // the menu opens, so an observer there would be asleep exactly
-            // when the panel needs it. The label renders for as long as the
-            // menu bar item exists, which is the whole session.
-            SettingsOpenBridge()
-        }
-
-        Settings {
-            SettingsView(
-                coordinator: appDelegate.coordinator,
-                settings: appDelegate.settings,
-                spotify: appDelegate.spotifyAccount,
-                visualizer: appDelegate.audioViz
-            )
-        }
-    }
-}
-
-/// Draws the menu bar icon, and doubles as the notch panel's way into
-/// Settings: it lives in the scene graph, so `openSettings` actually works
-/// here. The panel posts, this opens.
-private struct SettingsOpenBridge: View {
-
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        Label("PopNotch", systemImage: "rectangle.topthird.inset.filled")
-            .onReceive(NotificationCenter.default.publisher(for: .popNotchOpenSettings)) { _ in
-                openSettings()
-            }
-    }
-}
-
-/// Mirrors the panel's pin button. Reads `PinState` directly so the
-/// checkmark tracks the button, and writes through the coordinator so both
-/// routes re-evaluate collapse identically.
-private struct PinMenuItem: View {
-
-    let pinState: PinState
-    let onToggle: (Bool) -> Void
-
-    var body: some View {
-        Toggle("Pin Notch", isOn: Binding(
-            get: { pinState.isPinned },
-            set: { onToggle($0) }
-        ))
-    }
-}
-
-private struct SettingsMenuItem: View {
-
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        Button("Settings…") {
-            // Hard rule 4 carve-out, deliberate and narrow: activation here
-            // is a direct response to the user clicking this menu item —
-            // without it the settings window opens behind the frontmost
-            // app. No hover path activates anything, ever.
-            NSApp.activate(ignoringOtherApps: true)
-            openSettings()
+            Label("PopNotch", systemImage: "rectangle.topthird.inset.filled")
         }
     }
 }

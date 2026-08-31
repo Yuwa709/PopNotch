@@ -188,6 +188,35 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(migrated.visualizerEnabled, "nothing dropped")
     }
 
+    // MARK: - v4 -> v5
+
+    /// v5 added showMenuBarIcon. Real v4 JSON has no such key, and the icon
+    /// must come back ON — an agent with no Dock icon, no menu bar icon and
+    /// no window is invisible to someone who has forgotten it is running, so
+    /// an upgrade must never hide it silently.
+    func testV4JSONMigratesWithTheIconStillShowing() throws {
+        let v4 = Data("""
+        {"schemaVersion": 4,
+         "moduleEnablement": {"clipboard": true, "file-shelf": true, "system-stats": false},
+         "hoverEnterDelay": 0.1,
+         "visualizerEnabled": true}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: v4)
+        let migrated = AppSettings.migrate(decoded, from: 4)
+
+        XCTAssertEqual(migrated.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertTrue(migrated.showMenuBarIcon, "upgrading must not hide the icon")
+        XCTAssertEqual(migrated.moduleEnablement["clipboard"], true, "nothing dropped")
+        XCTAssertEqual(migrated.moduleEnablement["file-shelf"], true, "nothing dropped")
+        XCTAssertEqual(migrated.moduleEnablement["system-stats"], false, "nothing dropped")
+        XCTAssertEqual(migrated.hoverEnterDelay, 0.1, accuracy: 0.0001, "nothing dropped")
+        XCTAssertTrue(migrated.visualizerEnabled, "nothing dropped")
+    }
+
+    func testMenuBarIconDefaultsOnForAFreshInstall() {
+        XCTAssertTrue(AppSettings().showMenuBarIcon)
+    }
+
     /// The whole point of the change: the Client ID is the app's own, so it is
     /// present without anyone configuring anything. A fresh install used to
     /// have no ID at all, which left Connect permanently disabled.

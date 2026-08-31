@@ -183,6 +183,23 @@ final class PinStateTests: XCTestCase {
             "a live activity still expands")
     }
 
+    /// The "Pin Notch" menu bar item is gone — the icon is optional now, and
+    /// the pin button in the panel chrome is visible whenever the panel is
+    /// expanded. This exercises the action that button invokes, so the
+    /// remaining route is known to be wired.
+    func testTheButtonsActionPathStillTogglesThePin() {
+        let pinState = PinState()
+        let coordinator = NotchCoordinator(settings: SettingsStore(), pinState: pinState)
+        XCTAssertFalse(coordinator.isPinned)
+
+        coordinator.setPinned(true)
+        XCTAssertTrue(coordinator.isPinned, "what the panel's pin button calls")
+        XCTAssertTrue(pinState.isPinned, "and the menu-free source of truth agrees")
+
+        coordinator.setPinned(false)
+        XCTAssertFalse(coordinator.isPinned)
+    }
+
     func testStartsUnpinnedAndIsNotPersisted() {
         XCTAssertFalse(PinState().isPinned, "a fresh session is never pinned")
         // The guard against someone adding it to AppSettings later: a pinned
