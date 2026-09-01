@@ -21,7 +21,8 @@ struct AppSettings: Codable, Equatable {
     /// v3: added visualizerEnabled.
     /// v4: removed spotifyClientID — the Client ID is the app's own, built in.
     /// v5: added showMenuBarIcon.
-    static let currentSchemaVersion = 5
+    /// v6: added preferMusicOverVideo.
+    static let currentSchemaVersion = 6
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -54,11 +55,30 @@ struct AppSettings: Codable, Equatable {
     /// something the app assumes.
     var visualizerEnabled: Bool = false
 
+    /// Within the system now-playing source, prefer a track that has an album
+    /// over one that does not.
+    ///
+    /// **Defaults to on.** macOS exposes one session at a time, so this is not
+    /// a choice between two candidates — it is whether to accept the one on
+    /// offer, and `album` is the only field that tells music from video.
+    ///
+    /// Narrow on purpose: it holds only while the app, the item and the
+    /// playing state all still match, so what it actually absorbs is a
+    /// payload that drops the album of the track already on screen. A
+    /// genuinely different item is a different session and always wins —
+    /// holding across one pinned a paused song to the notch with its scrub
+    /// bar still running (hardware, 2026-09-01).
+    ///
+    /// Off means the system source reports whatever the session says, in
+    /// arrival order. Has no effect on Spotify or Apple Music, which have
+    /// their own adapters and outrank this source either way.
+    var preferMusicOverVideo: Bool = true
+
     // MARK: - Decoding
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, moduleEnablement, hoverEnterDelay, visualizerEnabled
-        case showMenuBarIcon
+        case showMenuBarIcon, preferMusicOverVideo
     }
 
     init() {}
@@ -82,6 +102,9 @@ struct AppSettings: Codable, Equatable {
             ?? false
         // Absent in v4 and earlier, which is exactly the shipped default.
         showMenuBarIcon = (try? container.decode(Bool.self, forKey: .showMenuBarIcon))
+            ?? true
+        // Absent in v5 and earlier; on is the shipped default.
+        preferMusicOverVideo = (try? container.decode(Bool.self, forKey: .preferMusicOverVideo))
             ?? true
     }
 
@@ -120,6 +143,10 @@ struct AppSettings: Codable, Equatable {
         case 4:
             // v5 added showMenuBarIcon; the lenient decoder fills true for v4
             // JSON, which is the on-by-default state. Nothing moves.
+            fallthrough
+        case 5:
+            // v6 added preferMusicOverVideo; the lenient decoder fills true
+            // for v5 JSON, which is the on-by-default state. Nothing moves.
             fallthrough
         default:
             break

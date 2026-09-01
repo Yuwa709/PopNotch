@@ -83,6 +83,43 @@ final class SystemMediaAdapter: MediaSource {
     /// forward through a merge makes the common comparison a pointer check.
     private var artworkCache: (encoded: String, data: Data)?
 
+    /// Bundle ids that already have a dedicated adapter. Reading their
+    /// sessions here would put the same track on two sources and leave
+    /// `MediaModule` arbitrating between an adapter that can seek, favourite
+    /// and read a queue and one that cannot. Referenced, never re-spelled:
+    /// a literal here would silently stop matching if either constant moved.
+    private static let dedicatedBundleIDs: Set<String> = [
+        SpotifyAdapter.bundleID, MusicAdapter.bundleID
+    ]
+
+    /// The last artwork decoded, and the track it belonged to.
+    ///
+    /// A full (non-diff) line for a track in progress can arrive with no
+    /// artwork at all, with the diff carrying it landing ~13ms later —
+    /// measured on hardware 2026-09-01. Rendered as it arrives that is album
+    /// art blinking off and back on at every track change, so the previous
+    /// image stands in while the identifier is unchanged.
+    private var retainedArtwork: (identifier: String, data: Data)?
+
+    /// Pending "nothing is playing", held briefly. One app releases the
+    /// session before the next claims it — measured at 2ms between
+    /// `nothing` and the replacement — and publishing that gap empties the
+    /// notch for a frame. A real payload cancels this before it fires.
+    private var emptyTask: Task<Void, Never>?
+    private static let emptyDebounceMS = 150
+
+    /// Prefer a session that has an album over one that does not. Mirrors
+    /// `AppSettings.preferMusicOverVideo`; AppDelegate pushes it in, the same
+    /// way the visualiser's enabled flag is applied.
+    var prefersMusicOverVideo = true
+
+    /// The last music-tier snapshot and the app it came from, kept so a video
+    /// from that same app can be ignored rather than replacing it.
+    ///
+    /// Released on an empty payload or a change of app — never held open
+    /// ended, or a track that stopped long ago would pin the notch.
+    private var retainedMusic: (bundleID: String, snapshot: NowPlaying)?
+
     private var lastSnapshot: NowPlaying?
     /// So the first successful diff merge leaves a durable `.notice` behind
     /// instead of only memory-only `.debug` chatter.
@@ -181,8 +218,12 @@ final class SystemMediaAdapter: MediaSource {
         }
         process = nil
         stdoutPipe = nil
+        emptyTask?.cancel()
+        emptyTask = nil
         state = SystemMediaPayload()
         artworkCache = nil
+        retainedArtwork = nil
+        retainedMusic = nil
         lastSnapshot = nil
         Self.logger.notice("System now-playing stream stopped")
     }
@@ -236,7 +277,10 @@ final class SystemMediaAdapter: MediaSource {
 
     // MARK: - Ingest
 
-    private func ingest(_ envelopes: [SystemMediaEnvelope]) {
+    /// Internal rather than private so the tier and merge behaviour can be
+    /// driven directly in tests, the way `LineAssembler` is: everything above
+    /// this point is a subprocess and a pipe.
+    func ingest(_ envelopes: [SystemMediaEnvelope]) {
         for envelope in envelopes { apply(envelope) }
         publish()
     }
@@ -287,16 +331,49 @@ final class SystemMediaAdapter: MediaSource {
     }
 
     private func publish() {
-        let artwork = decodedArtwork(for: state.artworkData)
-        guard let snapshot = SystemMediaParsing.snapshot(
-            from: state, artwork: artwork, capturedAt: elapsedAnchor
-        ) else {
-            guard lastSnapshot != nil else { return }
-            lastSnapshot = nil
-            Self.logger.notice("System now playing: nothing")
-            onUpdate?(nil)
+        // A session owned by a player with its own adapter is not ours to
+        // report. Emitting nil rather than skipping matters: if Spotify takes
+        // the session while this source holds the notch, saying nothing would
+        // leave the old track frozen on screen.
+        guard !isDedicatedSession else {
+            scheduleEmpty()
             return
         }
+        guard let snapshot = SystemMediaParsing.snapshot(
+            from: state, artwork: resolvedArtwork(), capturedAt: elapsedAnchor
+        ) else {
+            // Nothing at all: whatever music this was holding has genuinely
+            // stopped, so stop holding it.
+            retainedMusic = nil
+            scheduleEmpty()
+            return
+        }
+
+        if let retained = retainedMusic, Self.releasesHold(retained, against: snapshot) {
+            retainedMusic = nil
+        }
+
+        switch SystemMediaParsing.tier(of: state) {
+        case .music:
+            if let bundle = snapshot.sourceBundleID {
+                retainedMusic = (bundle, snapshot)
+            }
+        case .video:
+            // What survives `releasesHold` is narrow by design: the same app,
+            // the same item, still playing. In practice that is a track whose
+            // album momentarily goes missing from a payload — a report that
+            // would otherwise reclassify what is playing as video and swap the
+            // notch out from under it. A genuinely different item is a
+            // different session and was already released above.
+            if prefersMusicOverVideo, let retained = retainedMusic,
+               retained.bundleID == snapshot.sourceBundleID {
+                return
+            }
+        }
+
+        // A real payload arrived, so any pending gap was only a gap.
+        emptyTask?.cancel()
+        emptyTask = nil
 
         // NowPlaying's == ignores capturedAt, so this drops the repeats the
         // stream emits without a user-visible change.
@@ -304,6 +381,72 @@ final class SystemMediaAdapter: MediaSource {
         logTransition(to: snapshot, from: lastSnapshot)
         lastSnapshot = snapshot
         onUpdate?(snapshot)
+    }
+
+    /// Whether a retained music track has stopped being a reason to decline a
+    /// video.
+    ///
+    /// Any one of these means the retained snapshot is no longer the session,
+    /// and holding it would pin a track the user is not listening to.
+    nonisolated static func releasesHold(
+        _ retained: (bundleID: String, snapshot: NowPlaying), against incoming: NowPlaying
+    ) -> Bool {
+        // A different app owns the session; the retained track is not coming
+        // back to it.
+        if retained.bundleID != incoming.sourceBundleID { return true }
+
+        // macOS reports one session at a time, so a different item *is* a
+        // different session. Whatever was retained is not what is playing, and
+        // a browser switching from a track to a video is exactly this case.
+        if retained.snapshot.artworkIdentifier != incoming.artworkIdentifier { return true }
+
+        // Suppression is for an *active* track outranking a video, never a
+        // paused one. This is also what keeps the scrub bar and the lyrics
+        // honest: both project forward from `elapsed` for as long as
+        // `isPlaying` is true, so a held paused track would keep advancing and
+        // scrolling against audio that stopped — observed on hardware
+        // 2026-09-01, together with transport buttons acting on the video.
+        if !retained.snapshot.isPlaying { return true }
+
+        return false
+    }
+
+    private var isDedicatedSession: Bool {
+        guard let bundle = state.bundleIdentifier else { return false }
+        return Self.dedicatedBundleIDs.contains(bundle)
+    }
+
+    /// Holds the empty state briefly rather than publishing it on arrival.
+    /// Already-empty stays empty with no timer, and a pending wait is never
+    /// restarted — the debounce measures from the first empty line, not the
+    /// last.
+    private func scheduleEmpty() {
+        guard lastSnapshot != nil, emptyTask == nil else { return }
+        emptyTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.emptyDebounceMS))
+            guard !Task.isCancelled, let self else { return }
+            self.emptyTask = nil
+            guard self.lastSnapshot != nil else { return }
+            self.lastSnapshot = nil
+            Self.logger.notice("System now playing: nothing")
+            self.onUpdate?(nil)
+        }
+    }
+
+    /// Artwork for the current state, falling back to what this same track
+    /// had a moment ago. Requires a real identifier: with none there is no
+    /// evidence the art still belongs to what is playing.
+    private func resolvedArtwork() -> Data? {
+        if let decoded = decodedArtwork(for: state.artworkData) {
+            if let id = state.contentItemIdentifier, !id.isEmpty {
+                retainedArtwork = (id, decoded)
+            }
+            return decoded
+        }
+        guard let id = state.contentItemIdentifier, !id.isEmpty,
+              let retained = retainedArtwork, retained.identifier == id
+        else { return nil }
+        return retained.data
     }
 
     private func decodedArtwork(for encoded: String?) -> Data? {
@@ -500,6 +643,14 @@ nonisolated struct SystemMediaPayload: Decodable, Equatable, Sendable {
     }
 }
 
+/// What kind of thing a system session is carrying. Not a ranking of two
+/// candidates: macOS reports one session at a time, so this only ever
+/// describes the single session on offer.
+nonisolated enum SystemSessionTier: Sendable {
+    case music
+    case video
+}
+
 /// Pure parsing, split out for tests — same arrangement as `SpotifyParsing`.
 ///
 /// Split isolation on purpose. The project builds with
@@ -523,6 +674,18 @@ enum SystemMediaParsing {
         // not one of ours; treat it as unparseable.
         guard envelope.type != nil else { return nil }
         return envelope
+    }
+
+    /// Whether a session looks like music or like video.
+    ///
+    /// `album` is the whole test, and it is the only field that separates the
+    /// two. Verified with `media-control get` on 2026-09-01: a YouTube Music
+    /// track reports `album: "Camp"`, a YouTube video reports `album: ""`,
+    /// and every other field — `bundleIdentifier` and `processIdentifier`
+    /// included — is identical. There is no richer signal available.
+    nonisolated static func tier(of payload: SystemMediaPayload) -> SystemSessionTier {
+        let album = payload.album ?? ""
+        return album.isEmpty ? .video : .music
     }
 
     /// Builds a snapshot from merged state, or nil when there is nothing to

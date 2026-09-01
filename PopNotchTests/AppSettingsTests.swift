@@ -188,6 +188,33 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(migrated.visualizerEnabled, "nothing dropped")
     }
 
+    // MARK: - v5 -> v6
+
+    /// v6 added preferMusicOverVideo. Real v5 JSON has no such key, and it
+    /// must arrive ON: an upgrade that silently started letting YouTube
+    /// videos replace the music in the notch would read as a regression, not
+    /// as a preference nobody set.
+    func testV5JSONMigratesWithMusicPreferenceOn() throws {
+        let v5 = Data("""
+        {"schemaVersion": 5,
+         "moduleEnablement": {"clipboard": true, "file-shelf": true, "system-stats": false},
+         "hoverEnterDelay": 0.1,
+         "visualizerEnabled": true,
+         "showMenuBarIcon": false}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: v5)
+        let migrated = AppSettings.migrate(decoded, from: 5)
+
+        XCTAssertEqual(migrated.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertTrue(migrated.preferMusicOverVideo, "upgrading must not change what the notch shows")
+        XCTAssertFalse(migrated.showMenuBarIcon, "nothing dropped")
+        XCTAssertEqual(migrated.moduleEnablement["clipboard"], true, "nothing dropped")
+        XCTAssertEqual(migrated.moduleEnablement["file-shelf"], true, "nothing dropped")
+        XCTAssertEqual(migrated.moduleEnablement["system-stats"], false, "nothing dropped")
+        XCTAssertEqual(migrated.hoverEnterDelay, 0.1, accuracy: 0.0001, "nothing dropped")
+        XCTAssertTrue(migrated.visualizerEnabled, "nothing dropped")
+    }
+
     // MARK: - v4 -> v5
 
     /// v5 added showMenuBarIcon. Real v4 JSON has no such key, and the icon

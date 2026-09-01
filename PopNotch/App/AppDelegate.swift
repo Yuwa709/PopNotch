@@ -28,6 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// visible by the coordinator only while the panel is expanded.
     private(set) lazy var audioViz = AudioVisualizerService()
 
+    /// The system now-playing source, held only so the music-over-video
+    /// preference can be applied live from Settings. MediaModule owns it as
+    /// one of its sources; this is a reference, not ownership.
+    private(set) var systemMediaSource: SystemMediaAdapter?
+
     // MARK: - Updates
 
     /// Sparkle's updater, owned here because it must outlive any view.
@@ -140,7 +145,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Modules register here, one line each — the Phase 2 goal made real.
         // Order is not precedence: MediaModule arbitrates by what is actually
         // playing. See MediaModule.shouldTakeOver(_:from:).
-        let media = MediaModule(sources: [SpotifyAdapter(), MusicAdapter()], account: spotifyAccount, visualizer: audioViz)
+        let systemMedia = SystemMediaAdapter()
+        // Applied from the stored preference before the source starts, the
+        // same way the visualiser's flag is applied below.
+        systemMedia.prefersMusicOverVideo = settings.settings.preferMusicOverVideo
+        let media = MediaModule(
+            // Order is not precedence — MediaModule.shouldTakeOver decides —
+            // but the system source is last because it is the fallback: it
+            // covers players with no adapter of their own (a browser tab) and
+            // stands aside whenever Spotify or Music has anything.
+            sources: [SpotifyAdapter(), MusicAdapter(), systemMedia],
+            account: spotifyAccount, visualizer: audioViz)
+        // Held so the Settings toggle can apply live rather than at next launch.
+        self.systemMediaSource = systemMedia
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)
         }

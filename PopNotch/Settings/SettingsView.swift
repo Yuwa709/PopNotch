@@ -110,6 +110,16 @@ struct MusicSettingsTab: View {
     var body: some View {
         Form {
             Section {
+                Toggle("Prefer music over video", isOn: musicOverVideoBinding)
+            } header: {
+                Text("Other Players")
+            } footer: {
+                Text("For players without their own integration — a browser, say — the notch ignores an update that drops the album of the track it is already showing, so a song does not flicker into looking like a video. Starting something genuinely different always takes over. Spotify and Apple Music are unaffected; they always take priority. On by default.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Toggle("Show a live spectrum", isOn: visualizerBinding)
             } header: {
                 Text("Audio Visualizer")
@@ -142,6 +152,19 @@ struct MusicSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// Persists the choice and applies it to the live source in one place,
+    /// exactly as `visualizerBinding` does.
+    private var musicOverVideoBinding: Binding<Bool> {
+        Binding(
+            get: { settings.settings.preferMusicOverVideo },
+            set: { on in
+                settings.update { $0.preferMusicOverVideo = on }
+                (NSApp.delegate as? AppDelegate)?.systemMediaSource?
+                    .prefersMusicOverVideo = on
+            }
+        )
     }
 
     /// Moved here from Modules unchanged: persists the choice and applies it

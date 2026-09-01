@@ -104,6 +104,25 @@ final class MediaModule: NotchModule {
     /// existed.
     @ObservationIgnored private var activeSource: (any MediaSource)?
 
+    /// What each source last reported, keyed by `sourceID`, holding only
+    /// snapshots with content. `shouldTakeOver` needs to know whether a
+    /// *dedicated* adapter has anything, which cannot be answered from the
+    /// one snapshot currently being delivered.
+    @ObservationIgnored private var snapshots: [ModuleID: NowPlaying] = [:]
+
+    /// True when Spotify or Music has a track — playing or paused. The system
+    /// source is a fallback and may not take the notch while this holds.
+    private var dedicatedSourceHasContent: Bool {
+        sources.contains { !($0 is SystemMediaAdapter) && snapshots[$0.sourceID] != nil }
+    }
+
+    /// Where the notch goes when the owner falls silent: whoever still has
+    /// something, dedicated adapters ahead of the system source.
+    private func fallbackSource(excluding source: any MediaSource) -> (any MediaSource)? {
+        let candidates = sources.filter { $0 !== source && snapshots[$0.sourceID] != nil }
+        return candidates.first { !($0 is SystemMediaAdapter) } ?? candidates.first
+    }
+
     /// Whether the current track's favourite can be changed. False for
     /// Spotify without a connected account, because `starred` is read-only
     /// in its dictionary — the UI must not offer a toggle there.
@@ -147,8 +166,15 @@ final class MediaModule: NotchModule {
     /// Picks which player owns the notch when more than one is running.
     ///
     /// Rules, in order:
-    /// 1. A source reporting *playing* audio always wins. Two players cannot
-    ///    both be audible for long, and the audible one is what the user means.
+    /// 0. **Dedicated adapters outrank the system source, playing or paused.**
+    ///    `SystemMediaAdapter` reports whatever owns the system session, which
+    ///    includes a browser tab; without this a YouTube Music tab would take
+    ///    the notch off a paused Spotify. It may only take over when neither
+    ///    Spotify nor Music has anything at all. This deliberately overrides
+    ///    rule 1 for that source: audible does not beat dedicated.
+    /// 1. Between the two dedicated adapters, a source reporting *playing*
+    ///    audio wins. Two players cannot both be audible for long, and the
+    ///    audible one is what the user means.
     /// 2. Otherwise the incumbent keeps the notch, so a paused Spotify in the
     ///    background cannot stomp a paused Music the user is actually looking
     ///    at. This is the "never switch silently" rule from Phase 4 task 2.
@@ -158,12 +184,21 @@ final class MediaModule: NotchModule {
     /// Before this existed the module was last-writer-wins, which was correct
     /// only because exactly one adapter was registered.
     private func shouldTakeOver(_ snapshot: NowPlaying?, from source: any MediaSource) -> Bool {
+        // Rule 0, both directions: the system source waits for the dedicated
+        // ones to be empty, and yields the moment either has something.
+        if source is SystemMediaAdapter { return !dedicatedSourceHasContent }
+        if snapshot?.hasContent == true, activeSource is SystemMediaAdapter { return true }
+
         if snapshot?.isPlaying == true { return true }
         guard let active = activeSource else { return snapshot?.hasContent == true }
         return active === source
     }
 
     private func handleUpdate(_ snapshot: NowPlaying?, from source: any MediaSource) {
+        // Recorded before arbitrating, so `dedicatedSourceHasContent` answers
+        // for the state including this update rather than the one before it.
+        snapshots[source.sourceID] = snapshot?.hasContent == true ? snapshot : nil
+
         guard shouldTakeOver(snapshot, from: source) else { return }
 
         if activeSource !== source, snapshot?.hasContent == true {
@@ -173,9 +208,19 @@ final class MediaModule: NotchModule {
         if snapshot?.hasContent == true {
             activeSource = source
         } else if activeSource === source {
-            // The owner went quiet: hand off to another source still playing
-            // something rather than blanking the notch outright.
-            activeSource = sources.first { $0 !== source && $0.isPlayerRunning }
+            // The owner went quiet. Promote whoever still has something —
+            // republished, not just recorded: the other source has no reason
+            // to emit again, so without this the notch blanks even though a
+            // usable snapshot is sitting right here.
+            if let next = fallbackSource(excluding: source) {
+                activeSource = next
+                Self.logger.notice(
+                    "Active media source -> \(next.sourceID, privacy: .public) (owner went quiet)")
+                adoptSourceExtras()
+                handleUpdate(snapshots[next.sourceID])
+                return
+            }
+            activeSource = nil
         }
 
         adoptSourceExtras()
