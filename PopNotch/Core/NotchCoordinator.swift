@@ -268,6 +268,13 @@ final class NotchCoordinator {
     /// Measured size of the current expanded content, set by renderContent.
     private var expandedContentSize: CGSize = .zero
 
+    /// Measured widths of the two chrome groups, set alongside
+    /// `expandedContentSize`; the chrome-only frame is sized from them.
+    private var chromeGroups = NotchPanel.ChromeGroupWidths()
+
+    /// Whether the expanded panel is chrome alone, as last rendered.
+    private var isChromeOnly = false
+
     /// The state most recently applied to the panel, so renderContent can
     /// tell an entrance (play the reveal) from an in-place update (do not).
     private var lastAppliedState: NotchPanel.State = .idle
@@ -351,7 +358,10 @@ final class NotchCoordinator {
             // full-lyrics takeover resets.
             destination = .standby
         }
-        panel.setState(state, on: screen, expandedContentSize: expandedContentSize)
+        panel.setState(state, on: screen,
+                       expandedContentSize: expandedContentSize,
+                       chromeOnly: isChromeOnly,
+                       chromeGroups: chromeGroups)
         lastAppliedState = state
         // Capture must not run for a panel nobody can see (hard rule 9's
         // spirit): the service tears the tap down whenever this goes false.
@@ -372,6 +382,34 @@ final class NotchCoordinator {
                 .padding(.bottom, 20)
         )
         return probe.fittingSize
+    }
+
+    /// Measures a chrome group the way `measureExpandedContent` measures
+    /// content: one throwaway layout pass. Measured, never assumed — the
+    /// leading group changes with which doors are enabled.
+    private static func measureAccessoryWidth(_ view: AnyView?) -> CGFloat {
+        guard let view else { return 0 }
+        return NSHostingView(rootView: view).fittingSize.width
+    }
+
+    /// Chrome alone: nothing navigated to, and no module on the notch has
+    /// anything to show in its expanded view. The modules asked are the
+    /// ones the arbiter is presenting — the doors' modules are never in
+    /// standby (`wantsCompactDisplay` is false) and are reached only by
+    /// navigating, which the first clause already covers.
+    private func chromeOnly() -> Bool {
+        guard destination == .standby else { return false }
+        return !presentedModules().contains { $0.hasExpandedContent }
+    }
+
+    /// The enabled modules whose expanded views `content(for:)` stacks.
+    private func presentedModules() -> [any NotchModule] {
+        let ids: [ModuleID]
+        switch arbiter.presentation {
+        case .standby(let standby): ids = standby
+        case .liveActivity(let id): ids = [id]
+        }
+        return ids.compactMap { arbiter.module(for: $0) }.filter { $0.isEnabled }
     }
 
     private var isShowingLiveActivity: Bool {
@@ -395,23 +433,68 @@ final class NotchCoordinator {
 
     private func renderContent() {
         guard let panel, let screen = currentScreen else { return }
-        let neck = NotchPanel.notchRect(on: screen).height
+        let housing = NotchPanel.notchRect(on: screen)
+        let neck = housing.height
         switch desiredState() {
         case .expanded:
-            let view = content(for: arbiter.presentation)
+            let chromeOnly = chromeOnly()
+            // Chrome-only still hands the overlay a content view, empty or
+            // not: nil is what tells it to draw the compact silhouette and
+            // drop the band, and the band is the whole point of the state.
+            // The overlay suppresses the content region itself, padding and
+            // all, on the flag — an "empty" view still carries neck+40 of
+            // fixed padding, which is taller than the whole chrome-only bar.
+            let view = content(for: arbiter.presentation) ?? AnyView(EmptyView())
             expandedContentSize = measureExpandedContent(view, neck: neck)
+            let leading = leadingAccessory()
+            let trailing = trailingAccessory()
+            chromeGroups = NotchPanel.ChromeGroupWidths(
+                leading: Self.measureAccessoryWidth(leading),
+                trailing: Self.measureAccessoryWidth(trailing))
+            if chromeOnly != isChromeOnly {
+                Self.logger.notice("Expanded panel \(chromeOnly ? "chrome-only, nothing to show" : "showing content", privacy: .public); chrome groups \(self.chromeGroups.leading, privacy: .public) + \(self.chromeGroups.trailing, privacy: .public)")
+            }
+            isChromeOnly = chromeOnly
+            // Where the housing lands inside the frame the panel is about
+            // to occupy, so the band can flank it by position. Computed
+            // from the same pure function `setState` uses with the same
+            // inputs, so the two cannot disagree.
+            let rect = NotchPanel.expandedRect(housing: housing,
+                                               contentSize: expandedContentSize,
+                                               chromeOnly: chromeOnly,
+                                               chromeGroups: chromeGroups)
+            let housingLocal = (housing.minX - rect.minX)...(housing.maxX - rect.minX)
+            // The floor in `expandedRect` is derived so the housing clamp
+            // never fires. If it does, the floor and the band layout have
+            // drifted apart and a button is sitting somewhere other than
+            // its corner — visible, but easy to mistake for a design choice
+            // (which is how the last two band bugs survived).
+            let band = NotchOverlayView.bandLayout(panelWidth: rect.width,
+                                                   housingLocal: housingLocal,
+                                                   groups: chromeGroups)
+            if band.isClamped {
+                Self.logger.error("Chrome band clamped off the panel corner: panel \(rect.width, privacy: .public)pt, groups \(self.chromeGroups.leading, privacy: .public)+\(self.chromeGroups.trailing, privacy: .public), insets \(band.leadingInset, privacy: .public)/\(band.trailingInset, privacy: .public), floor \(NotchPanel.bandMinWidth(housingWidth: housing.width, groups: self.chromeGroups), privacy: .public)")
+            }
             // The emerge entrance plays only when the panel is opening —
             // content swaps mid-display (lyrics arriving, hover re-renders)
             // must not re-bloom. Hard rule 8: skipped under Reduce Motion.
             let entering = lastAppliedState != .expanded
                 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            panel.setContent(view, neckHeight: neck, reveal: entering,
-                             topLeadingAccessory: leadingAccessory(),
-                             topTrailingAccessory: trailingAccessory())
+            panel.setContent(view, neckHeight: neck,
+                             housingLocalRange: housingLocal,
+                             panelWidth: rect.width,
+                             chromeGroups: chromeGroups,
+                             chromeOnly: chromeOnly,
+                             reveal: entering,
+                             topLeadingAccessory: leading,
+                             topTrailingAccessory: trailing)
         case .compact:
+            isChromeOnly = false
             let wings = standbyWings()
-            panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing, neckHeight: neck)
+            panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing,
+                             neckHeight: neck)
         case .idle:
+            isChromeOnly = false
             panel.setContent(nil, neckHeight: neck)
         }
     }

@@ -70,6 +70,10 @@ final class NotchPanel: NSPanel {
         leadingWing: AnyView? = nil,
         trailingWing: AnyView? = nil,
         neckHeight: CGFloat,
+        housingLocalRange: ClosedRange<CGFloat> = 0...0,
+        panelWidth: CGFloat = 0,
+        chromeGroups: ChromeGroupWidths = ChromeGroupWidths(),
+        chromeOnly: Bool = false,
         reveal: Bool = false,
         topLeadingAccessory: AnyView? = nil,
         topTrailingAccessory: AnyView? = nil
@@ -81,7 +85,11 @@ final class NotchPanel: NSPanel {
             neckHeight: neckHeight,
             revealContent: reveal,
             topLeadingAccessory: topLeadingAccessory,
-            topTrailingAccessory: topTrailingAccessory
+            topTrailingAccessory: topTrailingAccessory,
+            housingLocalRange: housingLocalRange,
+            panelWidth: panelWidth,
+            chromeGroups: chromeGroups,
+            chromeOnly: chromeOnly
         )
     }
 
@@ -176,27 +184,27 @@ final class NotchPanel: NSPanel {
     /// wider than the left (user-confirmed twice) — the housing does not
     /// sit perfectly on the panel's center — so the left wing carries a few
     /// extra points to balance the appearance.
-    static let leadingWingWidth: CGFloat = 48
-    static let trailingWingWidth: CGFloat = 44
+    nonisolated static let leadingWingWidth: CGFloat = 48
+    nonisolated static let trailingWingWidth: CGFloat = 44
 
     /// The physical housing reads about 2pt left of the geometric screen
     /// center on this machine — confirmed independently in the compact state
     /// (equal wings looked right-heavy; +4 left balanced them) and the
     /// expanded state (right of the housing obviously wider). Anything that
     /// centers on the screen applies this to center on the *housing*.
-    static let opticalCenterOffset: CGFloat = -2
+    nonisolated static let opticalCenterOffset: CGFloat = -2
 
     /// Invisible hover halo: every state's frame extends this far beyond the
     /// visible silhouette (sides and below; the top is the screen edge), so
     /// the notch snaps open when the cursor gets near, not only dead-on.
     /// The overlay insets its drawing to match. Transparent pixels do not
     /// capture clicks, so the halo steals nothing from the menu bar.
-    static let hoverMargin: CGFloat = 10
+    nonisolated static let hoverMargin: CGFloat = 10
 
     /// Extra black beyond the wings at each end of the compact panel —
     /// user-requested breathing room. The wing slots are inset by the same
     /// amount in the overlay, so widening this moves no content.
-    static let compactEdgeExtra: CGFloat = 2
+    nonisolated static let compactEdgeExtra: CGFloat = 2
 
     static func compactRect(on screen: NSScreen) -> NSRect {
         let base = notchRect(on: screen)
@@ -216,22 +224,86 @@ final class NotchPanel: NSPanel {
     /// Clamps keep degenerate measurements from producing a sliver or a
     /// window-sized slab, and coordinates stay integral: AppKit snaps
     /// fractional origins, which desyncs the computed and actual frames.
-    static func expandedRect(on screen: NSScreen, contentSize: CGSize) -> NSRect {
-        let base = notchRect(on: screen)
-        let minWidth = base.width + (leadingWingWidth + 24) * 2
+    /// Measured widths of the two chrome groups in the neck band, from the
+    /// coordinator's throwaway layout pass. Never assumed: the leading group
+    /// grows and shrinks with which doors are enabled.
+    struct ChromeGroupWidths: Equatable {
+        var leading: CGFloat = 0
+        var trailing: CGFloat = 0
+        var total: CGFloat { leading + trailing }
+    }
+
+    static func expandedRect(on screen: NSScreen, contentSize: CGSize,
+                             chromeOnly: Bool = false,
+                             chromeGroups: ChromeGroupWidths = ChromeGroupWidths()) -> NSRect {
+        expandedRect(housing: notchRect(on: screen), contentSize: contentSize,
+                     chromeOnly: chromeOnly, chromeGroups: chromeGroups)
+    }
+
+    /// The narrowest panel on which both chrome groups sit at
+    /// `accessorySideInset` from their own corners without the housing
+    /// clamp firing — i.e. the floor that keeps
+    /// `NotchOverlayView.bandLayout` in its unclamped case.
+    ///
+    /// Derived rather than guessed. The panel centres on the housing's
+    /// optical centre, so with the panel `W` wide the housing's leading
+    /// edge sits at `W/2 - housingWidth/2 - opticalCenterOffset` in panel
+    /// coordinates and its trailing edge `housingWidth` further along.
+    /// Requiring `inset + group + gutter` to fit on each side and solving
+    /// for `W` gives the two bounds below. The optical offset pushes the
+    /// housing off centre, so it *costs* clearance on one side and grants
+    /// it on the other — which is exactly the 4pt that a floor of
+    /// `housing + 2·max(group) + 2·inset` came up short by, silently
+    /// clamping the leading group on the stats-only panel.
+    nonisolated static func bandMinWidth(housingWidth: CGFloat,
+                                         groups: ChromeGroupWidths) -> CGFloat {
+        let perSide = NotchOverlayView.accessorySideInset + NotchOverlayView.housingGutter
+        let leadingNeed = groups.leading + opticalCenterOffset
+        let trailingNeed = groups.trailing - opticalCenterOffset
+        return housingWidth + 2 * (perSide + max(leadingNeed, trailingNeed))
+    }
+
+    /// The pure core, split from the screen-taking wrapper so the geometry
+    /// is a test rather than a hardware session (`notchRect` symmetrizes
+    /// the housing around the screen's midX, so `housing.midX` stands in
+    /// for it here).
+    ///
+    /// The width floor covers the chrome band in EVERY expanded state, not
+    /// only chrome-only: the band anchors both groups to the housing, so
+    /// the panel must always span housing + the wider group mirrored on
+    /// both sides + the corner insets. The first version floored only the
+    /// chrome-only bar, and the stats-only standby panel — same width, real
+    /// content — put the shelf button back under the camera
+    /// (photo-confirmed 2026-09-01).
+    ///
+    /// Chrome-only differs in height alone: exactly the neck, no downward
+    /// growth. Width and placement are shared with every other expanded
+    /// state, so the bar and a floor-width card sit at the same frame and
+    /// the transition between them is a pure height change.
+    nonisolated static func expandedRect(housing: NSRect, contentSize: CGSize,
+                                         chromeOnly: Bool = false,
+                                         chromeGroups: ChromeGroupWidths = ChromeGroupWidths()) -> NSRect {
+        let legacyMinWidth = housing.width + (leadingWingWidth + 24) * 2
+        let minWidth = max(legacyMinWidth, bandMinWidth(housingWidth: housing.width,
+                                                        groups: chromeGroups))
         // Ceiling raised from 540 for the shelf redesign (2026-08-30): the
         // reference layout puts the resting shelf at ~687pt measured from
         // full-screen captures at this display's 0.735 px-to-point scale.
-        let width = (min(max(contentSize.width, minWidth), 690)).rounded(.up)
-        let minHeight = base.height + 56
-        // Ceiling raised from 300: the lyrics takeover needs more, and
-        // clamping below the content's real height compressed it upward
-        // (badge slid under the bezel) and spilled it past the rounded
-        // silhouette, where the square window edge cut it into a hard box.
-        let height = (min(max(contentSize.height, minHeight), 460)).rounded(.up)
+        let width = (min(max(chromeOnly ? 0 : contentSize.width, minWidth), 690)).rounded(.up)
+        let height: CGFloat
+        if chromeOnly {
+            height = housing.height
+        } else {
+            let minHeight = housing.height + 56
+            // Ceiling raised from 300: the lyrics takeover needs more, and
+            // clamping below the content's real height compressed it upward
+            // (badge slid under the bezel) and spilled it past the rounded
+            // silhouette, where the square window edge cut it into a hard box.
+            height = (min(max(contentSize.height, minHeight), 460)).rounded(.up)
+        }
         return NSRect(
-            x: (screen.frame.midX + opticalCenterOffset - width / 2).rounded(),
-            y: base.maxY - height,
+            x: (housing.midX + opticalCenterOffset - width / 2).rounded(),
+            y: housing.maxY - height,
             width: width,
             height: height
         )
@@ -240,19 +312,39 @@ final class NotchPanel: NSPanel {
     /// Animates the panel frame to a state's rect. Resizes the panel itself,
     /// not the inner view — the hosting view and tracking area follow via
     /// autoresizing and updateTrackingAreas.
-    func setState(_ state: State, on screen: NSScreen, expandedContentSize: CGSize = .zero) {
+    ///
+    /// Once the frame has settled, the hover view re-checks the cursor
+    /// against it: a resize can strand a stationary cursor outside the panel
+    /// with no mouseExited to say so. See
+    /// `NotchHoverView.reevaluateHoverAfterFrameChange`.
+    func setState(_ state: State, on screen: NSScreen,
+                  expandedContentSize: CGSize = .zero,
+                  chromeOnly: Bool = false,
+                  chromeGroups: ChromeGroupWidths = ChromeGroupWidths()) {
         let visible: NSRect
         switch state {
         case .idle: visible = Self.notchRect(on: screen)
         case .compact: visible = Self.compactRect(on: screen)
-        case .expanded: visible = Self.expandedRect(on: screen, contentSize: expandedContentSize)
+        case .expanded: visible = Self.expandedRect(on: screen, contentSize: expandedContentSize,
+                                                    chromeOnly: chromeOnly, chromeGroups: chromeGroups)
         }
+        let label = state.rawValue + (chromeOnly && state == .expanded ? " (chrome only)" : "")
         // Inflate by the hover halo: sides and downward, top stays flush.
         var target = visible
         target.origin.x -= Self.hoverMargin
         target.size.width += Self.hoverMargin * 2
         target.origin.y -= Self.hoverMargin
         target.size.height += Self.hoverMargin
+
+        // The overlay must fit the frame it is being given. SwiftUI offers
+        // no complaint when it does not: NSHostingView centres an oversized
+        // root, which visibly shoves everything up under the screen edge
+        // while logging nothing — that silence is what let the chrome-only
+        // bar ship clipped. `.error`, so it persists in release builds.
+        if let fitting = hostingView?.fittingSize.height,
+           fitting > target.height + 0.5 {
+            Self.logger.error("Overlay overflows the panel: fitting height \(fitting, privacy: .public) > frame height \(target.height, privacy: .public) in state \(label, privacy: .public)")
+        }
 
         let wasExpanded = currentState == .expanded
         currentState = state
@@ -267,7 +359,8 @@ final class NotchPanel: NSPanel {
         // Hard rule 8: with Reduce Motion on, snap instead of animating.
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             setFrame(target, display: true)
-            Self.logger.notice("State \(state.rawValue, privacy: .public) (reduced motion) at \(NSStringFromRect(target), privacy: .public)")
+            Self.logger.notice("State \(label, privacy: .public) (reduced motion) at \(NSStringFromRect(target), privacy: .public)")
+            reevaluateHoverAfterFrameChange()
             return
         }
 
@@ -297,22 +390,33 @@ final class NotchPanel: NSPanel {
                 // the bounce reads as a hitch.
                 MainActor.assumeIsolated {
                     guard let self, self.currentState == .expanded else { return }
-                    NSAnimationContext.runAnimationGroup { context in
+                    NSAnimationContext.runAnimationGroup({ context in
                         context.duration = 0.13
                         context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                         self.animator().setFrame(target, display: true)
-                    }
+                    }, completionHandler: { [weak self] in
+                        MainActor.assumeIsolated { self?.reevaluateHoverAfterFrameChange() }
+                    })
                 }
             })
         } else {
-            NSAnimationContext.runAnimationGroup { context in
+            NSAnimationContext.runAnimationGroup({ context in
                 // Closing and wing transitions ease out with no bounce so
                 // they read as tidy.
                 context.duration = 0.22
                 context.timingFunction = CAMediaTimingFunction(controlPoints: 0.30, 0.90, 0.55, 1.0)
                 animator().setFrame(target, display: true)
-            }
+            }, completionHandler: { [weak self] in
+                MainActor.assumeIsolated { self?.reevaluateHoverAfterFrameChange() }
+            })
         }
-        Self.logger.notice("State \(state.rawValue, privacy: .public) at \(NSStringFromRect(target), privacy: .public)")
+        Self.logger.notice("State \(label, privacy: .public) at \(NSStringFromRect(target), privacy: .public)")
+    }
+
+    /// The frame has settled somewhere new; let the hover view judge the
+    /// cursor against it. Routed through the panel so the animation
+    /// completions above do not reach into `contentView` themselves.
+    private func reevaluateHoverAfterFrameChange() {
+        (contentView as? NotchHoverView)?.reevaluateHoverAfterFrameChange()
     }
 }

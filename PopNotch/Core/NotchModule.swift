@@ -64,6 +64,16 @@ protocol NotchModule: AnyObject {
     /// Whether this module contributes to the default collapsed state.
     var wantsCompactDisplay: Bool { get }
 
+    /// Whether the expanded view would show anything right now.
+    ///
+    /// When every module on the notch answers false and no screen has been
+    /// navigated to, the open panel is chrome alone — the neck band and its
+    /// buttons, no card below. Default true: most expanded views always
+    /// have something to draw. A module whose view can be empty (media
+    /// between tracks) must answer from the same test the view branches
+    /// on, so the two can never disagree.
+    var hasExpandedContent: Bool { get }
+
     /// Non-nil when the module currently wants to take over the notch.
     /// The arbiter polls this; the module does not push.
     var pendingLiveActivity: LiveActivityRequest? { get }
@@ -95,6 +105,7 @@ protocol NotchModule: AnyObject {
 
 extension NotchModule {
     var wantsCompactDisplay: Bool { true }
+    var hasExpandedContent: Bool { true }
     var pendingLiveActivity: LiveActivityRequest? { nil }
     func notchDidCollapse() {}
     func didBecomeVisible() {}

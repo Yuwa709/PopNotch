@@ -183,6 +183,34 @@ final class NotchHoverView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.exitGrace, execute: work)
     }
 
+    /// The panel settled at a new frame: re-check the cursor against it once.
+    ///
+    /// A resize can strand a stationary cursor outside the panel without
+    /// AppKit saying so. The tracking area is rebuilt for the new bounds and
+    /// a cursor that was never inside the new area gets no mouseExited; or
+    /// an exit fires mid-animation, is verified against the still-moving
+    /// frame, reads as spurious, and the panel finishes moving with the
+    /// cursor outside and nothing left to fire. Either way the notch hangs
+    /// open until the cursor wanders back in and out again — the chrome-only
+    /// bar makes this routine, since media stopping under the cursor drops
+    /// the panel from the full card to the neck.
+    ///
+    /// Inside is judged by the same test the verified exit uses, top-edge
+    /// carve-out included, so a cursor pinned to the screen top stays inside.
+    /// Nothing is synthesized when it is: a verified exit already pending
+    /// will find the cursor inside and drop itself. Outside goes through
+    /// `beginExit`, which re-verifies after its own grace, so this never
+    /// forces a collapse by itself.
+    func reevaluateHoverAfterFrameChange() {
+        guard isHovering, !isDraggingOut, let window else { return }
+        let screenTop = window.screen?.frame.maxY ?? window.frame.maxY
+        guard !Self.isInsideForExit(mouse: NSEvent.mouseLocation,
+                                    panel: window.frame,
+                                    screenTop: screenTop) else { return }
+        Self.logger.notice("Frame changed under the cursor; cursor is outside the new frame, collapsing by the normal exit rules")
+        beginExit()
+    }
+
     deinit {
         pendingEnter?.cancel()
         pendingExit?.cancel()

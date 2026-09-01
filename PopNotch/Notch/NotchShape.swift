@@ -83,13 +83,41 @@ struct NotchOverlayView: View {
     /// trailing holds caffeinate.
     var topLeadingAccessory: AnyView?
     var topTrailingAccessory: AnyView?
+    /// The camera housing's x-range in this overlay's own coordinates
+    /// (origin at the visible rect's leading edge). The chrome band is
+    /// positioned from it: the leading group ends a gutter before
+    /// `lowerBound`, the trailing group starts a gutter after `upperBound`,
+    /// so no button can be laid out behind the housing, where it would be
+    /// invisible and unclickable.
+    ///
+    /// A *clamp*, not an anchor: the groups hang off the panel's corners
+    /// and are pushed inward only if they would otherwise reach the
+    /// housing. Anchoring to the housing instead put the trailing group
+    /// well inside the panel's trailing edge (user-observed 2026-09-01) —
+    /// correct clearance, wrong place. The width floor is sized so the
+    /// clamp never fires; `NotchCoordinator` logs at `.error` if it does.
+    ///
+    /// On a screen with no notch the coordinator derives this from the
+    /// fallback strip, the app's stand-in for a housing.
+    var housingLocalRange: ClosedRange<CGFloat> = 0...0
+    /// The panel's visible width, and the measured chrome group widths:
+    /// what `bandLayout` needs to place both groups from the corners in.
+    var panelWidth: CGFloat = 0
+    var chromeGroups = NotchPanel.ChromeGroupWidths()
+    /// The panel is open but has nothing to show below the neck: the band
+    /// is the only row. The content region must not render — its fixed
+    /// neck+40 of padding survives even an empty view, inflates the root
+    /// past the neck-height frame, and NSHostingView silently centres the
+    /// overflow, shoving the band up under the screen edge (the clipped-
+    /// buttons bug, measured 2026-09-01: root 82pt in a 42pt window).
+    var chromeOnly: Bool = false
 
     /// The panel's visible side border, used by the content column.
     ///
     /// Must stay in lockstep with the coordinator's measuring probe, which
     /// hardcodes the same 32 — they disagree and the measured panel no longer
     /// fits the rendered content.
-    static let contentSideInset: CGFloat = 32
+    nonisolated static let contentSideInset: CGFloat = 32
 
     /// The chrome band sits nearer the corners than the content column does
     /// (user-requested). Its own constant rather than a smaller
@@ -99,16 +127,18 @@ struct NotchOverlayView: View {
     /// Floored by the corner: `expandedTopRadius` is 14, so anything below
     /// roughly 20 puts a 24pt control into the curve and clips it — the
     /// failure the old comment here recorded when this was tried at 2pt.
-    static let accessorySideInset: CGFloat = 24
+    nonisolated static let accessorySideInset: CGFloat = 24
 
     var body: some View {
-        // Expanded (has content) draws the softer card; compact and idle
-        // keep the tighter bar silhouette.
+        // Expanded (has content) draws the softer card; compact, idle and
+        // the chrome-only bar keep the tighter silhouette — chrome-only is
+        // neck-height, where the 34pt expanded bottom radius reads as a
+        // blob rather than a bar.
         let expanded = content != nil
         ZStack(alignment: .top) {
             NotchShape(
-                topRadius: expanded ? NotchShape.expandedTopRadius : NotchShape.compactTopRadius,
-                bottomRadius: expanded ? NotchShape.expandedBottomRadius : NotchShape.compactBottomRadius
+                topRadius: expanded && !chromeOnly ? NotchShape.expandedTopRadius : NotchShape.compactTopRadius,
+                bottomRadius: expanded && !chromeOnly ? NotchShape.expandedBottomRadius : NotchShape.compactBottomRadius
             )
             .fill(Color.black)
             if leadingWing != nil || trailingWing != nil {
@@ -127,19 +157,22 @@ struct NotchOverlayView: View {
                 .frame(height: neckHeight)
             }
             if expanded, topLeadingAccessory != nil || topTrailingAccessory != nil {
+                // Both groups hang off their own corner at the same inset —
+                // the housing only pushes them in if they would otherwise
+                // reach it, which the width floor prevents. See `bandLayout`.
+                let band = Self.bandLayout(panelWidth: panelWidth,
+                                           housingLocal: housingLocalRange,
+                                           groups: chromeGroups)
                 HStack(spacing: 0) {
                     if let topLeadingAccessory { topLeadingAccessory }
                     Spacer(minLength: 0)
                     if let topTrailingAccessory { topTrailingAccessory }
                 }
-                // Nearer the corners than the content column below, so the
-                // chrome reads as belonging to the panel edge rather than to
-                // the content. See accessorySideInset for why it is its own
-                // constant and how far it can safely go.
-                .padding(.horizontal, NotchOverlayView.accessorySideInset)
+                .padding(.leading, band.leadingInset)
+                .padding(.trailing, band.trailingInset)
                 .frame(height: neckHeight)
             }
-            if let content {
+            if let content, !chromeOnly {
                 // Horizontal padding is the panel's visible side border;
                 // keep in lockstep with the coordinator's measuring probe.
                 content
@@ -155,6 +188,59 @@ struct NotchOverlayView: View {
         .padding(.horizontal, NotchPanel.hoverMargin)
         .padding(.bottom, NotchPanel.hoverMargin)
         .ignoresSafeArea()
+    }
+
+    /// Breathing room the clamp keeps between a chrome group and the
+    /// housing. 6pt: the buttons carry ~6pt of internal padding around
+    /// their glyphs already, so the visible glyph-to-housing gap would read
+    /// as ~12pt. Only reachable if the clamp fires, which the width floor
+    /// is sized to prevent.
+    nonisolated static let housingGutter: CGFloat = 6
+
+    /// The band's keep-out span: the housing plus a gutter each side, in
+    /// overlay-local x. Pure and `nonisolated` so the clearance tests
+    /// exercise the exact geometry the view lays out, not a re-derivation.
+    nonisolated static func bandGapRange(housingLocal: ClosedRange<CGFloat>) -> ClosedRange<CGFloat> {
+        (housingLocal.lowerBound - housingGutter)...(housingLocal.upperBound + housingGutter)
+    }
+
+    /// Where each chrome group sits, as insets from its own panel edge.
+    ///
+    /// Both default to `accessorySideInset`, mirrored — the band reads as
+    /// belonging to the panel's corners, and the two sides are visibly
+    /// equidistant. The housing is a clamp on top of that: a group is
+    /// pushed inward only if it would otherwise come within
+    /// `housingGutter` of the camera, where it would be invisible.
+    ///
+    /// `NotchPanel.expandedRect`'s width floor is derived so that neither
+    /// clamp can fire in any expanded state; the coordinator logs at
+    /// `.error` if one does, because that means the floor and this
+    /// function have drifted apart.
+    struct BandLayout: Equatable {
+        var leadingInset: CGFloat
+        var trailingInset: CGFloat
+        var leadingClamped = false
+        var trailingClamped = false
+        var isClamped: Bool { leadingClamped || trailingClamped }
+    }
+
+    nonisolated static func bandLayout(panelWidth: CGFloat,
+                                       housingLocal: ClosedRange<CGFloat>,
+                                       groups: NotchPanel.ChromeGroupWidths) -> BandLayout {
+        let gap = bandGapRange(housingLocal: housingLocal)
+        var layout = BandLayout(leadingInset: accessorySideInset,
+                                trailingInset: accessorySideInset)
+
+        if accessorySideInset + groups.leading > gap.lowerBound {
+            layout.leadingInset = max(0, gap.lowerBound - groups.leading)
+            layout.leadingClamped = true
+        }
+        let trailingGroupMinX = panelWidth - accessorySideInset - groups.trailing
+        if trailingGroupMinX < gap.upperBound {
+            layout.trailingInset = max(0, panelWidth - gap.upperBound - groups.trailing)
+            layout.trailingClamped = true
+        }
+        return layout
     }
 
     @ViewBuilder

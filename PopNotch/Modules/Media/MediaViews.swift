@@ -120,9 +120,12 @@ struct MediaExpandedView: View {
     @Namespace private var lyricsNamespace
 
     var body: some View {
-        // Group, not a bare if/else, so `.animation(value:)` below applies to
+        // Group, not a bare switch, so `.animation(value:)` below applies to
         // whichever branch is showing rather than needing to be attached
-        // separately to each one.
+        // separately to each one. The branch comes from the module's
+        // `expandedScreen`, the same value the coordinator reads to decide
+        // whether the panel opens chrome-only — the condition is not repeated
+        // here.
         //
         // The `.transition`/`.animation` pair below cannot currently fire:
         // the swap arrives as a wholesale `rootView` reassignment from the
@@ -131,10 +134,11 @@ struct MediaExpandedView: View {
         // in place because it is correct in itself and is what the seam fix
         // would activate; it is not what makes the screens change today.
         Group {
-            if module.showFullLyrics {
+            switch module.expandedScreen {
+            case .fullLyrics:
                 MediaFullLyricsView(module: module, namespace: lyricsNamespace)
                     .transition(.opacity)
-            } else if let playing = module.nowPlaying, playing.hasContent {
+            case .player(let playing):
             VStack(spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
                     // Tapping the artwork opens the track in Spotify.
@@ -233,11 +237,16 @@ struct MediaExpandedView: View {
             .frame(width: 368)
             .foregroundStyle(.white)
             .transition(.opacity)
-            } else if module.permissionDenied {
+            case .permissionDenied:
                 // The tested denied path: one line, no re-prompt loop.
                 Text("Allow PopNotch in System Settings → Privacy → Automation")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.7))
+            case nil:
+                // Nothing to show. The coordinator reads the same nil and
+                // opens the panel chrome-only, so this is never seen below
+                // the neck band.
+                EmptyView()
             }
         }
         // Scoped to this one value: a track changing, artwork loading, or

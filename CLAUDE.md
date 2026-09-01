@@ -55,8 +55,13 @@ open ~/Library/Developer/Xcode/DerivedData/PopNotch-*/Build/Products/Debug/PopNo
 Read the app's logs (your main feedback channel beyond compiler errors):
 
 ```
-log show --predicate 'subsystem == "com.techie.PopNotch"' --last 2m --info
+/usr/bin/log show --predicate 'subsystem == "com.techie.PopNotch"' --last 2m --info
 ```
+
+**Always the full path `/usr/bin/log`.** zsh has a `log` builtin that shadows
+it; a bare `log show` hits the builtin and fails or returns nothing, silently.
+An entire session's verification ran on that empty output before anyone
+noticed (2026-09-01).
 
 **Always build after making changes.** Do not report a task complete without a clean build.
 

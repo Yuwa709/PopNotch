@@ -97,6 +97,7 @@ final class MediaModule: NotchModule {
     @ObservationIgnored private let webAPI: SpotifyWebAPI?
     @ObservationIgnored private var lastTrackKey: String?
     @ObservationIgnored private var hadPresence = false
+    @ObservationIgnored private var hadExpandedContent = false
 
     /// Which adapter currently owns the notch. Written only by
     /// `handleUpdate(_:from:)`; every command routes here rather than to
@@ -146,6 +147,28 @@ final class MediaModule: NotchModule {
     var permissionDenied: Bool {
         sources.contains { $0.isPlayerRunning && $0.permissionDenied }
     }
+
+    /// What the expanded view shows, in branch order: the full-lyrics
+    /// takeover, the player, the permission banner, or nothing.
+    ///
+    /// The one place that condition lives. `MediaExpandedView` switches on
+    /// it and `hasExpandedContent` tests it for nil; neither restates the
+    /// tests, so the panel's chrome-only decision cannot drift from what
+    /// the view would actually draw.
+    enum ExpandedScreen {
+        case fullLyrics
+        case player(NowPlaying)
+        case permissionDenied
+    }
+
+    var expandedScreen: ExpandedScreen? {
+        if showFullLyrics { return .fullLyrics }
+        if let playing = nowPlaying, playing.hasContent { return .player(playing) }
+        if permissionDenied { return .permissionDenied }
+        return nil
+    }
+
+    var hasExpandedContent: Bool { expandedScreen != nil }
 
     init(sources: [MediaSource],
          account: SpotifyAccount? = nil,
@@ -285,9 +308,19 @@ final class MediaModule: NotchModule {
         }
 
         let hasPresence = snapshot?.hasContent == true
-        if hasPresence != hadPresence {
-            hadPresence = hasPresence
+        let presenceFlipped = hasPresence != hadPresence
+        hadPresence = hasPresence
+        // Expanded content can flip without presence flipping — the
+        // permission banner appearing under an empty snapshot — and the open
+        // panel has to move between chrome-only and the card on that too.
+        // Presence already re-renders the panel, so only the remaining case
+        // reflows: a play or stop never measures twice.
+        let expandedFlipped = hasExpandedContent != hadExpandedContent
+        hadExpandedContent = hasExpandedContent
+        if presenceFlipped {
             onPresenceChange?()
+        } else if expandedFlipped {
+            onContentReflow?()
         }
 
         guard let snapshot, snapshot.hasContent else { return }
