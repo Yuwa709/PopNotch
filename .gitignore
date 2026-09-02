@@ -28,3 +28,4 @@ xcuserdata/
 *.app.zip
 *.dmg
 dist/
+default.profraw
