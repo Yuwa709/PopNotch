@@ -172,6 +172,61 @@ do
 done
 codesign -f -s - -o runtime --timestamp=none "$FRAMEWORK"
 echo "    signed Sparkle.framework"
+
+# --- vendored mediaremote-adapter --------------------------------------------
+# Browser now-playing (Chrome, Safari) comes from ungive/mediaremote-adapter,
+# vendored under vendor/ and embedded by Xcode copy phases. Provenance and
+# terms are in THIRD-PARTY-LICENSES.md.
+#
+# These are leaves, exactly like the Sparkle components above, and are signed
+# before the app for the same reason: sealing the app captures a hash that a
+# later nested signature would invalidate.
+#
+# No --preserve-metadata=entitlements and no --entitlements file. Both objects
+# ship unentitled and must stay that way. The adapter framework is never loaded
+# into PopNotch -- mediaremote-adapter.pl dlopens it into /usr/bin/perl, which
+# is Apple-signed as com.apple.perl, and THAT identity is the only reason
+# MediaRemote answers at all. Entitling these would be notarization risk for no
+# gain (CLAUDE.md, distribution).
+ADAPTER_FRAMEWORK="$APP/Contents/Frameworks/MediaRemoteAdapter.framework"
+ADAPTER_BINARY="$ADAPTER_FRAMEWORK/Versions/A/MediaRemoteAdapter"
+ADAPTER_TEST_CLIENT="$APP/Contents/MacOS/MediaRemoteAdapterTestClient"
+ADAPTER_SCRIPT="$APP/Contents/Resources/mediaremote-adapter.pl"
+
+for ITEM in "$ADAPTER_BINARY" "$ADAPTER_TEST_CLIENT" "$ADAPTER_SCRIPT"; do
+    [[ -e "$ITEM" ]] || {
+        echo "!! Missing $ITEM" >&2
+        echo "   The Xcode copy phases for vendor/ did not run. Refusing to package." >&2
+        exit 1
+    }
+done
+
+# install_name_tool BEFORE codesign, never after: it rewrites the Mach-O and
+# invalidates any signature already applied. It warns about exactly that, which
+# is why its output is captured and only surfaced on failure.
+#
+# WHY IT IS NEEDED: upstream's CMake build hardcodes LC_ID_DYLIB to
+# /opt/homebrew/opt/media-control/Frameworks/..., a path that does not exist on
+# a user's machine. Nothing links against this framework -- the perl script
+# dlopens it by absolute path, so the install name is never resolved and the
+# stale value would not actually break loading. It is rewritten anyway because
+# a Homebrew path baked into a shipped, notarized bundle reads as a broken
+# dependency to tooling and to anyone auditing the binary.
+if ! INT_OUTPUT=$(install_name_tool -id \
+    "@rpath/MediaRemoteAdapter.framework/Versions/A/MediaRemoteAdapter" \
+    "$ADAPTER_BINARY" 2>&1)
+then
+    echo "!! install_name_tool failed on the adapter framework:" >&2
+    echo "$INT_OUTPUT" >&2
+    exit 1
+fi
+echo "    rewrote MediaRemoteAdapter install name"
+
+codesign -f -s - -o runtime --timestamp=none "$ADAPTER_FRAMEWORK"
+echo "    signed MediaRemoteAdapter.framework"
+codesign -f -s - -o runtime --timestamp=none "$ADAPTER_TEST_CLIENT"
+echo "    signed MediaRemoteAdapterTestClient"
+
 codesign -f -s - -o runtime --timestamp=none \
     --entitlements "$RELEASE_ENTITLEMENTS" "$APP"
 rm -f "$RELEASE_ENTITLEMENTS"
@@ -192,13 +247,19 @@ fi
 # broken 1.0.0 build. This does check that.
 team_of() { codesign -dv "$1" 2>&1 | awk -F= '/^TeamIdentifier/ { print $2 }'; }
 APP_TEAM=$(team_of "$APP")
-FRAMEWORK_TEAM=$(team_of "$FRAMEWORK")
-if [[ "$APP_TEAM" != "$FRAMEWORK_TEAM" ]]; then
-    echo "!! Team ID mismatch: app='$APP_TEAM' framework='$FRAMEWORK_TEAM'." >&2
-    echo "   dyld would refuse to load the framework. Refusing to package." >&2
-    exit 1
-fi
-echo "    team IDs agree (app and framework: ${APP_TEAM:-not set})"
+for NESTED in \
+    "Sparkle.framework|$FRAMEWORK" \
+    "MediaRemoteAdapter.framework|$ADAPTER_FRAMEWORK"
+do
+    NESTED_NAME="${NESTED%%|*}"
+    NESTED_TEAM=$(team_of "${NESTED##*|}")
+    if [[ "$APP_TEAM" != "$NESTED_TEAM" ]]; then
+        echo "!! Team ID mismatch: app='$APP_TEAM' $NESTED_NAME='$NESTED_TEAM'." >&2
+        echo "   Nested code must share the app's Team ID. Refusing to package." >&2
+        exit 1
+    fi
+done
+echo "    team IDs agree (app, Sparkle, MediaRemoteAdapter: ${APP_TEAM:-not set})"
 
 if ! codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "apple-events"; then
     echo "!! The apple-events entitlement is missing after signing." >&2
