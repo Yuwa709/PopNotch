@@ -47,14 +47,43 @@ enum SpotifyTokenStore {
          kSecAttrAccount as String: account]
     }
 
-    static func load() -> String? {
+    /// What a Keychain lookup actually established.
+    ///
+    /// The three cases are not interchangeable, and collapsing them is how a
+    /// connected user gets logged out: `absent` is a fact worth caching,
+    /// `unavailable` is a failure that must be retried rather than recorded.
+    enum Lookup: Equatable {
+        /// A token is there.
+        case found(String)
+        /// The Keychain answered, and there is no such item.
+        case absent
+        /// The Keychain could not answer — access denied, no interaction
+        /// allowed, a locked keychain. Says nothing about whether a token
+        /// exists.
+        case unavailable(OSStatus)
+    }
+
+    static func lookup() -> Lookup {
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data,
+                  let token = String(data: data, encoding: .utf8) else { return .absent }
+            return .found(token)
+        case errSecItemNotFound:
+            return .absent
+        default:
+            return .unavailable(status)
+        }
+    }
+
+    static func load() -> String? {
+        if case .found(let token) = lookup() { return token }
+        return nil
     }
 
     static func save(_ token: String) {
@@ -69,6 +98,37 @@ enum SpotifyTokenStore {
 
     static func delete() {
         SecItemDelete(baseQuery as CFDictionary)
+    }
+}
+
+/// Every Keychain operation `SpotifyAccount` performs, behind one injectable
+/// seam.
+///
+/// **All three, not just the read.** An earlier version injected only
+/// `lookup` and left `save`/`delete` calling the real Keychain — and a unit
+/// test exercising `disconnect()` deleted the developer's own live refresh
+/// token (2026-09-01). A partial seam is worse than none: it reads as safe
+/// while still reaching the real credential store.
+struct SpotifyTokenStorage {
+    var lookup: () -> SpotifyTokenStore.Lookup
+    var save: (String) -> Void
+    var delete: () -> Void
+
+    static let keychain = SpotifyTokenStorage(
+        lookup: SpotifyTokenStore.lookup,
+        save: SpotifyTokenStore.save,
+        delete: SpotifyTokenStore.delete)
+
+    /// A store that never touches the Keychain. The default for tests, so
+    /// reaching the real one has to be a deliberate act.
+    static func inMemory(_ token: String? = nil) -> SpotifyTokenStorage {
+        final class Box: @unchecked Sendable { var token: String? }
+        let box = Box()
+        box.token = token
+        return SpotifyTokenStorage(
+            lookup: { box.token.map { .found($0) } ?? .absent },
+            save: { box.token = $0 },
+            delete: { box.token = nil })
     }
 }
 
@@ -116,8 +176,57 @@ final class SpotifyAccount {
     @ObservationIgnored private var pendingVerifier: String?
     @ObservationIgnored private var pendingState: String?
 
-    init() {
-        self.isConnected = SpotifyTokenStore.load() != nil
+    /// Where the connected flag is cached, so launch does not have to ask
+    /// the Keychain. Nil in tests that do not care.
+    @ObservationIgnored private let settings: SettingsStore?
+
+    init(settings: SettingsStore? = nil,
+         storage: SpotifyTokenStorage = .keychain) {
+        self.settings = settings
+        self.storage = storage
+
+        // The point of the flag: a user with no account touches the Keychain
+        // zero times at launch, and a connected one touches it only when a
+        // Web API call actually needs a token.
+        if let cached = settings?.settings.spotifyAccountConnected {
+            self.isConnected = cached
+            return
+        }
+
+        // Nil flag: an upgrade from v6 or earlier, or a fresh install whose
+        // settings were never written. Both must ask the Keychain exactly
+        // once — the Keychain outlives the app bundle, so a reinstalled or
+        // upgraded app can hold a live token with brand-new settings, and
+        // assuming "not connected" here would log that user out.
+        switch storage.lookup() {
+        case .found:
+            self.isConnected = true
+            settings?.update { $0.spotifyAccountConnected = true }
+            Self.logger.notice("No cached Spotify flag; Keychain says connected")
+        case .absent:
+            self.isConnected = false
+            settings?.update { $0.spotifyAccountConnected = false }
+            Self.logger.notice("No cached Spotify flag; Keychain says no account")
+        case .unavailable(let status):
+            // The Keychain refused to answer — a denied prompt, a locked
+            // keychain, no interaction allowed. This says NOTHING about
+            // whether a token exists, so it is deliberately not cached:
+            // recording `false` here would permanently log out a connected
+            // user, and because a cached flag is never re-checked, they
+            // would never get the prompt again to recover. Leaving the flag
+            // nil costs one retry next launch and cannot lose an account.
+            self.isConnected = false
+            Self.logger.error("Keychain unavailable (OSStatus \(status, privacy: .public)); leaving the connected flag unrecorded so the next launch retries")
+        }
+    }
+
+    @ObservationIgnored private let storage: SpotifyTokenStorage
+
+    /// Records the connected state in both places at once, so the cached
+    /// flag can never drift from what the Keychain holds.
+    private func setConnected(_ connected: Bool) {
+        isConnected = connected
+        settings?.update { $0.spotifyAccountConnected = connected }
     }
 
     // MARK: - Authorization
@@ -154,10 +263,10 @@ final class SpotifyAccount {
     }
 
     func disconnect() {
-        SpotifyTokenStore.delete()
+        storage.delete()
         accessToken = nil
         accessExpiry = .distantPast
-        isConnected = false
+        setConnected(false)
         Self.logger.notice("Disconnected")
     }
 
@@ -230,9 +339,9 @@ final class SpotifyAccount {
             accessToken = token.access_token
             accessExpiry = Date().addingTimeInterval(token.expires_in - 60)
             if let refresh = token.refresh_token {
-                SpotifyTokenStore.save(refresh)
+                storage.save(refresh)
             }
-            isConnected = true
+            setConnected(true)
             lastError = nil
             Self.logger.notice("Connected to Spotify")
         } catch {
@@ -258,7 +367,25 @@ final class SpotifyAccount {
     /// flips isConnected off so the UI can show it).
     func validAccessToken() async -> String? {
         if let accessToken, Date() < accessExpiry { return accessToken }
-        guard let refresh = SpotifyTokenStore.load() else { return nil }
+        // The second gate. Callers already check `accountConnected`, but this
+        // makes the guarantee structural: a disconnected account cannot reach
+        // the Keychain from here however it is called.
+        guard isConnected else { return nil }
+        let lookup = storage.lookup()
+        guard case .found(let refresh) = lookup else {
+            // The cached flag and the Keychain disagree. Only a definitive
+            // `absent` corrects it — the token really is gone, so claiming
+            // "connected" would leave a UI offering an account that cannot
+            // work. `unavailable` is left alone: it says nothing, and
+            // recording it would log out a user whose Keychain was merely
+            // locked. (Observed 2026-09-01: a deleted item left the flag
+            // reading connected with no token behind it.)
+            if case .absent = lookup {
+                Self.logger.notice("Cached flag said connected but the token is gone; correcting")
+                setConnected(false)
+            }
+            return nil
+        }
         let clientID = Self.clientID
 
         do {
@@ -268,7 +395,7 @@ final class SpotifyAccount {
             accessToken = token.access_token
             accessExpiry = Date().addingTimeInterval(token.expires_in - 60)
             if let newRefresh = token.refresh_token {
-                SpotifyTokenStore.save(newRefresh)
+                storage.save(newRefresh)
             }
             return token.access_token
         } catch {

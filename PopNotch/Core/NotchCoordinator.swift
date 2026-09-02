@@ -44,6 +44,7 @@ final class NotchCoordinator {
         case standby
         case clipboard
         case fileShelf
+        case systemStats
 
         /// The module a screen belongs to, so the disabled-module fallbacks
         /// stay one rule rather than one branch per destination.
@@ -52,13 +53,63 @@ final class NotchCoordinator {
             case .standby: nil
             case .clipboard: "clipboard"
             case .fileShelf: "file-shelf"
+            case .systemStats: "system-stats"
             }
+        }
+    }
+
+    /// The three services the stats page reads, bundled so the coordinator
+    /// takes one dependency rather than three. Nil in tests and wherever the
+    /// page is not wired up, which hides its door rather than opening onto
+    /// an empty screen.
+    struct StatsPageServices {
+        let stats: SystemStatsService
+        let battery: BatteryService
+        let history: SystemStatsHistory
+
+        init(stats: SystemStatsService, battery: BatteryService, history: SystemStatsHistory) {
+            self.stats = stats
+            self.battery = battery
+            self.history = history
         }
     }
 
     /// Owned here because the coordinator already owns what the panel shows.
     /// Not persisted: a screen is a place you went, not a preference.
-    private(set) var destination: Destination = .standby
+    ///
+    /// The `didSet` is where the stats page's sampling is started and
+    /// stopped. Destination is assigned from six places — `navigate`, the
+    /// collapse reset in `applyState`, `setEnabled`, and three in the file
+    /// drag path — and hanging the lifecycle on the property means none of
+    /// them can forget, the same argument `applyState` makes for being the
+    /// sole caller of `panel.setState`.
+    private(set) var destination: Destination = .standby {
+        didSet {
+            guard oldValue != destination else { return }
+            if oldValue == .systemStats { setStatsPageObserving(false) }
+            if destination == .systemStats { setStatsPageObserving(true) }
+        }
+    }
+
+    /// Starts and stops the page's two subscriber-counted services together.
+    ///
+    /// `SystemStatsHistory.start()` also starts the battery and stats
+    /// services it holds, so the battery ends on two subscribers while the
+    /// page is open and zero when it closes. Counted, symmetric, and
+    /// deliberate: starting the battery explicitly here means the page's own
+    /// need for it does not depend on the history's internals.
+    private func setStatsPageObserving(_ observing: Bool) {
+        guard let statsPage else { return }
+        if observing {
+            statsPage.battery.start()
+            statsPage.history.start()
+            Self.logger.notice("Stats page opened; sampling started")
+        } else {
+            statsPage.battery.stop()
+            statsPage.history.stop()
+            Self.logger.notice("Stats page closed; sampling stopped")
+        }
+    }
 
     /// Session-only pin. Nil in tests that do not care about it.
     private let pinState: PinState?
@@ -87,15 +138,20 @@ final class NotchCoordinator {
     /// the media header, where the wave indicator used to be. Nil in tests.
     private let audioVisualizer: AudioVisualizerService?
 
+    /// The stats page's services, or nil where the page is not wired up.
+    private let statsPage: StatsPageServices?
+
     init(settings: SettingsStore,
          arbiter: NotchArbiter? = nil,
          caffeinate: CaffeinateService? = nil,
          audioVisualizer: AudioVisualizerService? = nil,
-         pinState: PinState? = nil) {
+         pinState: PinState? = nil,
+         statsPage: StatsPageServices? = nil) {
         self.settings = settings
         self.pinState = pinState
         self.caffeinate = caffeinate
         self.audioVisualizer = audioVisualizer
+        self.statsPage = statsPage
         self.arbiter = arbiter ?? NotchArbiter()
         self.arbiter.onPresentationChange = { [weak self] presentation in
             self?.presentationChanged(presentation)
@@ -529,7 +585,15 @@ final class NotchCoordinator {
     private func availableDoors() -> [(Destination, String, String)] {
         [(.clipboard, "doc.on.clipboard", "Clipboard history"),
          (.fileShelf, "tray.full", "File shelf")]
-            .filter { arbiter.module(for: $0.0.moduleID ?? "")?.isEnabled == true }
+            .filter { isDoorAvailable($0.0) }
+    }
+
+    /// Whether a destination's module is registered and switched on. The one
+    /// rule both accessory groups filter by, so the trailing stats door
+    /// disappears from Settings exactly the way the leading doors do.
+    private func isDoorAvailable(_ destination: Destination) -> Bool {
+        guard let moduleID = destination.moduleID else { return false }
+        return arbiter.module(for: moduleID)?.isEnabled == true
     }
 
     /// Opens the settings window from the panel's gear.
@@ -585,8 +649,21 @@ final class NotchCoordinator {
         let keepAwake = caffeinate
         let pinned = isPinned
         let canPin = pinState != nil
-        guard keepAwake != nil || canPin else { return nil }
+        // The stats door, like the leading doors, exists only while the
+        // feature behind it is on — and only where the page has services to
+        // read. Unlike them it lives here, and it stays put while its own
+        // screen is open rather than being replaced by the back chevron.
+        let showStats = statsPage != nil && isDoorAvailable(.systemStats)
+        let onStatsPage = destination == .systemStats
+        guard showStats || keepAwake != nil || canPin else { return nil }
         return AnyView(HStack(spacing: 2) {
+            if showStats {
+                PanelChromeButton(symbol: "chart.bar.xaxis",
+                                  help: onStatsPage ? "System stats (showing)" : "System stats",
+                                  isActive: !onStatsPage) { [weak self] in
+                    self?.navigate(to: .systemStats)
+                }
+            }
             if let keepAwake {
                 CaffeinateControl(service: keepAwake)
             }
@@ -616,6 +693,17 @@ final class NotchCoordinator {
             // panel around it) the moment the cursor left a pinned lyrics
             // view: user-observed bug.
             if desiredState() == .expanded {
+                // The stats page is composed here rather than by the module,
+                // because it reads three services and `SystemStatsModule`
+                // owns only one of them. The enabled check is the same one
+                // every other door gets, so disabling system stats still
+                // falls through to standby rather than showing a dead screen.
+                if destination == .systemStats, let statsPage,
+                   isDoorAvailable(.systemStats) {
+                    return AnyView(SystemStatsPageView(stats: statsPage.stats,
+                                                       battery: statsPage.battery,
+                                                       history: statsPage.history))
+                }
                 // A navigated screen replaces the arbitrated stack wholesale.
                 // Falls through if its module got disabled underneath it, so
                 // the panel can never show a screen whose feature is off.
@@ -627,7 +715,15 @@ final class NotchCoordinator {
                 // overflow the panel and truncate (observed with media plus
                 // five stats). The notch grows downward, so height is the
                 // dimension there is room in.
-                let views = modules.map { $0.makeExpandedView() }
+                //
+                // Modules with nothing to show are dropped rather than
+                // stacked as empty views: `VStack` spacing applies between
+                // an empty element and its neighbour just as it would for a
+                // real one, so an unfiltered stack leaves a phantom 8pt gap
+                // under the last visible card. Same flag `chromeOnly()`
+                // reads, so the two can never disagree about what is on
+                // screen.
+                let views = modules.filter(\.hasExpandedContent).map { $0.makeExpandedView() }
                 return AnyView(
                     VStack(spacing: 8) {
                         ForEach(Array(views.enumerated()), id: \.offset) { $0.element }

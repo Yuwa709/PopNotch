@@ -15,9 +15,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Session-only; see PinState. Held here so the menu bar and the panel
     /// chrome read the same flag.
     let pinState = PinState()
-    private(set) lazy var coordinator = NotchCoordinator(settings: settings, caffeinate: caffeinate, audioVisualizer: audioViz, pinState: pinState)
-    private(set) lazy var spotifyAccount = SpotifyAccount()
+    private(set) lazy var coordinator = NotchCoordinator(
+        settings: settings, caffeinate: caffeinate, audioVisualizer: audioViz,
+        pinState: pinState, statsPage: statsPage)
+    /// Given the settings store so launch reads the cached connected flag
+    /// instead of the Keychain.
+    private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
     private let statsService = SystemStatsService()
+    /// The stats page's own data layer. Both hold no timer until the page
+    /// opens — the coordinator starts and stops them on the destination —
+    /// so creating them here costs nothing at launch.
+    private let batteryService = BatteryService()
+    private lazy var statsHistory = SystemStatsHistory(stats: statsService,
+                                                       battery: batteryService)
+    private lazy var statsPage = NotchCoordinator.StatsPageServices(
+        stats: statsService, battery: batteryService, history: statsHistory)
     private let clipboardService = ClipboardService()
     private let fileShelfService = FileShelfService()
     /// App-level. The control renders as panel chrome via the coordinator,

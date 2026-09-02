@@ -55,6 +55,25 @@ struct BatterySnapshot: Codable, Equatable {
         healthPercent.map { min(100, $0) }
     }
 
+    /// macOS's own one-word verdict on the pack, from the IOPS power-source
+    /// description's `BatteryHealth` — read "Good" on the captured hardware.
+    ///
+    /// Stored and displayed verbatim. The capacity percentage above is a
+    /// ratio this app computes; this is the system's judgement, and the two
+    /// are deliberately kept apart so no screen implies PopNotch decided
+    /// whether a battery is healthy.
+    var iopsBatteryHealth: String?
+
+    /// The IOPS `BatteryHealthCondition`, e.g. "Service Battery". Empty on a
+    /// pack with nothing to report, which is stored as nil rather than as an
+    /// empty string so a view can test one thing.
+    var iopsBatteryCondition: String?
+
+    /// What the system says about the pack, if it says anything.
+    var conditionDescription: String? {
+        iopsBatteryCondition ?? iopsBatteryHealth
+    }
+
     // MARK: Power
 
     /// Battery temperature in °C, from `Temperature` (centi-°C).

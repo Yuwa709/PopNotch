@@ -155,4 +155,133 @@ final class NotchNavigationTests: XCTestCase {
         let coordinator = makeCoordinatorWithShelf(enabled: true)
         XCTAssertEqual(coordinator.destination, .standby)
     }
+
+    // MARK: - The stats door
+
+    /// The stats page's services, wired the way AppDelegate wires them.
+    private func makeStatsCoordinator(statsEnabled: Bool = true)
+        -> (NotchCoordinator, BatteryService, SystemStatsHistory) {
+        let stats = SystemStatsService()
+        let battery = BatteryService()
+        // storeURL nil: no test may touch the user's real history file.
+        let history = SystemStatsHistory(stats: stats, battery: battery, storeURL: nil)
+        let coordinator = NotchCoordinator(
+            settings: SettingsStore(defaults: defaults),
+            arbiter: NotchArbiter(),
+            statsPage: .init(stats: stats, battery: battery, history: history))
+        coordinator.register(SystemStatsModule(service: stats),
+                             enabledByDefault: statsEnabled)
+        return (coordinator, battery, history)
+    }
+
+    func testNavigateReachesTheStatsPage() {
+        let (coordinator, _, _) = makeStatsCoordinator()
+        coordinator.navigate(to: .systemStats)
+        XCTAssertEqual(coordinator.destination, .systemStats)
+    }
+
+    func testStatsDestinationMapsToTheSystemStatsModule() {
+        XCTAssertEqual(NotchCoordinator.Destination.systemStats.moduleID, "system-stats")
+    }
+
+    func testDisablingSystemStatsUnderTheStatsPageSendsYouHome() {
+        let (coordinator, _, _) = makeStatsCoordinator()
+        coordinator.navigate(to: .systemStats)
+        coordinator.setEnabled(false, for: "system-stats")
+        XCTAssertEqual(coordinator.destination, .standby)
+    }
+
+    // MARK: - The stats door's sampling lifecycle
+
+    /// Hard rule 9, as an assertion rather than a comment: nothing polls
+    /// until the page is open, and nothing is left polling once it closes.
+    func testNoTimersUntilTheStatsPageOpens() {
+        let (_, battery, history) = makeStatsCoordinator()
+        XCTAssertFalse(battery.isSampling, "battery must not poll before the page opens")
+        XCTAssertFalse(history.isSampling, "history must not poll before the page opens")
+    }
+
+    func testOpeningTheStatsPageStartsSamplingAndClosingStopsIt() {
+        let (coordinator, battery, history) = makeStatsCoordinator()
+
+        coordinator.navigate(to: .systemStats)
+        XCTAssertTrue(battery.isSampling)
+        XCTAssertTrue(history.isSampling)
+
+        coordinator.navigate(to: .standby)
+        XCTAssertFalse(battery.isSampling, "battery still polling after the door closed")
+        XCTAssertFalse(history.isSampling, "history still polling after the door closed")
+    }
+
+    /// Leaving straight for another door, not via standby, must still stop
+    /// the sampling — the lifecycle hangs off the destination itself.
+    func testLeavingTheStatsPageForAnotherDoorStopsSampling() {
+        let (coordinator, battery, history) = makeStatsCoordinator()
+        coordinator.register(ClipboardModule(service: ClipboardService()))
+
+        coordinator.navigate(to: .systemStats)
+        coordinator.navigate(to: .clipboard)
+        XCTAssertFalse(battery.isSampling)
+        XCTAssertFalse(history.isSampling)
+    }
+
+    /// Disabling the module while the page is open closes it, and closing it
+    /// must take the timers down too.
+    func testDisablingTheModuleStopsSampling() {
+        let (coordinator, battery, history) = makeStatsCoordinator()
+        coordinator.navigate(to: .systemStats)
+        coordinator.setEnabled(false, for: "system-stats")
+        XCTAssertFalse(battery.isSampling)
+        XCTAssertFalse(history.isSampling)
+    }
+
+    /// Navigating to the page twice must not leave an unbalanced subscriber
+    /// count keeping a timer alive after one close.
+    func testRepeatedNavigationKeepsSubscribersBalanced() {
+        let (coordinator, battery, history) = makeStatsCoordinator()
+        coordinator.navigate(to: .systemStats)
+        coordinator.navigate(to: .systemStats)   // no-op, guarded
+        coordinator.navigate(to: .standby)
+        XCTAssertFalse(battery.isSampling)
+        XCTAssertFalse(history.isSampling)
+    }
+
+    // MARK: - The stats row's removal from the expanded stack
+
+    /// System stats contributes no expanded row any more: its numbers live on
+    /// the stats page. The compact view and the service lifecycle are
+    /// deliberately untouched, so this asserts the narrow thing that changed.
+    func testSystemStatsContributesNoExpandedRow() {
+        let module = SystemStatsModule(service: SystemStatsService())
+        XCTAssertFalse(module.hasExpandedContent,
+                       "the CPU/MEM/GPU/BATT/DISK row no longer joins the stack")
+    }
+
+    /// The view itself is kept, not deleted — it is simply not stacked.
+    func testTheStatsExpandedViewStillExists() {
+        let module = SystemStatsModule(service: SystemStatsService())
+        XCTAssertNotNil(module.makeExpandedView(),
+                        "SystemStatsExpandedView is retained for reuse")
+    }
+
+    /// Removing the row must not disturb the collapsed notch: the compact
+    /// view is what the collapsed panel shows, and it still renders.
+    func testSystemStatsStillContributesItsCompactView() {
+        let module = SystemStatsModule(service: SystemStatsService())
+        XCTAssertNotNil(module.makeCompactView())
+        XCTAssertTrue(module.wantsCompactDisplay,
+                      "still an always-on standby module; only the expanded row went")
+    }
+
+    /// And it must still drive the shared service on visibility, which is how
+    /// the compact chips get their numbers.
+    func testSystemStatsStillStartsAndStopsItsService() {
+        let service = SystemStatsService()
+        let module = SystemStatsModule(service: service)
+        module.didBecomeVisible()
+        module.didResignVisible()
+        // No crash and no leaked subscriber: a second resign must not
+        // underflow the count into keeping a timer alive.
+        module.didResignVisible()
+    }
 }

@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import AppKit
 @testable import PopNotch
 
@@ -30,10 +31,16 @@ final class ExpandedBandClearanceTests: XCTestCase {
     /// (see ChromeBandFitTests); .zero is anything at or below the width
     /// floor, which is where both regressions lived. Standby carries
     /// settings + both doors leading; navigated screens carry Back alone.
+    /// Trailing is 76 since the stats door joined it: three 24pt controls at
+    /// `HStack(spacing: 2)`. Leading is unchanged — the stats door lives in
+    /// the trailing group, so it does not widen the leading one.
     private var states: [(name: String, content: CGSize, chromeOnly: Bool,
                           groups: NotchPanel.ChromeGroupWidths)] {
-        let standby = NotchPanel.ChromeGroupWidths(leading: 76, trailing: 50)
-        let navigated = NotchPanel.ChromeGroupWidths(leading: 24, trailing: 50)
+        let standby = NotchPanel.ChromeGroupWidths(leading: 76, trailing: 76)
+        let navigated = NotchPanel.ChromeGroupWidths(leading: 24, trailing: 76)
+        // A machine with both leading doors switched off still shows the
+        // gear, and the stats door can be off too — the narrow extremes.
+        let minimal = NotchPanel.ChromeGroupWidths(leading: 24, trailing: 50)
         return [
             ("chrome-only bar", .zero, true, standby),
             ("standby at the width floor (stats only)", .zero, false, standby),
@@ -41,7 +48,32 @@ final class ExpandedBandClearanceTests: XCTestCase {
             ("navigated: clipboard", CGSize(width: 484, height: 260), false, navigated),
             ("navigated: shelf drop chooser", CGSize(width: 540, height: 220), false, navigated),
             ("navigated: resting shelf", CGSize(width: 690, height: 230), false, navigated),
+            ("navigated: system stats page", CGSize(width: 624, height: 433), false, navigated),
+            ("stats page at the floor", .zero, false, navigated),
+            ("everything off but the gear", .zero, false, minimal),
         ]
+    }
+
+    /// The trailing group's real width, built from the three controls the
+    /// coordinator puts in it. Pins the number the states above assume.
+    func testTrailingGroupMeasuresSeventySixWithTheStatsDoor() {
+        let width = NSHostingView(rootView: HStack(spacing: 2) {
+            PanelChromeButton(symbol: "chart.bar.xaxis", help: "System stats") {}
+            CaffeinateControl(service: CaffeinateService())
+            PinControl(isPinned: false) {}
+        }).fittingSize.width
+        XCTAssertEqual(width, 76, accuracy: 0.5,
+                       "3 x 24pt + 2 x 2pt spacing; the task's 74 omits one spacing")
+    }
+
+    /// The inactive style must not change the button's footprint — a group
+    /// that resized on arrival would shift the two controls beside it.
+    func testInactiveStatsButtonIsTheSameWidthAsActive() {
+        let active = NSHostingView(rootView:
+            PanelChromeButton(symbol: "chart.bar.xaxis", help: "x", isActive: true) {}).fittingSize
+        let inactive = NSHostingView(rootView:
+            PanelChromeButton(symbol: "chart.bar.xaxis", help: "x", isActive: false) {}).fittingSize
+        XCTAssertEqual(active, inactive)
     }
 
     func testNoChromeGroupIntersectsTheHousingInAnyExpandedState() {

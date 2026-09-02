@@ -31,6 +31,12 @@ final class BatteryService {
     @ObservationIgnored private var subscribers = 0
     @ObservationIgnored private var displayAsleep = false
 
+    /// Whether a timer is currently scheduled.
+    ///
+    /// Exposed so "nothing polls while nobody is looking" is something a test
+    /// can assert rather than something a comment claims.
+    var isSampling: Bool { timer != nil }
+
     init() {
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(self, selector: #selector(displayDidSleep),
@@ -167,6 +173,14 @@ final class BatteryService {
         }
         snapshot.voltageMillivolts = integer(registry, "Voltage")
         snapshot.amperageMilliamps = integer(registry, "Amperage")
+
+        // The system's own verdict, from the power-source dictionary that
+        // was already read for the time estimate — no additional query. Both
+        // are shown verbatim; neither is parsed into a verdict of our own.
+        snapshot.iopsBatteryHealth = (powerSource["BatteryHealth"] as? String)
+            .flatMap { $0.isEmpty ? nil : $0 }
+        snapshot.iopsBatteryCondition = (powerSource["BatteryHealthCondition"] as? String)
+            .flatMap { $0.isEmpty ? nil : $0 }
 
         snapshot.isCharging = flag(registry, "IsCharging")
         snapshot.isFullyCharged = flag(registry, "FullyCharged")

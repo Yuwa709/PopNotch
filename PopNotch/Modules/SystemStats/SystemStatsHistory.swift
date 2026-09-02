@@ -61,6 +61,13 @@ final class SystemStatsHistory {
     @ObservationIgnored private var subscribers = 0
     @ObservationIgnored private var displayAsleep = false
 
+
+    /// Whether a timer is currently scheduled.
+    ///
+    /// Exposed so "nothing polls while nobody is looking" is something a test
+    /// can assert rather than something a comment claims.
+    var isSampling: Bool { timer != nil }
+
     @ObservationIgnored private let stats: SystemStatsService?
     @ObservationIgnored private let battery: BatteryService?
     @ObservationIgnored private let storeURL: URL?

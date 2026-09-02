@@ -25,6 +25,19 @@ final class SystemStatsModule: NotchModule {
         AnyView(SystemStatsCompactView(service: service))
     }
 
+    /// **No expanded row.** CPU, GPU, memory, disk and battery moved to the
+    /// stats page (the trailing chart door), and showing the same numbers a
+    /// second time under the media card was the duplication that removal was
+    /// meant to end.
+    ///
+    /// This module still contributes its compact view, still starts and stops
+    /// `SystemStatsService` on visibility, and `SystemStatsExpandedView`
+    /// below is kept intact — nothing is deleted, it simply no longer joins
+    /// the expanded standby stack. `NotchCoordinator.content(for:)` filters
+    /// on this flag, so the media card is left alone rather than stacked
+    /// above an empty view and its 8pt of spacing.
+    var hasExpandedContent: Bool { false }
+
     func makeExpandedView() -> AnyView {
         AnyView(SystemStatsExpandedView(service: service))
     }

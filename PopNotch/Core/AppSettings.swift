@@ -22,7 +22,8 @@ struct AppSettings: Codable, Equatable {
     /// v4: removed spotifyClientID — the Client ID is the app's own, built in.
     /// v5: added showMenuBarIcon.
     /// v6: added preferMusicOverVideo.
-    static let currentSchemaVersion = 6
+    /// v7: added spotifyAccountConnected.
+    static let currentSchemaVersion = 7
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -74,11 +75,28 @@ struct AppSettings: Codable, Equatable {
     /// their own adapters and outrank this source either way.
     var preferMusicOverVideo: Bool = true
 
+    /// Whether a Spotify refresh token exists, cached outside the Keychain.
+    ///
+    /// **Deliberately tri-state.** `true`/`false` are answers; `nil` means
+    /// "never recorded" — an install upgraded from v6 or earlier, or a fresh
+    /// install whose settings have never been written. Only `nil` may
+    /// consult the Keychain, and doing so writes the answer here, so the
+    /// question is asked of the Keychain at most once per install.
+    ///
+    /// A plain `Bool` would collapse "no account" and "don't know" into
+    /// `false`, which is precisely the bug that would log existing users out
+    /// on upgrade: the Keychain outlives the app bundle, so a token can be
+    /// present on an install whose settings are brand new.
+    ///
+    /// It caches a fact about the Keychain, never a credential — the refresh
+    /// token itself stays in the Keychain and never touches UserDefaults.
+    var spotifyAccountConnected: Bool?
+
     // MARK: - Decoding
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, moduleEnablement, hoverEnterDelay, visualizerEnabled
-        case showMenuBarIcon, preferMusicOverVideo
+        case showMenuBarIcon, preferMusicOverVideo, spotifyAccountConnected
     }
 
     init() {}
@@ -106,6 +124,10 @@ struct AppSettings: Codable, Equatable {
         // Absent in v5 and earlier; on is the shipped default.
         preferMusicOverVideo = (try? container.decode(Bool.self, forKey: .preferMusicOverVideo))
             ?? true
+        // Absent in v6 and earlier, and nil is meaningful here rather than a
+        // fallback: it is what sends `SpotifyAccount` to the Keychain once.
+        spotifyAccountConnected = try? container.decodeIfPresent(
+            Bool.self, forKey: .spotifyAccountConnected)
     }
 
     // MARK: - Migration
@@ -147,6 +169,15 @@ struct AppSettings: Codable, Equatable {
         case 5:
             // v6 added preferMusicOverVideo; the lenient decoder fills true
             // for v5 JSON, which is the on-by-default state. Nothing moves.
+            fallthrough
+        case 6:
+            // v7 added spotifyAccountConnected. It stays **nil** here on
+            // purpose: this migration cannot know whether a token exists
+            // without reading the Keychain, which is the very thing the
+            // field was added to avoid at launch. Nil routes the first
+            // `SpotifyAccount.init` through one Keychain read, which then
+            // records the answer — so an upgrading user who is connected
+            // stays connected. Writing `false` here would log them out.
             fallthrough
         default:
             break

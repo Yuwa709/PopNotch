@@ -35,6 +35,7 @@ final class ChromeOnlyRectTests: XCTestCase {
 
     private func trailingGroup() -> AnyView {
         AnyView(HStack(spacing: 2) {
+            PanelChromeButton(symbol: "chart.bar.xaxis", help: "System stats") {}
             CaffeinateControl(service: CaffeinateService())
             PinControl(isPinned: false) {}
         })
@@ -136,7 +137,7 @@ final class ChromeOnlyRectTests: XCTestCase {
     func testRealChromeGroupsFitTheShallowestNeck() {
         let groups = measuredGroups()
         XCTAssertEqual(groups.leading, 76, accuracy: 0.5)
-        XCTAssertEqual(groups.trailing, 50, accuracy: 0.5)
+        XCTAssertEqual(groups.trailing, 76, accuracy: 0.5, "stats door joined the trailing group")
         let tallest = max(
             NSHostingView(rootView: leadingGroup()).fittingSize.height,
             NSHostingView(rootView: trailingGroup()).fittingSize.height)

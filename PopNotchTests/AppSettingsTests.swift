@@ -252,4 +252,59 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(SpotifyAccount.clientID.isEmpty,
                        "Connect must work with no user configuration")
     }
+
+    // MARK: - v7: the Spotify connected flag
+
+    /// CLAUDE.md's rule: every schemaVersion bump gets a test that loads the
+    /// previous version's JSON and asserts nothing was dropped.
+    func testV6JSONMigratesToV7WithNothingDropped() throws {
+        write("""
+        {"schemaVersion": 6,
+         "moduleEnablement": {"media": true, "clipboard": false, "system-stats": true},
+         "hoverEnterDelay": 0.42,
+         "visualizerEnabled": true,
+         "showMenuBarIcon": false,
+         "preferMusicOverVideo": false}
+        """)
+        let settings = SettingsStore(defaults: defaults).settings
+
+        XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertEqual(settings.schemaVersion, 7)
+        // Every v6 preference survives untouched.
+        XCTAssertEqual(settings.moduleEnablement["media"], true)
+        XCTAssertEqual(settings.moduleEnablement["clipboard"], false)
+        XCTAssertEqual(settings.moduleEnablement["system-stats"], true)
+        XCTAssertEqual(settings.hoverEnterDelay, 0.42, accuracy: 0.0001)
+        XCTAssertTrue(settings.visualizerEnabled)
+        XCTAssertFalse(settings.showMenuBarIcon)
+        XCTAssertFalse(settings.preferMusicOverVideo)
+        // And the new field arrives NIL, not false: v6 JSON cannot say
+        // whether a token exists, and guessing "no" would log the user out.
+        XCTAssertNil(settings.spotifyAccountConnected,
+                     "v6 payload must not be read as 'no Spotify account'")
+    }
+
+    /// A v7 payload round-trips the flag, and an unwritten one stays nil.
+    func testV7FlagRoundTripsInEveryState() throws {
+        for stored in [true, false] {
+            defaults.removePersistentDomain(forName: suiteName)
+            let settings = store()
+            settings.update { $0.spotifyAccountConnected = stored }
+            XCTAssertEqual(store().settings.spotifyAccountConnected, stored,
+                           "flag must survive a reload")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        XCTAssertNil(store().settings.spotifyAccountConnected)
+    }
+
+    /// Older payloads all the way back to v1 must also arrive with a nil
+    /// flag rather than a guessed one.
+    func testEveryOlderSchemaLeavesTheSpotifyFlagUnknown() throws {
+        for version in 1...6 {
+            defaults.removePersistentDomain(forName: suiteName)
+            write("{\"schemaVersion\": \(version), \"moduleEnablement\": {}}")
+            XCTAssertNil(store().settings.spotifyAccountConnected,
+                         "v\(version) must not claim to know the Spotify state")
+        }
+    }
 }
