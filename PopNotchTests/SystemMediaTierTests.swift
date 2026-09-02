@@ -251,6 +251,67 @@ final class SystemMediaTierTests: XCTestCase {
         XCTAssertEqual(arguments.suffix(2), ["seek", "22.40"])
     }
 
+    // MARK: - Transport commands (1.0.4 regression)
+
+    /// The whole 1.0.4 bug in one assertion.
+    ///
+    /// `send(_:)` used to map to `bin/media-control`'s verb names — "play",
+    /// "next-track" — which `mediaremote-adapter.pl` rejects outright with
+    /// `Invalid function name`. The script takes `send` plus a numeric
+    /// MRCommand id, and `MediaCommand`'s raw value is that id.
+    func testEveryCommandMapsToSendPlusItsMRCommandID() {
+        let expected: [(MediaCommand, [String])] = [
+            (.play,            ["send", "0"]),
+            (.pause,           ["send", "1"]),
+            (.togglePlayPause, ["send", "2"]),
+            (.nextTrack,       ["send", "4"]),
+            (.previousTrack,   ["send", "5"])
+        ]
+        for (command, verb) in expected {
+            XCTAssertEqual(SystemMediaAdapter.commandVerb(for: command), verb)
+        }
+    }
+
+    /// The function name must be one the script actually accepts. A verb name
+    /// in this slot is the regression, so it is asserted directly rather than
+    /// left implied by the id check above.
+    func testCommandVerbNeverUsesACLIVerbName() {
+        let rejected: Set<String> = [
+            "play", "pause", "toggle-play-pause", "next-track", "previous-track"
+        ]
+        for command in [MediaCommand.play, .pause, .togglePlayPause, .nextTrack, .previousTrack] {
+            let verb = SystemMediaAdapter.commandVerb(for: command)
+            XCTAssertEqual(verb.first, "send", "the script's function name is 'send', not a verb")
+            XCTAssertFalse(rejected.contains(verb.first ?? ""),
+                           "'\(verb.first ?? "")' is CLI vocabulary the script rejects")
+        }
+    }
+
+    /// The full vector a command actually spawns with.
+    func testCommandArgumentVectorIsScriptFrameworkClientThenSendID() {
+        let arguments = SystemMediaAdapter.arguments(
+            verb: SystemMediaAdapter.commandVerb(for: .nextTrack),
+            tool: tool(testClient: "/A/Contents/MacOS/MediaRemoteAdapterTestClient")
+        )
+        XCTAssertEqual(arguments, [
+            "/A/Contents/Resources/mediaremote-adapter.pl",
+            "/A/Contents/Frameworks/MediaRemoteAdapter.framework",
+            "/A/Contents/MacOS/MediaRemoteAdapterTestClient",
+            "send",
+            "4"
+        ])
+    }
+
+    /// With no resolvable adapter — which is every test run, by the XCTest
+    /// guard — sending reports failure rather than crashing or spawning.
+    @MainActor
+    func testSendCommandReportsFailureWithNoAdapterAvailable() {
+        let adapter = SystemMediaAdapter()
+        XCTAssertFalse(adapter.sendCommand(.togglePlayPause),
+                       "no adapter resolves under XCTest, so this must return false")
+        XCTAssertFalse(adapter.sendCommand(.nextTrack), "and must not start looping or crash")
+    }
+
     /// The stored preference and its schema field must survive the setting
     /// being hidden — hiding a control must never discard the user's choice.
     func testHidingTheSettingDoesNotDiscardTheStoredPreference() {

@@ -169,6 +169,10 @@ final class SystemMediaAdapter: MediaSource {
     /// and must not raise the in-notch "allow Automation" banner.
     private(set) var permissionDenied = false
 
+    /// Gates `logCommandFailureOnce`. Not reset by `stopObserving`: it is
+    /// about this process's log, not about one stream's lifetime.
+    private var commandFailureLogged = false
+
     private var process: Process?
     private var stdoutPipe: Pipe?
 
@@ -584,16 +588,38 @@ final class SystemMediaAdapter: MediaSource {
 
     // MARK: - Commands
 
+    /// The adapter's argument form for a transport command.
+    ///
+    /// `mediaremote-adapter.pl` accepts eight function names — stream, get,
+    /// send, seek, shuffle, repeat, speed, test — and a transport command is
+    /// `send` plus a numeric **MRCommand id**. It is emphatically not a verb
+    /// name: `play` and `next-track` are vocabulary of `bin/media-control`,
+    /// the CLI wrapper this app deliberately does not bundle, and passing one
+    /// here gets `Invalid function name` and exit 1.
+    ///
+    /// `MediaCommand`'s raw values *are* those ids — both sides derive from
+    /// the same MRCommand constants — so the mapping is the raw value and
+    /// nothing else. Pinned by test rather than trusted: shipping the wrong
+    /// vocabulary here is precisely the 1.0.4 regression.
+    ///
+    /// Internal so the mapping can be asserted without launching anything.
+    nonisolated static func commandVerb(for command: MediaCommand) -> [String] {
+        ["send", String(command.rawValue)]
+    }
+
+    /// Sends one transport command. Fire and forget.
+    ///
+    /// Returns whether the subprocess was **launched**, not whether the
+    /// player obeyed. Nothing here waits on it, reads its output, or retries:
+    /// this runs on the main actor in response to a button press, and the
+    /// resulting state change arrives on the stream like any other.
+    @discardableResult
+    func sendCommand(_ command: MediaCommand) -> Bool {
+        runTool(Self.commandVerb(for: command))
+    }
+
     func send(_ command: MediaCommand) {
-        let verb: String
-        switch command {
-        case .play: verb = "play"
-        case .pause: verb = "pause"
-        case .togglePlayPause: verb = "toggle-play-pause"
-        case .nextTrack: verb = "next-track"
-        case .previousTrack: verb = "previous-track"
-        }
-        runTool([verb])
+        sendCommand(command)
     }
 
     func seek(to seconds: TimeInterval) {
@@ -603,22 +629,65 @@ final class SystemMediaAdapter: MediaSource {
         runTool(["seek", String(format: "%.2f", max(0, seconds))])
     }
 
-    /// Fire and forget. Never waits: these run on the main actor in response
-    /// to a button press, and the result arrives on the stream anyway.
-    private func runTool(_ verb: [String]) {
-        guard let tool = Self.tool else { return }
+    /// Spawns one short-lived adapter invocation.
+    ///
+    /// A second process is not a choice. The stream subprocess is blocked
+    /// inside `adapter_stream` for its whole life and has no control channel:
+    /// the script reads `@ARGV` and environment variables once, before
+    /// installing the XSUB, and never reads stdin. This is what the upstream
+    /// CLI does for the same reason.
+    ///
+    /// **No environment is set, deliberately.** The framework is located by
+    /// the absolute path in `@ARGV` and opened with `dl_load_file`, so no
+    /// `DYLD_FRAMEWORK_PATH` is involved — and one would not survive anyway:
+    /// dyld strips `DYLD_*` when exec'ing an Apple platform binary, which
+    /// `/usr/bin/perl` is. Verified 2026-09-02: perl sees `<STRIPPED>` where
+    /// a locally built binary sees the value. Matching the stream process
+    /// therefore means setting nothing, which is what both do.
+    @discardableResult
+    private func runTool(_ verb: [String]) -> Bool {
+        let label = verb.first ?? "?"
+        guard let tool = Self.tool else {
+            logCommandFailureOnce("\(label): no adapter (perl or a bundled component is missing)")
+            return false
+        }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: tool.perlPath)
         task.arguments = Self.arguments(verb: verb, tool: tool)
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
+
+        // Exit status only — never the output, which stays on nullDevice.
+        // This exists because its absence is what hid the 1.0.4 bug for a
+        // whole release: perl launched cleanly, rejected the argument, and
+        // exited 1 with nobody looking. A rejected command is now visible in
+        // the log instead of being a button that silently does nothing.
+        task.terminationHandler = { [weak self] finished in
+            let status = finished.terminationStatus
+            guard status != 0 else { return }
+            Task { @MainActor [weak self] in
+                self?.logCommandFailureOnce("\(label): adapter exited \(status)")
+            }
+        }
+
         do {
             try task.run()
         } catch {
-            Self.logger.error(
-                "adapter \(verb.first ?? "?", privacy: .public) failed to launch"
-            )
+            logCommandFailureOnce("\(label): \(error.localizedDescription)")
+            return false
         }
+        return true
+    }
+
+    /// One line per process, not per press.
+    ///
+    /// A dead adapter means every button is dead, and the user will press
+    /// them more than once. Logging each attempt would bury the first and
+    /// only useful line under the noise of the rest.
+    private func logCommandFailureOnce(_ detail: String) {
+        guard !commandFailureLogged else { return }
+        commandFailureLogged = true
+        Self.logger.error("Adapter command failed - \(detail, privacy: .public)")
     }
 }
 
