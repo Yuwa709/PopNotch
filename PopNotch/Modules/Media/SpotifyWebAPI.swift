@@ -163,7 +163,8 @@ final class SpotifyWebAPI {
     }
 
     func isSaved(trackID: String) async -> Bool? {
-        guard let data = await get("https://api.spotify.com/v1/me/tracks/contains?ids=\(trackID)"),
+        guard let data = await get("https://api.spotify.com/v1/me/tracks/contains?ids=\(trackID)",
+                                   isLibraryEndpoint: true),
               let flags = try? JSONDecoder().decode([Bool].self, from: data)
         else { return nil }
         return flags.first
@@ -178,6 +179,9 @@ final class SpotifyWebAPI {
         guard let (_, response) = try? await URLSession.shared.data(for: request),
               let status = (response as? HTTPURLResponse)?.statusCode
         else { return false }
+        // Same refusal as the read side: a write to a library this account
+        // cannot reach must retire the control, not just fail this once.
+        if status == 403 { account.noteLibraryAccessForbidden() }
         return (200..<300).contains(status)
     }
 
@@ -208,7 +212,11 @@ final class SpotifyWebAPI {
     /// that an HTML error page from a proxy does not swamp the log.
     nonisolated static let bodyLogLimit = 512
 
-    private func get(_ urlString: String) async -> Data? {
+    /// `isLibraryEndpoint` marks the `/me/tracks*` calls, whose 403 means
+    /// "this account is not allowlisted" rather than a transient failure.
+    /// Only those retire the like control; a 403 elsewhere is logged and
+    /// otherwise left alone, because it says nothing about the library.
+    private func get(_ urlString: String, isLibraryEndpoint: Bool = false) async -> Data? {
         guard let token = await account.validAccessToken(),
               let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url)
@@ -229,6 +237,7 @@ final class SpotifyWebAPI {
                     "GET \(urlString, privacy: .public) -> \(status, privacy: .public) body: \(Self.describeErrorBody(data), privacy: .public)"
                 )
             }
+            if status == 403, isLibraryEndpoint { account.noteLibraryAccessForbidden() }
             return nil
         }
         return data

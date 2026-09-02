@@ -45,6 +45,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// one of its sources; this is a reference, not ownership.
     private(set) var systemMediaSource: SystemMediaAdapter?
 
+    /// The media sources to register, honouring `SystemMediaAdapter.isRegistered`.
+    ///
+    /// Split out so the flag is consulted in exactly one place rather than
+    /// being encoded as a literal array that someone has to remember to edit.
+    private func mediaSources(includingSystem system: SystemMediaAdapter) -> [any MediaSource] {
+        var sources: [any MediaSource] = [SpotifyAdapter(), MusicAdapter()]
+        if SystemMediaAdapter.isRegistered { sources.append(system) }
+        return sources
+    }
+
     // MARK: - Updates
 
     /// Sparkle's updater, owned here because it must outlive any view.
@@ -162,13 +172,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // same way the visualiser's flag is applied below.
         systemMedia.prefersMusicOverVideo = settings.settings.preferMusicOverVideo
         let media = MediaModule(
-            // Order is not precedence — MediaModule.shouldTakeOver decides —
-            // but the system source is last because it is the fallback: it
-            // covers players with no adapter of their own (a browser tab) and
-            // stands aside whenever Spotify or Music has anything.
-            sources: [SpotifyAdapter(), MusicAdapter(), systemMedia],
+            // Order is not precedence — MediaModule.shouldTakeOver decides.
+            //
+            // `systemMedia` is DELIBERATELY ABSENT from this array (1.0.3).
+            // `SystemMediaAdapter` shells out to `/opt/homebrew/bin/media-control`,
+            // an absolute path into Homebrew that is not in the app bundle, so
+            // the source works only on a machine that happens to have that
+            // formula installed. Shipped in 1.0.2, it was inert for every
+            // other user and failed silently: a missing tool logs one
+            // `.notice` and is otherwise indistinguishable from "nothing is
+            // playing" (reported by a user on YouTube Music in Chrome with
+            // neither Spotify nor Music installed).
+            //
+            // The unblock is vendoring the tool into the bundle and resolving
+            // it via `Bundle`, never an absolute path. That is real work, not
+            // a chore: media-control 0.7.6 is a Perl script plus
+            // `mediaremote-adapter.pl`, `MediaRemoteAdapter.framework` and a
+            // Mach-O test client, on top of Apple-deprecated `/usr/bin/perl`
+            // — two Mach-O objects to sign under Hardened Runtime and carry
+            // through notarization. See the TODO on `SystemMediaAdapter.toolPath`
+            // and record the decision in PROJECT-CONTEXT.md before re-adding
+            // it here. The file stays in the target so the work resumes from
+            // a built, tested read path rather than from scratch.
+            sources: mediaSources(includingSystem: systemMedia),
             account: spotifyAccount, visualizer: audioViz)
-        // Held so the Settings toggle can apply live rather than at next launch.
+        // Held so the Settings toggle can apply live rather than at next
+        // launch — and so the source is ready the moment `isRegistered`
+        // flips, without this wiring having to be rebuilt.
         self.systemMediaSource = systemMedia
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)

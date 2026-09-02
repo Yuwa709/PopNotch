@@ -128,9 +128,15 @@ final class MediaModule: NotchModule {
     /// Spotify without a connected account, because `starred` is read-only
     /// in its dictionary — the UI must not offer a toggle there.
     var canToggleFavorite: Bool {
-        if activeSource?.sourceID == "spotify" { return webAPI != nil && accountConnected }
+        if activeSource?.sourceID == "spotify" {
+            return webAPI != nil && accountConnected && !libraryForbidden
+        }
         return activeSource?.favorite.isEditable ?? false
     }
+
+    /// Spotify has refused this account's library with a 403. See
+    /// `SpotifyAccount.libraryAccessForbidden`.
+    var libraryForbidden: Bool { account?.libraryAccessForbidden == true }
 
     var accountConnected: Bool { account?.isConnected == true }
 
@@ -439,8 +445,15 @@ final class MediaModule: NotchModule {
         Task { [weak self] in
             let next = await webAPI.fetchUpNext()
             let context = await webAPI.fetchPlaybackContext()
-            let liked: Bool? = if let trackID { await webAPI.isSaved(trackID: trackID) } else { nil }
+            // Not asked again once refused. The 403 is a property of the
+            // account, not of this track, so re-asking on every track change
+            // would be a loop with extra steps — and each attempt is a
+            // request that cannot succeed. `likedCurrent` stays nil, which
+            // hides the heart outright rather than dimming a dead one.
             guard let self else { return }
+            let liked: Bool? = if let trackID, !self.libraryForbidden {
+                await webAPI.isSaved(trackID: trackID)
+            } else { nil }
             self.setUpNext(next)
             if let context { self.playbackContextURI = context }
             self.likedCurrent = liked
@@ -506,6 +519,8 @@ final class MediaModule: NotchModule {
     /// go straight to the player.
     func toggleLike() {
         guard canToggleFavorite else { return }
+        // A 403 arriving mid-flight retires the control; the optimistic
+        // value below must not be left behind as a heart nobody can change.
         let target = !(likedCurrent ?? false)
         likedCurrent = target // optimistic; revert on failure
 
@@ -520,7 +535,12 @@ final class MediaModule: NotchModule {
         }
         Task { [weak self] in
             let accepted = await webAPI.setSaved(target, trackID: trackID)
-            if !accepted { self?.likedCurrent = !target }
+            guard let self else { return }
+            if self.libraryForbidden {
+                self.likedCurrent = nil
+            } else if !accepted {
+                self.likedCurrent = !target
+            }
         }
     }
 

@@ -109,14 +109,22 @@ struct MusicSettingsTab: View {
 
     var body: some View {
         Form {
-            Section {
-                Toggle("Prefer music over video", isOn: musicOverVideoBinding)
-            } header: {
-                Text("Other Players")
-            } footer: {
-                Text("For players without their own integration — a browser, say — the notch ignores an update that drops the album of the track it is already showing, so a song does not flicker into looking like a video. Starting something genuinely different always takes over. Spotify and Apple Music are unaffected; they always take priority. On by default.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            // Hidden while no source reads the preference — see
+            // `SystemMediaAdapter.isRegistered`. A control that changes
+            // nothing is worse than a missing one: it invites the user to
+            // fix a problem it cannot affect. The stored value and its
+            // schema field are untouched, so the choice already made comes
+            // back with the section when the source ships.
+            if SystemMediaAdapter.isRegistered {
+                Section {
+                    Toggle("Prefer music over video", isOn: musicOverVideoBinding)
+                } header: {
+                    Text("Other Players")
+                } footer: {
+                    Text("For players without their own integration — a browser, say — the notch ignores an update that drops the album of the track it is already showing, so a song does not flicker into looking like a video. Starting something genuinely different always takes over. Spotify and Apple Music are unaffected; they always take priority. On by default.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section {

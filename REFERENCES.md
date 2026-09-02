@@ -63,7 +63,7 @@ repository.
 One technique was named and **not adopted**: reading MediaRemote by
 spawning an Apple-signed interpreter, to get around the caller-identity
 gate. It was already independently discovered and documented as "path 2"
-in `PopNotch/Modules/Media/FINDINGS.md` on 2026-08-27, from PopNotch's
+in `docs/FINDINGS.md` on 2026-08-27, from PopNotch's
 own measurements, before this analysis was read. It remains unchosen.
 
 ## Shelf UI layout (2026-08-30)

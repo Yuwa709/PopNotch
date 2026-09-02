@@ -170,6 +170,34 @@ final class SpotifyAccount {
     private(set) var isConnected: Bool
     private(set) var lastError: String?
 
+    /// The account is connected, but Spotify refuses its library endpoints.
+    ///
+    /// Set when `/v1/me/tracks*` answers **403 Forbidden**, which is what a
+    /// Spotify app in development mode returns for a user who is not on its
+    /// allowlist. The token is valid and every other endpoint works — only
+    /// the library is closed — so this is a per-account capability fact, not
+    /// an auth failure, and it must not disconnect anyone.
+    ///
+    /// Consequence: the like control is hidden rather than shown doing
+    /// nothing. Observed on this machine 2026-09-01 with a valid token.
+    ///
+    /// **Session-only, and deliberately not persisted.** Allowlisting happens
+    /// in Spotify's dashboard, outside this app and with no signal back to
+    /// it; a value written to disk would keep the control hidden for a user
+    /// who had since been granted access, and only a settings reset would
+    /// bring it back. A relaunch costing one refused request is the cheaper
+    /// wrong answer.
+    private(set) var libraryAccessForbidden = false
+
+    /// Called by `SpotifyWebAPI` when a library endpoint returns 403. Idempotent:
+    /// the first refusal stops any further library calls for the session, so this
+    /// records the fact once and never drives a retry.
+    func noteLibraryAccessForbidden() {
+        guard !libraryAccessForbidden else { return }
+        libraryAccessForbidden = true
+        Self.logger.notice("Spotify library access forbidden (403) for this account; hiding the like control for this session")
+    }
+
     @ObservationIgnored private var accessToken: String?
     @ObservationIgnored private var accessExpiry = Date.distantPast
     @ObservationIgnored private var listener: NWListener?
@@ -226,6 +254,11 @@ final class SpotifyAccount {
     /// flag can never drift from what the Keychain holds.
     private func setConnected(_ connected: Bool) {
         isConnected = connected
+        // A connect or disconnect is a change of account, and the 403 was a
+        // fact about the *previous* one. Clearing here is what lets a user
+        // who has just been allowlisted recover by reconnecting, without
+        // waiting for a relaunch.
+        libraryAccessForbidden = false
         settings?.update { $0.spotifyAccountConnected = connected }
     }
 

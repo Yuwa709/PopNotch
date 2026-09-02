@@ -54,6 +54,25 @@ final class SystemMediaAdapter: MediaSource {
     // before this source is registered in AppDelegate.
     static let toolPath = "/opt/homebrew/bin/media-control"
 
+    /// Whether this source is wired up at all.
+    ///
+    /// **False since 1.0.3.** The source is unregistered because `toolPath`
+    /// is not in the app bundle (see the TODO above), so it worked only on a
+    /// machine that happened to have the Homebrew formula installed.
+    ///
+    /// This is the single switch, not a comment: `AppDelegate` consults it
+    /// when building the sources array, and the Settings tab consults it
+    /// when deciding whether to offer "Prefer music over video" — a
+    /// preference that means nothing while no source reads it. Flipping this
+    /// to `true` restores the source and its setting together, which is why
+    /// it exists rather than the two places each carrying their own guard
+    /// and drifting apart.
+    ///
+    /// The stored preference and its schema field are deliberately untouched
+    /// while this is false: hiding a control must not discard what the user
+    /// already chose.
+    static let isRegistered = false
+
     let sourceID = "system"
     var onUpdate: ((NowPlaying?) -> Void)?
 

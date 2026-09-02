@@ -194,4 +194,30 @@ final class SystemMediaTierTests: XCTestCase {
                        bundle: browser, id: "track-2")])
         XCTAssertEqual(seen().last??.title, "Bonfire")
     }
+
+    // MARK: - Registration gate (1.0.3)
+
+    /// The source is unregistered while its helper is not vendored. This
+    /// pins the flag so re-registering is a deliberate act with a test to
+    /// update, not something that drifts back in unnoticed.
+    func testSourceIsUnregisteredWhileTheHelperIsNotVendored() {
+        XCTAssertFalse(SystemMediaAdapter.isRegistered,
+                       "media-control is not in the app bundle; see the TODO on toolPath")
+    }
+
+    /// The stored preference and its schema field must survive the setting
+    /// being hidden — hiding a control must never discard the user's choice.
+    func testHidingTheSettingDoesNotDiscardTheStoredPreference() {
+        let suite = "com.techie.PopNotch.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = SettingsStore(defaults: defaults)
+        store.update { $0.preferMusicOverVideo = false }
+
+        // A fresh load, as if the app relaunched with the section hidden.
+        XCTAssertEqual(SettingsStore(defaults: defaults).settings.preferMusicOverVideo, false,
+                       "the choice must come back when the source ships")
+        XCTAssertEqual(AppSettings().preferMusicOverVideo, true, "default is unchanged")
+    }
 }

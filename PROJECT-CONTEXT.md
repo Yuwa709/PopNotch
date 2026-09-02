@@ -90,7 +90,7 @@ Rule 6 requires every added network call to be an explicit decision recorded her
 | accounts.spotify.com (`/authorize`, `/api/token`) + api.spotify.com (`/v1/tracks/{id}`, `/v1/artists/{id}`, `/v1/me/player`, `/v1/me/player/queue`, `/v1/me/tracks`, `/v1/me/tracks/contains`) | Media: Up Next, like/unlike, official artist metadata, playback context | 2026-08-28 | **Official** Web API only, authorized by the user via PKCE from Settings; refresh token in the Keychain. The private API Sapphire uses (Canvas, monthly listeners, play counts, free-tier ad skipping) is explicitly declined: it rides on reverse-engineered endpoints with the user's session and risks their account. Requests carry only Spotify's own OAuth tokens and track IDs. The redirect target is a loopback listener on `127.0.0.1:7391` — local, not a network call. `/v1/me/player` was added 2026-08-28 so tapping the artwork opens the playlist the user started from rather than the canonical album page; it needs `user-read-playback-state`, which the existing token already carries, so no re-authorization |
 | lrclib.net (`/api/get`) | Media: time-synced lyrics | 2026-08-28 | Rule 6 pre-permits lyrics via LRCLIB but the decision was never recorded here; this row closes that gap retroactively. LRCLIB is free, keyless, and needs no account. The query carries artist, title, and track duration — song metadata, nothing identifying the user. Genius and Musixmatch are declined: both would mean scraping, and their lyrics are licensed |
 
-MediaRemote would have avoided this call entirely (it delivers artwork bytes), but it is caller-gated — see `PopNotch/Modules/Media/FINDINGS.md`.
+MediaRemote would have avoided this call entirely (it delivers artwork bytes), but it is caller-gated — see `docs/FINDINGS.md`.
 
 ---
 
@@ -187,7 +187,7 @@ The unverified Music rows are exactly the class that produced the `starred` inci
 
 ### MediaRemote: resolved, not open
 
-Measured on hardware 2026-08-27 and written up in `PopNotch/Modules/Media/FINDINGS.md`. Summary: the framework loads and every symbol resolves inside PopNotch, but `MRMediaRemoteGetNowPlayingInfo` returns an **empty dictionary** to the signed app while the same call from an Apple-signed `swift` CLI returns full data for the same track at the same instant. The macOS 15.4 restriction is caller-identity gating and it is live on 26.5. The gating entitlement is private and not grantable.
+Measured on hardware 2026-08-27 and written up in `docs/FINDINGS.md`. Summary: the framework loads and every symbol resolves inside PopNotch, but `MRMediaRemoteGetNowPlayingInfo` returns an **empty dictionary** to the signed app while the same call from an Apple-signed `swift` CLI returns full data for the same track at the same instant. The macOS 15.4 restriction is caller-identity gating and it is live on 26.5. The gating entitlement is private and not grantable.
 
 This question is closed. Do not reopen it on the strength of another app appearing to have now-playing working — that observation is consistent with the Apple-signed-interpreter loophole (FINDINGS path 2), which is a different mechanism, not evidence that in-process MediaRemote works. Reopen only on a new **measurement** on a newer OS.
 
@@ -281,4 +281,4 @@ Each needs an owner and a trigger, or it is not a question, it is a wish.
 | At what download count does notarization become worth $99/year? | Revisit after first public release | Pick a number now so the decision is a trigger rather than a mood |
 | Does PopNotch ever become a paid product? | Open | MIT permits it. Anyone may also fork the free version, which is the tradeoff MIT was chosen with |
 
-Resolved and moved into the sections above: license (MIT), source visibility (public), notarization (no, for now), the full Phase 0.5 configuration drift, **whether MediaRemote is reachable** — measured, gated, closed — and **whether Apple Music ships in v1**: it shipped, in commit `7667ad9`, alongside the source-arbitration rule it forced. See the Media section and `PopNotch/Modules/Media/FINDINGS.md`.
+Resolved and moved into the sections above: license (MIT), source visibility (public), notarization (no, for now), the full Phase 0.5 configuration drift, **whether MediaRemote is reachable** — measured, gated, closed — and **whether Apple Music ships in v1**: it shipped, in commit `7667ad9`, alongside the source-arbitration rule it forced. See the Media section and `docs/FINDINGS.md`.

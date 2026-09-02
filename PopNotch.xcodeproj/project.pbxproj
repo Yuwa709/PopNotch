@@ -8,9 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		C64F4B9330456D900094539B /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C64F4B9230456D900094539B /* Sparkle */; };
-		C6F40DE030402E2900F801FD /* CLAUDE.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DDF30402E2900F801FD /* CLAUDE.md */; };
-		C6F40DE53040B8FF00F801FD /* ROADMAP.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DE43040B8FF00F801FD /* ROADMAP.md */; };
-		C6F40DE73040B91000F801FD /* PROJECT-CONTEXT.md in Resources */ = {isa = PBXBuildFile; fileRef = C6F40DE63040B91000F801FD /* PROJECT-CONTEXT.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -192,9 +189,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C6F40DE030402E2900F801FD /* CLAUDE.md in Resources */,
-				C6F40DE53040B8FF00F801FD /* ROADMAP.md in Resources */,
-				C6F40DE73040B91000F801FD /* PROJECT-CONTEXT.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
