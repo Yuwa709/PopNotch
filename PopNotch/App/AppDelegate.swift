@@ -149,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator.start()
+        installSignalHandling()
 
         // Manual only. Set every launch rather than once, so a stale stored
         // preference — or a future Sparkle default — cannot quietly turn
@@ -239,8 +240,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         audioViz.setEnabled(settings.settings.visualizerEnabled)
     }
 
+    /// Kept alive for the process lifetime; a released source stops firing.
+    private var sigtermSource: DispatchSourceSignal?
+
+    /// Turns SIGTERM into an orderly quit so the adapter child dies with us.
+    ///
+    /// `applicationWillTerminate` covers Cmd-Q, but a signal bypasses AppKit
+    /// entirely — the process dies without unwinding, and the child process
+    /// is reparented to launchd still streaming. `scripts/install.sh` does
+    /// exactly this on every install (`pkill -x PopNotch`), and each one
+    /// leaked a `perl ... stream` until this existed (measured 2026-09-02).
+    ///
+    /// SIGKILL is deliberately not handled, because it cannot be: the child
+    /// then outlives us until its next write hits the closed pipe and takes
+    /// SIGPIPE. That is bounded by the next media event on the system, not
+    /// unbounded, and is the residual this cannot reach.
+    private func installSignalHandling() {
+        // The default disposition must go first, or the process still dies
+        // before the dispatch source ever runs.
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            // Routed through AppKit rather than exiting here, so the normal
+            // teardown below runs exactly once and by one path.
+            NSApp.terminate(nil)
+        }
+        source.resume()
+        sigtermSource = source
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         coordinator.stop()
+        // The adapter runs as a child process, and a child is not reclaimed
+        // the way an in-process timer is: on exit it is reparented to launchd
+        // and keeps streaming. It only notices we are gone when its next
+        // write hits a closed pipe, which for a paused session may be never.
+        // Nothing else in the app forks, so this is the one source that needs
+        // an explicit stop rather than letting deinit handle it.
+        systemMediaSource?.stopObserving()
         // Deterministic on a clean quit. The system would reclaim the
         // assertion on exit anyway (verified with SIGKILL), but releasing
         // here means it goes the moment the user quits rather than whenever

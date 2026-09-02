@@ -195,14 +195,60 @@ final class SystemMediaTierTests: XCTestCase {
         XCTAssertEqual(seen().last??.title, "Bonfire")
     }
 
-    // MARK: - Registration gate (1.0.3)
+    // MARK: - Registration gate
 
-    /// The source is unregistered while its helper is not vendored. This
-    /// pins the flag so re-registering is a deliberate act with a test to
-    /// update, not something that drifts back in unnoticed.
-    func testSourceIsUnregisteredWhileTheHelperIsNotVendored() {
-        XCTAssertFalse(SystemMediaAdapter.isRegistered,
-                       "media-control is not in the app bundle; see the TODO on toolPath")
+    /// The source is registered now that the adapter ships in the bundle.
+    /// This pins the flag in both directions: unregistering is a deliberate
+    /// act with a test to update, not something that drifts.
+    func testSourceIsRegisteredNowTheHelperIsVendored() {
+        XCTAssertTrue(SystemMediaAdapter.isRegistered,
+                      "the adapter is vendored; the source and its setting ship together")
+    }
+
+    // MARK: - Argument vector
+
+    private func tool(testClient: String?) -> SystemMediaAdapter.AdapterTool {
+        SystemMediaAdapter.AdapterTool(
+            perlPath: "/usr/bin/perl",
+            scriptPath: "/A/Contents/Resources/mediaremote-adapter.pl",
+            frameworkPath: "/A/Contents/Frameworks/MediaRemoteAdapter.framework",
+            testClientPath: testClient
+        )
+    }
+
+    /// Order is fixed by the adapter script: script, framework, optional test
+    /// client, then the verb.
+    func testArgumentVectorOrdersScriptThenFrameworkThenVerb() {
+        let arguments = SystemMediaAdapter.arguments(
+            verb: ["stream"], tool: tool(testClient: "/A/Contents/MacOS/MediaRemoteAdapterTestClient")
+        )
+        XCTAssertEqual(arguments, [
+            "/A/Contents/Resources/mediaremote-adapter.pl",
+            "/A/Contents/Frameworks/MediaRemoteAdapter.framework",
+            "/A/Contents/MacOS/MediaRemoteAdapterTestClient",
+            "stream"
+        ])
+    }
+
+    /// The script decides whether argument two is a helper path by testing it
+    /// for a "/". An absent test client must therefore be omitted outright —
+    /// an empty string in that slot would be read as the verb.
+    func testArgumentVectorOmitsAnAbsentTestClientEntirely() {
+        let arguments = SystemMediaAdapter.arguments(verb: ["stream"], tool: tool(testClient: nil))
+        XCTAssertEqual(arguments, [
+            "/A/Contents/Resources/mediaremote-adapter.pl",
+            "/A/Contents/Frameworks/MediaRemoteAdapter.framework",
+            "stream"
+        ])
+        XCTAssertFalse(arguments.contains(""), "an empty slot would be parsed as the verb")
+    }
+
+    /// Verbs with parameters keep their operands adjacent and last.
+    func testArgumentVectorKeepsVerbOperandsLast() {
+        let arguments = SystemMediaAdapter.arguments(
+            verb: ["seek", "22.40"], tool: tool(testClient: nil)
+        )
+        XCTAssertEqual(arguments.suffix(2), ["seek", "22.40"])
     }
 
     /// The stored preference and its schema field must survive the setting

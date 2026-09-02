@@ -19,7 +19,7 @@ import os
 /// long as it runs, so this satisfies hard rule 9 without a suspend path —
 /// there is nothing polling to suspend. `stopObserving()` terminates it.
 ///
-/// What this source cannot do: `media-control` exposes no queue and no
+/// What this source cannot do: the adapter exposes no queue and no
 /// favourite, so `upNext` and `favorite` keep the protocol defaults (nil and
 /// `.unsupported`). It is not an oversight and must not be faked by peeking
 /// at another player.
@@ -28,50 +28,137 @@ final class SystemMediaAdapter: MediaSource {
 
     private nonisolated static let logger = Logger(subsystem: "com.techie.PopNotch", category: "SystemMedia")
 
-    // TODO: NOT SHIPPABLE. `/opt/homebrew/bin/media-control` is a Homebrew
-    // install — an absolute path into a package manager most users do not
-    // have, living outside the app bundle, that Homebrew can upgrade or remove
-    // out from under us. It is here so the read path could be built and logged
-    // against real data.
-    //
-    // Vendoring it is not "ship a script". Measured against 0.7.6, what runs
-    // is four separate things:
-    //   • bin/media-control — itself a Perl script, not a binary
-    //   • lib/media-control/mediaremote-adapter.pl — what it actually execs
-    //   • Frameworks/MediaRemoteAdapter.framework — an arm64 Mach-O dylib
-    //   • lib/media-control/MediaRemoteAdapterTestClient — an arm64 Mach-O
-    //     executable
-    // plus a dependency on /usr/bin/perl, which Apple has deprecated: the
-    // bundled scripting runtimes are documented as slated for removal, so
-    // anything vendored on top of them inherits that clock.
-    //
-    // The real work is the two Mach-O objects — embedding them means signing
-    // them with the app's identity under Hardened Runtime and carrying them
-    // through notarization, and every added binary is a notarization risk
-    // (CLAUDE.md, distribution). That is a decision to record in
-    // PROJECT-CONTEXT.md, not a chore to do inline. Whatever replaces this
-    // must be resolved via `Bundle`, never an absolute path, and must land
-    // before this source is registered in AppDelegate.
-    static let toolPath = "/opt/homebrew/bin/media-control"
+    // MARK: - The vendored adapter
+
+    /// Absolute paths to everything one adapter invocation needs.
+    ///
+    /// Resolved once from `Bundle.main`, never hardcoded. The single
+    /// exception is the interpreter, which cannot come from the bundle —
+    /// see `perlPath`.
+    struct AdapterTool {
+        let perlPath: String
+        let scriptPath: String
+        let frameworkPath: String
+        /// Only `adapter_test` reads this. Passed through when present so the
+        /// health probe stays available; its absence is not a failure and
+        /// must not make the source unavailable.
+        let testClientPath: String?
+    }
+
+    /// The system Perl interpreter. Not configurable, and deliberately the
+    /// one absolute path left in this file.
+    ///
+    /// `mediaremote-adapter.pl` dlopens `MediaRemoteAdapter.framework` **into
+    /// the interpreter process**, not into PopNotch. MediaRemote answers it
+    /// only because `/usr/bin/perl` is Apple-signed with the identifier
+    /// `com.apple.perl`; that identity is the entire mechanism. A Homebrew
+    /// perl or an interpreter we shipped ourselves would be refused exactly
+    /// the way PopNotch itself is (`PROJECT-CONTEXT.md`, "MediaRemote:
+    /// resolved, not open"), so substituting one is not a fallback.
+    ///
+    /// Apple has listed the bundled scripting runtimes as slated for removal
+    /// since macOS 12. If a future release drops perl, `resolveTool()`
+    /// returns nil and this source goes quietly unavailable; the two
+    /// AppleScript adapters are unaffected.
+    private nonisolated static let perlPath = "/usr/bin/perl"
+
+    /// Resolved once, on first use. `nil` means this source cannot run —
+    /// permanently, for the life of the process, because neither the bundle
+    /// nor `/usr/bin/perl` changes underneath a running app.
+    ///
+    /// Caching matters: `refresh()` runs on hover, so an uncached check would
+    /// stat the filesystem every time the user brushed the notch.
+    private nonisolated static let tool: AdapterTool? = resolveTool()
+
+    /// Locates the vendored adapter, logging once at `.notice` on the way out.
+    ///
+    /// Being a lazily-initialised `static let`, this body runs at most once
+    /// per process, which is what keeps a missing helper from filling the log
+    /// on every hover.
+    private nonisolated static func resolveTool() -> AdapterTool? {
+        // Unit tests run against the real app as their host, so registering
+        // this source would have every `xcodebuild test` spawn a live adapter
+        // — and xctest kills the host rather than quitting it, so each run
+        // orphaned seven `perl ... stream` processes onto launchd. Measured
+        // 2026-09-02, before this guard existed.
+        //
+        // The guard lives here rather than in `AppDelegate` because this is
+        // the only thing in the app that forks a child: a test must never
+        // depend on a subprocess it did not ask for, and the argument vector
+        // is covered by `arguments(verb:tool:)` without launching anything.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+            logger.notice("Running under XCTest; system now-playing not started")
+            return nil
+        }
+        guard FileManager.default.isExecutableFile(atPath: perlPath) else {
+            logger.notice(
+                "\(perlPath, privacy: .public) is missing; system now-playing unavailable"
+            )
+            return nil
+        }
+        guard let script = Bundle.main.url(forResource: "mediaremote-adapter", withExtension: "pl") else {
+            logger.notice("mediaremote-adapter.pl missing from the bundle; system now-playing unavailable")
+            return nil
+        }
+        guard let framework = Bundle.main.privateFrameworksURL?
+            .appendingPathComponent("MediaRemoteAdapter.framework"),
+            FileManager.default.fileExists(atPath: framework.path)
+        else {
+            logger.notice("MediaRemoteAdapter.framework missing from the bundle; system now-playing unavailable")
+            return nil
+        }
+        // Optional by design: only the `test` verb uses it, and this source
+        // does not call `test`. Missing it costs the health probe, not the
+        // stream, so it must not gate availability.
+        let testClient = Bundle.main.url(forAuxiliaryExecutable: "MediaRemoteAdapterTestClient")
+        if testClient == nil {
+            logger.notice("MediaRemoteAdapterTestClient missing from the bundle; health probe unavailable")
+        }
+        return AdapterTool(
+            perlPath: perlPath,
+            scriptPath: script.path,
+            frameworkPath: framework.path,
+            testClientPath: testClient?.path
+        )
+    }
+
+    /// Builds the argument vector for one invocation.
+    ///
+    /// Order is fixed by `mediaremote-adapter.pl`: framework path first, an
+    /// optional test-client path second, then the verb. The script decides
+    /// whether the second argument is a path by testing it for a `/`, which
+    /// is why the test client is either an absolute path or omitted entirely
+    /// — never an empty string.
+    ///
+    /// Internal rather than private so the vector can be asserted in tests,
+    /// the way `ingest` and `LineAssembler` are.
+    nonisolated static func arguments(verb: [String], tool: AdapterTool) -> [String] {
+        var arguments = [tool.scriptPath, tool.frameworkPath]
+        if let testClientPath = tool.testClientPath { arguments.append(testClientPath) }
+        arguments.append(contentsOf: verb)
+        return arguments
+    }
 
     /// Whether this source is wired up at all.
     ///
-    /// **False since 1.0.3.** The source is unregistered because `toolPath`
-    /// is not in the app bundle (see the TODO above), so it worked only on a
-    /// machine that happened to have the Homebrew formula installed.
+    /// **True since the adapter was vendored.** The helper now ships inside
+    /// the bundle — framework in `Contents/Frameworks`, script in
+    /// `Contents/Resources`, all resolved through `Bundle.main` — so the
+    /// source no longer depends on a Homebrew install that most users do not
+    /// have.
     ///
     /// This is the single switch, not a comment: `AppDelegate` consults it
     /// when building the sources array, and the Settings tab consults it
     /// when deciding whether to offer "Prefer music over video" — a
-    /// preference that means nothing while no source reads it. Flipping this
-    /// to `true` restores the source and its setting together, which is why
-    /// it exists rather than the two places each carrying their own guard
-    /// and drifting apart.
+    /// preference that means nothing while no source reads it. It restores
+    /// the source and its setting together, which is why it exists rather
+    /// than the two places each carrying their own guard and drifting apart.
     ///
-    /// The stored preference and its schema field are deliberately untouched
-    /// while this is false: hiding a control must not discard what the user
-    /// already chose.
-    static let isRegistered = false
+    /// Registered is not the same as functional: a bundle missing the helper,
+    /// or a macOS with no `/usr/bin/perl`, leaves `tool` nil and the source
+    /// silently inert. That is a runtime capability question, deliberately
+    /// separate from this compile-time wiring one.
+    static let isRegistered = true
 
     let sourceID = "system"
     var onUpdate: ((NowPlaying?) -> Void)?
@@ -145,7 +232,6 @@ final class SystemMediaAdapter: MediaSource {
     private let firstDiffGate = OnceGate()
     /// The missing-tool line is logged once per adapter, not once per call:
     /// `startObserving()` and `refresh()` both reach it.
-    private var toolMissingLogged = false
 
     /// There is no single player to ask about. True when the stream is up and
     /// some app owns the session; `MediaModule` uses this for handoff, so it
@@ -158,11 +244,11 @@ final class SystemMediaAdapter: MediaSource {
 
     func startObserving() {
         guard process == nil else { return }
-        guard toolIsPresent else { return }
+        guard let tool = Self.tool else { return }
 
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: Self.toolPath)
-        task.arguments = ["stream"]
+        task.executableURL = URL(fileURLWithPath: tool.perlPath)
+        task.arguments = Self.arguments(verb: ["stream"], tool: tool)
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
@@ -216,7 +302,7 @@ final class SystemMediaAdapter: MediaSource {
             try task.run()
         } catch {
             Self.logger.error(
-                "media-control stream failed to launch: \(error.localizedDescription, privacy: .public)"
+                "adapter stream failed to launch: \(error.localizedDescription, privacy: .public); system source inert"
             )
             pipe.fileHandleForReading.readabilityHandler = nil
             return
@@ -224,7 +310,11 @@ final class SystemMediaAdapter: MediaSource {
 
         process = task
         stdoutPipe = pipe
-        Self.logger.notice("Observing system now-playing via media-control stream")
+        Self.logger.notice(
+            """
+            Observing system now-playing: \(tool.perlPath, privacy: .public)             \(tool.scriptPath, privacy: .public)             framework=\(tool.frameworkPath, privacy: .public)
+            """
+        )
     }
 
     func stopObserving() {
@@ -256,23 +346,10 @@ final class SystemMediaAdapter: MediaSource {
         }
     }
 
-    private var toolIsPresent: Bool {
-        guard FileManager.default.isExecutableFile(atPath: Self.toolPath) else {
-            if !toolMissingLogged {
-                toolMissingLogged = true
-                Self.logger.notice(
-                    "media-control not found at \(Self.toolPath, privacy: .public); system source inert"
-                )
-            }
-            return false
-        }
-        return true
-    }
-
     private func handleStreamExit(status: Int32) {
         guard process != nil else { return } // already torn down by stopObserving
         Self.logger.error(
-            "media-control stream exited (status \(status, privacy: .public)); system source inert until refresh"
+            "adapter stream exited (status \(status, privacy: .public)); system source inert until refresh"
         )
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         process = nil
@@ -284,7 +361,7 @@ final class SystemMediaAdapter: MediaSource {
 
     /// Restarts a dead stream and re-publishes what is retained.
     ///
-    /// Deliberately not a synchronous `media-control get`, which is what the
+    /// Deliberately not a synchronous `get`, which is what the
     /// other two adapters do with their Apple Events: this is called on hover,
     /// and blocking the main actor on a subprocess launch would stutter the
     /// panel it was called to fill. The stream already delivers current state
@@ -528,18 +605,18 @@ final class SystemMediaAdapter: MediaSource {
 
     /// Fire and forget. Never waits: these run on the main actor in response
     /// to a button press, and the result arrives on the stream anyway.
-    private func runTool(_ arguments: [String]) {
-        guard toolIsPresent else { return }
+    private func runTool(_ verb: [String]) {
+        guard let tool = Self.tool else { return }
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: Self.toolPath)
-        task.arguments = arguments
+        task.executableURL = URL(fileURLWithPath: tool.perlPath)
+        task.arguments = Self.arguments(verb: verb, tool: tool)
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         do {
             try task.run()
         } catch {
             Self.logger.error(
-                "media-control \(arguments.first ?? "?", privacy: .public) failed to launch"
+                "adapter \(verb.first ?? "?", privacy: .public) failed to launch"
             )
         }
     }
