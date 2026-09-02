@@ -58,7 +58,7 @@ final class SystemStatsHistory {
     @ObservationIgnored private var count = 0
 
     @ObservationIgnored private var timer: Timer?
-    @ObservationIgnored private var subscribers = 0
+    @ObservationIgnored private(set) var subscribers = 0
     @ObservationIgnored private var displayAsleep = false
 
 

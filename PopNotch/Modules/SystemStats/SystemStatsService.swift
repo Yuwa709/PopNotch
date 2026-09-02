@@ -31,7 +31,7 @@ final class SystemStatsService {
 
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var previousTicks: CPUTicks?
-    @ObservationIgnored private var subscribers = 0
+    @ObservationIgnored private(set) var subscribers = 0
     @ObservationIgnored private var displayAsleep = false
 
     init() {

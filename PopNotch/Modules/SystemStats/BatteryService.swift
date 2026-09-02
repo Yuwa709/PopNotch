@@ -28,7 +28,7 @@ final class BatteryService {
     private(set) var snapshot: BatterySnapshot?
 
     @ObservationIgnored private var timer: Timer?
-    @ObservationIgnored private var subscribers = 0
+    @ObservationIgnored private(set) var subscribers = 0
     @ObservationIgnored private var displayAsleep = false
 
     /// Whether a timer is currently scheduled.
