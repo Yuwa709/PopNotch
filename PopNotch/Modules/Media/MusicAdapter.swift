@@ -25,7 +25,11 @@ final class MusicAdapter: MediaSource {
     static let bundleID = "com.apple.Music"
     static let notificationName = Notification.Name("com.apple.Music.playerInfo")
 
-    let sourceID = "music"
+    /// Spelled once. History rows carry this string and are matched against
+    /// it later, so a literal in two places would silently stop agreeing.
+    static let sourceIdentifier = "music"
+
+    let sourceID = MusicAdapter.sourceIdentifier
     var onUpdate: ((NowPlaying?) -> Void)?
     private(set) var permissionDenied = false
     private(set) var upNext: UpNextTrack?

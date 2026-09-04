@@ -100,6 +100,23 @@ protocol MediaSource: AnyObject {
     /// exposes a `lyrics` property; Spotify's dictionary has none. Often
     /// plain text, so the caller must check whether it parses as timed.
     func embeddedLyrics() -> String?
+
+    /// Shuffle and repeat, as the player last reported them. `nil` means
+    /// this source cannot answer — which is not the same as "off", and is
+    /// why these are optional: a control rendered from a guessed `false`
+    /// would show a state nobody read.
+    ///
+    /// Refreshed by `refresh()`, like `upNext` and `favorite`, rather than
+    /// fetched on access: reading them costs an Apple Event and this is read
+    /// from view code.
+    var shuffling: Bool? { get }
+    var repeating: Bool? { get }
+
+    /// Sets shuffle or repeat. A no-op unless the source answers the
+    /// matching property; callers check first so the UI never offers a dead
+    /// control.
+    func setShuffling(_ on: Bool)
+    func setRepeating(_ on: Bool)
 }
 
 /// Defaults for sources whose player exposes neither concept, so an adapter
@@ -109,6 +126,10 @@ extension MediaSource {
     var favorite: FavoriteState { .unsupported }
     func setFavorite(_ on: Bool) {}
     func embeddedLyrics() -> String? { nil }
+    var shuffling: Bool? { nil }
+    var repeating: Bool? { nil }
+    func setShuffling(_ on: Bool) {}
+    func setRepeating(_ on: Bool) {}
 }
 
 /// Runs an AppleScript source and reports the result or the error code.

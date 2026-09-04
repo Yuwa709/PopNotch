@@ -37,7 +37,11 @@ final class SpotifyAdapter: MediaSource {
     static let bundleID = "com.spotify.client"
     static let notificationName = Notification.Name("com.spotify.client.PlaybackStateChanged")
 
-    let sourceID = "spotify"
+    /// Spelled once. History rows carry this string and are matched against
+    /// it later, so a literal in two places would silently stop agreeing.
+    static let sourceIdentifier = "spotify"
+
+    let sourceID = SpotifyAdapter.sourceIdentifier
     var onUpdate: ((NowPlaying?) -> Void)?
     private(set) var permissionDenied = false
 
@@ -50,6 +54,14 @@ final class SpotifyAdapter: MediaSource {
     /// One-shot re-anchor after a transport command. Cancelled and replaced
     /// on rapid skipping so only the last press pulls.
     private var reanchorTask: Task<Void, Never>?
+
+    /// Shuffle and repeat, as of the last successful modes read.
+    ///
+    /// `nil` until one succeeds, and **kept across a failure** rather than
+    /// reset: a dropped Apple Event is not the user turning shuffle off, and
+    /// blanking the controls on a transient error would make them flicker.
+    private(set) var shuffling: Bool?
+    private(set) var repeating: Bool?
 
     /// Constant: Spotify exposes no readable favourite over AppleScript at
     /// all (see the header note on `starred`). With an account connected the
@@ -117,6 +129,90 @@ final class SpotifyAdapter: MediaSource {
         end tell
         """
 
+    // MARK: - Playback modes
+
+    /// Reads `shuffling` and `repeating`, and **nothing else**.
+    ///
+    /// Deliberately a separate script from `queryScript`, not fields 9 and
+    /// 10 on it. AppleScript evaluates a `return` expression as one unit, so
+    /// a single unimplemented property aborts the whole thing — that is the
+    /// `starred` incident, where one bad term took eight working fields with
+    /// it and silently killed album artwork for a release. Both properties
+    /// were probed live and answered (`shuffling: false`, `repeating: true`,
+    /// 2026-09-03), but "callable" is not "safe to co-locate": these two
+    /// share an expression only with each other, so the worst case is losing
+    /// the two controls, never the track.
+    private static let modesScript = """
+        tell application "Spotify"
+            return (shuffling as text) & "\n" & (repeating as text)
+        end tell
+        """
+
+    /// Parses the two-line modes output. Pure, for tests.
+    nonisolated static func parseModes(_ output: String) -> (shuffling: Bool, repeating: Bool)? {
+        let lines = output.components(separatedBy: "\n")
+        guard lines.count >= 2 else { return nil }
+        guard let shuffling = Bool(lines[0].trimmingCharacters(in: .whitespaces)),
+              let repeating = Bool(lines[1].trimmingCharacters(in: .whitespaces))
+        else { return nil }
+        return (shuffling, repeating)
+    }
+
+    /// Runs the modes script on the main query's cadence, in isolation.
+    ///
+    /// Never touches `permissionDenied` and never publishes a snapshot: a
+    /// failure here must not be able to change what the main query
+    /// concluded. It logs and leaves the last known state standing.
+    private func refreshPlaybackModes() {
+        switch AppleScriptRunner.run(Self.modesScript) {
+        case .success(let descriptor):
+            guard let output = descriptor.stringValue,
+                  let modes = Self.parseModes(output) else {
+                Self.logger.error("Modes read returned unparseable output; keeping last known state")
+                return
+            }
+            let changed = modes.shuffling != shuffling || modes.repeating != repeating
+            shuffling = modes.shuffling
+            repeating = modes.repeating
+            if changed {
+                Self.logger.notice(
+                    "Modes: shuffling=\(modes.shuffling, privacy: .public) repeating=\(modes.repeating, privacy: .public)")
+            }
+        case .failure(let failure):
+            // Logged, and that is all. The controls keep showing the last
+            // state that was actually read.
+            Self.logger.error(
+                "Modes read failed (\(failure.code, privacy: .public)); keeping last known state")
+        }
+    }
+
+    /// Sets shuffle. One-shot script of its own, for the same isolation
+    /// reason as the read.
+    func setShuffling(_ on: Bool) {
+        setMode("shuffling", to: on)
+    }
+
+    func setRepeating(_ on: Bool) {
+        setMode("repeating", to: on)
+    }
+
+    /// `property` is a compile-time literal from the two callers above and
+    /// never user input, so there is nothing here to escape.
+    private func setMode(_ property: String, to on: Bool) {
+        guard isPlayerRunning else { return }
+        let script = "tell application \"Spotify\" to set \(property) to \(on)"
+        switch AppleScriptRunner.run(script) {
+        case .success:
+            // Optimistic, then confirmed: the control responds immediately
+            // and the next refresh reads back what actually took.
+            if property == "shuffling" { shuffling = on } else { repeating = on }
+            Self.logger.notice("Set \(property, privacy: .public) to \(on, privacy: .public)")
+        case .failure(let failure):
+            Self.logger.error(
+                "Set \(property, privacy: .public) failed (\(failure.code, privacy: .public))")
+        }
+    }
+
     func refresh() {
         // Never Apple-Event a dead app: "tell application" would launch it.
         guard isPlayerRunning else {
@@ -145,6 +241,14 @@ final class SpotifyAdapter: MediaSource {
             Self.logger.notice(
                 "Pull ok: artwork=\(parsed.artworkURL == nil ? "none" : "url", privacy: .public), upNext=nil (no queue in dictionary)"
             )
+            // BEFORE publish, deliberately: publishing is what makes
+            // `MediaModule` mirror this adapter's extras onto its observable
+            // properties, so the modes must already be current when it looks.
+            // The old order read them after the publish, and the mirror was
+            // permanently one refresh behind. Still skipped when the query
+            // failed: no point probing modes on a pull path that is already
+            // dead.
+            refreshPlaybackModes()
             publish(parsed.snapshot)
             if let url = parsed.artworkURL { fetchArtwork(from: url) }
         case .failure(let failure):
@@ -170,6 +274,13 @@ final class SpotifyAdapter: MediaSource {
         if merged.artworkData == nil, let cache = artworkCache,
            merged.artworkIdentifier == lastSnapshot?.artworkIdentifier {
             merged.artworkData = cache.data
+        }
+        // Only the pull path parses an artwork URL; the notification path
+        // has no such field. Same track means the last one still describes
+        // it, so a notification-driven update does not blank it.
+        if merged.artworkURL == nil,
+           merged.artworkIdentifier == lastSnapshot?.artworkIdentifier {
+            merged.artworkURL = lastSnapshot?.artworkURL
         }
         lastSnapshot = merged
         onUpdate?(merged)
@@ -380,6 +491,10 @@ enum SpotifyParsing {
 
         guard snapshot.hasContent else { return nil }
         let url = lines[6].isEmpty ? nil : lines[6]
+        // Carried on the snapshot as well as in the tuple: history stores a
+        // URL rather than bytes, and this is the only source that has one.
+        // The tuple member stays because `fetchArtwork` wants it regardless.
+        snapshot.artworkURL = url
         return (snapshot, url)
     }
 }

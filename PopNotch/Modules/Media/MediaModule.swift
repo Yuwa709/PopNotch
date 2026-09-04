@@ -68,6 +68,14 @@ final class MediaModule: NotchModule {
     /// Account-backed extras (nil until the user connects Spotify).
     private(set) var upNext: SpotifyUpNext?
     private(set) var likedCurrent: Bool?
+    /// Shuffle and repeat, mirrored from the active source the same way
+    /// `likedCurrent` and `upNext` are. The mirror is the point: the
+    /// adapters are not `@Observable`, so a view reading them directly
+    /// renders whatever was true at its last unrelated re-evaluation.
+    /// These are observable stored properties, and writing them is what
+    /// makes the buttons redraw.
+    private(set) var shuffling: Bool?
+    private(set) var repeating: Bool?
     /// Official artist metadata: avatar, follower count, genres.
     private(set) var artistInfo: SpotifyArtistInfo?
     private(set) var artistImageData: Data?
@@ -273,8 +281,16 @@ final class MediaModule: NotchModule {
         guard let active = activeSource else {
             setUpNext(nil)
             likedCurrent = nil
+            shuffling = nil
+            repeating = nil
             return
         }
+        // Above the account guard, deliberately: the Web API owns Up Next
+        // and the like, but the playback modes come from the scripting
+        // interface for every Spotify user, connected or not. Below it they
+        // would never mirror for a connected account.
+        shuffling = active.shuffling
+        repeating = active.repeating
         if active is SpotifyAdapter {
             guard !accountConnected else { return } // Web API path owns these
             setUpNext(nil)
@@ -283,6 +299,38 @@ final class MediaModule: NotchModule {
             setUpNext(active.upNext)
             likedCurrent = active.favorite.value
         }
+    }
+
+    // MARK: - Playback modes
+
+    /// Whether shuffle and repeat apply to whoever owns the notch.
+    ///
+    /// Spotify only this task. Music's dictionary has the terms but they are
+    /// unread here, and the system source's payload carries neither — so the
+    /// controls are **absent** for those, not dimmed. A control that cannot
+    /// act must not occupy space pretending it might.
+    ///
+    /// Reads the mirror, so the panel re-renders when a read changes it.
+    var showsPlaybackModes: Bool {
+        activeSource is SpotifyAdapter && shuffling != nil
+    }
+
+    var isShuffling: Bool { shuffling == true }
+    var isRepeating: Bool { repeating == true }
+
+    func toggleShuffle() {
+        guard let on = shuffling else { return }
+        activeSource?.setShuffling(!on)
+        // Optimistic, onto the MIRROR, which is what redraws the glyph under
+        // the click. The adapter made the same assumption internally; the
+        // next modes read confirms both or corrects both.
+        shuffling = !on
+    }
+
+    func toggleRepeat() {
+        guard let on = repeating else { return }
+        activeSource?.setRepeating(!on)
+        repeating = !on
     }
 
     /// The Up Next slot is removed from the layout entirely when there is
@@ -486,19 +534,42 @@ final class MediaModule: NotchModule {
         onContentReflow?()
     }
 
-    /// Opens what is playing in the Spotify app. This activates Spotify —
-    /// permitted because it is a direct response to the user tapping the
-    /// artwork, not a hover (hard rule 4 protects against hover-stealing).
+    /// Brings the Spotify app forward, and does nothing else.
     ///
-    /// Prefers the playback *context* — the playlist or collection the user
-    /// started from — over the track URI, which lands on the canonical album
-    /// page instead of wherever they actually were. Falls back to the track
-    /// when there is no context: autoplay and radio genuinely have none, and
-    /// so does every case where the account is not connected.
-    func openInSpotify() {
-        guard let uri = playbackContextURI ?? nowPlaying?.artworkIdentifier,
-              let url = URL(string: uri) else { return }
-        NSWorkspace.shared.open(url)
+    /// This activates Spotify — permitted because it is a direct response to
+    /// the user tapping the artwork, not a hover (hard rule 4 protects
+    /// against hover-stealing).
+    ///
+    /// **Deliberately not a navigation.** It previously opened a
+    /// `spotify:` URI — the playback context when the Web API had supplied
+    /// one, the track otherwise — which made the same tap land somewhere
+    /// different depending on whether an account happened to be connected,
+    /// and could move the user off what they were looking at. Bringing the
+    /// app forward is the one behaviour that is the same every time.
+    ///
+    /// Behaves like clicking Spotify in the Dock, which is stronger than
+    /// activation in two ways that both matter here: it **launches** Spotify
+    /// if it is quit, and it sends a reopen event if it is already running,
+    /// which restores a window the user had minimised.
+    /// `NSRunningApplication.activate()` does neither — against a minimised
+    /// Spotify it brings forward an app with nothing on screen.
+    func activateSpotify() {
+        guard let url = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: SpotifyAdapter.bundleID)
+        else {
+            Self.logger.error("Artwork tap: Spotify is not installed; nothing to open")
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        // Captured rather than reached through `Self`: the handler runs off
+        // the main actor.
+        let logger = Self.logger
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+            guard let error else { return }
+            logger.error(
+                "Artwork tap: could not open Spotify - \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Toggles the full-lyrics takeover. Pins the notch open while on.

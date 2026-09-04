@@ -142,7 +142,7 @@ struct MediaExpandedView: View {
             VStack(spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
                     // Tapping the artwork opens the track in Spotify.
-                    Button { module.openInSpotify() } label: {
+                    Button { module.activateSpotify() } label: {
                         if let image = module.artworkImage {
                             // Ken Burns drift, palette glow, and parallax
                             // tilt. Slightly larger than the old flat thumb
@@ -206,21 +206,6 @@ struct MediaExpandedView: View {
                             .padding(.vertical, 3)
                             .background(Capsule().fill(.green.opacity(0.16)))
                         }
-                        if let next = module.upNext {
-                            VStack(alignment: .trailing, spacing: 1) {
-                                Text("UP NEXT")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle((module.artworkAccent ?? .mediaAccent).opacity(0.9))
-                                Text(next.title)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .lineLimit(1)
-                                Text(next.artist)
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(.white.opacity(0.55))
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: 110, alignment: .trailing)
-                        }
                         // The four-dot wave indicator lived here; the real
                         // spectrum replaces it. (The compact wing keeps the
                         // wave — it is the collapsed-state indicator.)
@@ -270,10 +255,23 @@ struct MediaExpandedView: View {
                 transportButton("forward.fill", size: 20) { module.send(.nextTrack) }
             }
             // Favourite sits bottom-leading, where the reference keeps its
-            // secondary actions.
+            // secondary actions. Shuffle goes BEFORE it so its position is
+            // fixed: the heart is conditional, and ordering them the other
+            // way would slide shuffle sideways whenever a track's favourite
+            // state became unknown.
             HStack {
+                if module.showsPlaybackModes {
+                    ModeControl(symbol: "shuffle",
+                                isOn: module.isShuffling,
+                                accent: module.artworkAccent) { module.toggleShuffle() }
+                }
                 MediaFavoriteControl(module: module)
                 Spacer()
+                if module.showsPlaybackModes {
+                    ModeControl(symbol: "repeat",
+                                isOn: module.isRepeating,
+                                accent: module.artworkAccent) { module.toggleRepeat() }
+                }
             }
         }
     }
@@ -305,6 +303,34 @@ struct MediaExpandedView: View {
 /// Hidden entirely when there is no value to show, which is what a denied
 /// Automation prompt looks like. A greyed-out heart of unknown truth is
 /// worse than no heart.
+/// Shuffle or repeat, as a two-state toggle.
+///
+/// Two states only. Spotify's `repeating` is a Boolean in its scripting
+/// dictionary — there is no off/all/one to read — so rendering a third state
+/// would be showing something no source can answer.
+///
+/// Sized to match `MediaFavoriteControl` exactly (28x28), which is what
+/// keeps the controls row at the transport buttons' 32pt and the panel at
+/// its existing height.
+private struct ModeControl: View {
+    let symbol: String
+    let isOn: Bool
+    let accent: Color?
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(isOn ? (accent ?? .mediaAccent) : .white.opacity(0.55))
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(symbol) \(isOn ? "on" : "off")")
+    }
+}
+
 private struct MediaFavoriteControl: View {
     let module: MediaModule
 
@@ -565,7 +591,7 @@ struct MediaFullLyricsView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                Button { module.openInSpotify() } label: {
+                Button { module.activateSpotify() } label: {
                     ArtworkThumb(data: module.nowPlaying?.artworkData, side: 30, corner: 6)
                 }
                 .buttonStyle(.plain)

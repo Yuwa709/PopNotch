@@ -19,6 +19,15 @@ final class StubMediaSource: MediaSource {
     /// Commands the module routed here, for asserting command routing.
     private(set) var sent: [MediaCommand] = []
 
+    /// Playback modes, settable so mirror tests can drive them. The recorded
+    /// set-calls assert routing without any AppleScript.
+    var shuffling: Bool?
+    var repeating: Bool?
+    private(set) var shuffleSetTo: Bool?
+    private(set) var repeatSetTo: Bool?
+    func setShuffling(_ on: Bool) { shuffleSetTo = on }
+    func setRepeating(_ on: Bool) { repeatSetTo = on }
+
     func startObserving() {}
     func stopObserving() {}
     func refresh() {}

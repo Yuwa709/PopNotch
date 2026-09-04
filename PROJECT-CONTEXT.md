@@ -176,6 +176,8 @@ Every property in either adapter's query script, executed individually against t
 | Spotify | `id of current track` | ✅ `spotify:track:…` URI |
 | Spotify | `starred of current track` | ❌ **-10000**, unimplemented despite `access="r"` in the sdef. Removed in `83bd628`; must not return |
 | Spotify | `popularity of current track` | ✅ (not in the query; verified during the starred bisect) |
+| Spotify | `shuffling` | ✅ returned `false`, 2026-09-03. Read in its OWN script, never appended to the eight-field query — see `SpotifyAdapter.modesScript` |
+| Spotify | `repeating` | ✅ returned `true`, 2026-09-03. **Boolean, not a three-state mode**: the dictionary exposes no off/all/one, so no third state can be rendered |
 | Music | `player state` | ✅ `stopped` |
 | Music | `shuffle enabled` | ✅ `false` |
 | Music | `fixed indexing` | ✅ `false` |

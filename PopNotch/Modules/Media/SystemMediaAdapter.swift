@@ -35,7 +35,7 @@ final class SystemMediaAdapter: MediaSource {
     /// Resolved once from `Bundle.main`, never hardcoded. The single
     /// exception is the interpreter, which cannot come from the bundle —
     /// see `perlPath`.
-    struct AdapterTool {
+    nonisolated struct AdapterTool: Equatable, Sendable {
         let perlPath: String
         let scriptPath: String
         let frameworkPath: String
@@ -62,20 +62,75 @@ final class SystemMediaAdapter: MediaSource {
     /// AppleScript adapters are unaffected.
     private nonisolated static let perlPath = "/usr/bin/perl"
 
-    /// Resolved once, on first use. `nil` means this source cannot run —
-    /// permanently, for the life of the process, because neither the bundle
-    /// nor `/usr/bin/perl` changes underneath a running app.
+    /// What the resolve concluded — the tool, or the reason there isn't one.
+    ///
+    /// Holding the reason rather than collapsing to nil is the point: the
+    /// resolve runs once per process, and `startObserving()` needs to say
+    /// *why* it is giving up long after that moment has passed.
+    nonisolated enum Resolution: Equatable, Sendable {
+        case resolved(AdapterTool)
+        case unavailable(Capability)
+    }
+
+    /// Resolved once, on first use — permanently, for the life of the
+    /// process, because neither the bundle nor `/usr/bin/perl` changes
+    /// underneath a running app.
     ///
     /// Caching matters: `refresh()` runs on hover, so an uncached check would
     /// stat the filesystem every time the user brushed the notch.
-    private nonisolated static let tool: AdapterTool? = resolveTool()
+    private nonisolated static let resolution: Resolution = resolveTool()
 
-    /// Locates the vendored adapter, logging once at `.notice` on the way out.
+    /// The resolved tool, or nil. Unchanged in meaning for the call sites
+    /// that only need to know whether they can spawn anything.
+    private nonisolated static var tool: AdapterTool? {
+        if case .resolved(let tool) = resolution { return tool }
+        return nil
+    }
+
+    /// Maps filesystem facts to a resolution. Pure and silent, so the mapping
+    /// is a test rather than a bundle layout — the same split as
+    /// `arguments(verb:tool:)` and `SystemMediaParsing`.
     ///
-    /// Being a lazily-initialised `static let`, this body runs at most once
-    /// per process, which is what keeps a missing helper from filling the log
-    /// on every hover.
-    private nonisolated static func resolveTool() -> AdapterTool? {
+    /// `perlExists` and `perlExecutable` are separate because the old single
+    /// `isExecutableFile` check could not distinguish a macOS that dropped
+    /// the bundled runtime from one where the file is there but the bit is
+    /// off, and the fix for those is not the same.
+    nonisolated static func resolve(
+        perlPath: String,
+        perlExists: Bool,
+        perlExecutable: Bool,
+        scriptPath: String?,
+        frameworkPath: String?,
+        testClientPath: String?
+    ) -> Resolution {
+        guard perlExists else {
+            return .unavailable(.perlUnavailable("\(perlPath) does not exist"))
+        }
+        guard perlExecutable else {
+            return .unavailable(.perlUnavailable("\(perlPath) exists but is not executable"))
+        }
+        guard let scriptPath else {
+            return .unavailable(.bundleComponentMissing("mediaremote-adapter.pl"))
+        }
+        guard let frameworkPath else {
+            return .unavailable(.bundleComponentMissing("MediaRemoteAdapter.framework"))
+        }
+        return .resolved(AdapterTool(
+            perlPath: perlPath,
+            scriptPath: scriptPath,
+            frameworkPath: frameworkPath,
+            // Optional by design: only the `test` verb uses it, and this
+            // source does not call `test`. Missing it costs the health probe,
+            // not the stream, so it must not gate availability.
+            testClientPath: testClientPath
+        ))
+    }
+
+    /// Gathers the real filesystem facts and hands them to `resolve`.
+    ///
+    /// Being a lazily-initialised `static let`'s initialiser, this body runs
+    /// at most once per process.
+    private nonisolated static func resolveTool() -> Resolution {
         // Unit tests run against the real app as their host, so registering
         // this source would have every `xcodebuild test` spawn a live adapter
         // — and xctest kills the host rather than quitting it, so each run
@@ -86,38 +141,31 @@ final class SystemMediaAdapter: MediaSource {
         // the only thing in the app that forks a child: a test must never
         // depend on a subprocess it did not ask for, and the argument vector
         // is covered by `arguments(verb:tool:)` without launching anything.
+        //
+        // `.unknown`, not a failure case: nothing is broken, the source was
+        // deliberately not started. Calling it a missing component would put
+        // a lie in the capability the tests then read back.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
             logger.notice("Running under XCTest; system now-playing not started")
-            return nil
+            return .unavailable(.unknown)
         }
-        guard FileManager.default.isExecutableFile(atPath: perlPath) else {
-            logger.notice(
-                "\(perlPath, privacy: .public) is missing; system now-playing unavailable"
-            )
-            return nil
-        }
-        guard let script = Bundle.main.url(forResource: "mediaremote-adapter", withExtension: "pl") else {
-            logger.notice("mediaremote-adapter.pl missing from the bundle; system now-playing unavailable")
-            return nil
-        }
-        guard let framework = Bundle.main.privateFrameworksURL?
-            .appendingPathComponent("MediaRemoteAdapter.framework"),
-            FileManager.default.fileExists(atPath: framework.path)
-        else {
-            logger.notice("MediaRemoteAdapter.framework missing from the bundle; system now-playing unavailable")
-            return nil
-        }
-        // Optional by design: only the `test` verb uses it, and this source
-        // does not call `test`. Missing it costs the health probe, not the
-        // stream, so it must not gate availability.
+        let script = Bundle.main.url(forResource: "mediaremote-adapter", withExtension: "pl")
+        let framework = Bundle.main.privateFrameworksURL?
+            .appendingPathComponent("MediaRemoteAdapter.framework")
+        let frameworkExists = framework.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         let testClient = Bundle.main.url(forAuxiliaryExecutable: "MediaRemoteAdapterTestClient")
         if testClient == nil {
             logger.notice("MediaRemoteAdapterTestClient missing from the bundle; health probe unavailable")
         }
-        return AdapterTool(
+        // Not logged here. The capability transition in `startObserving()` is
+        // the one line about this, emitted at the moment it matters and
+        // guarded against repeating on every hover.
+        return resolve(
             perlPath: perlPath,
-            scriptPath: script.path,
-            frameworkPath: framework.path,
+            perlExists: FileManager.default.fileExists(atPath: perlPath),
+            perlExecutable: FileManager.default.isExecutableFile(atPath: perlPath),
+            scriptPath: script?.path,
+            frameworkPath: frameworkExists ? framework?.path : nil,
             testClientPath: testClient?.path
         )
     }
@@ -167,7 +215,95 @@ final class SystemMediaAdapter: MediaSource {
     /// permission that gates the other two adapters does not apply. A missing
     /// or unlaunchable tool is a *capability* problem, not a permission one,
     /// and must not raise the in-notch "allow Automation" banner.
+    ///
+    /// `capability` is the separate axis that records the capability problem.
+    /// The two never interact: a dead adapter is still not a denied one.
     private(set) var permissionDenied = false
+
+    // MARK: - Capability
+
+    /// Why this source is or is not working.
+    ///
+    /// Every failure below used to be a single log line and nothing else —
+    /// the reason was known at the moment it happened and discarded in the
+    /// same function. This retains it, the way `SpotifyAdapter` retains
+    /// `permissionDenied`, so the answer to "why is there no track" survives
+    /// past the instant it was available.
+    ///
+    /// Deliberately carries no UI meaning. Nothing renders from it yet.
+    nonisolated enum Capability: Equatable, Sendable {
+        /// Not resolved yet. Also what a deliberate `stopObserving()` leaves
+        /// behind: the stream is not broken, it is simply not running.
+        case unknown
+        /// A payload parsed. The stream is alive and the tool works.
+        case ok
+        /// `/usr/bin/perl` is missing, or present but not executable. The
+        /// string says which — the two are different problems and the old
+        /// `isExecutableFile` check could not tell them apart.
+        case perlUnavailable(String)
+        /// Something the app ships is not in the bundle. The string names it.
+        case bundleComponentMissing(String)
+        /// `Process.run()` threw. The string is `localizedDescription`.
+        case launchFailed(String)
+        /// The stream exited. `crashed` distinguishes a signal from an
+        /// ordinary non-zero exit — `terminationReason`, which was available
+        /// on the Process all along and never read.
+        case exited(status: Int32, crashed: Bool, stderr: String?)
+
+        /// One line for the log. Truncated: stderr is retained at 2KB, which
+        /// is far more than a log line should carry.
+        var logDescription: String {
+            switch self {
+            case .unknown: return "unknown"
+            case .ok: return "ok"
+            case .perlUnavailable(let why): return "perl unavailable - \(why)"
+            case .bundleComponentMissing(let what): return "bundle component missing - \(what)"
+            case .launchFailed(let why): return "launch failed - \(why)"
+            case .exited(let status, let crashed, let stderr):
+                let how = crashed ? "crashed (signal \(status))" : "exited \(status)"
+                guard let stderr, !stderr.isEmpty else { return "\(how), no stderr" }
+                let head = stderr.prefix(Self.stderrLogLimit)
+                let suffix = stderr.count > Self.stderrLogLimit
+                    ? "... (+\(stderr.count - Self.stderrLogLimit) more)" : ""
+                return "\(how), stderr: \(head)\(suffix)"
+            }
+        }
+
+        /// Enough for a perl error and its file/line, short enough that a
+        /// looping tool cannot swamp the log.
+        static let stderrLogLimit = 200
+
+        /// Whether this state is something going wrong, so the transition
+        /// log can carry the right level. Both `.notice` and `.error`
+        /// persist to disk; only `.error` is filterable as a fault.
+        var isFailure: Bool {
+            switch self {
+            case .unknown, .ok: return false
+            case .perlUnavailable, .bundleComponentMissing, .launchFailed, .exited: return true
+            }
+        }
+    }
+
+    /// Why this source is or is not working. Instance state, not static: the
+    /// resolve is cached per process but the stream can die at any time.
+    private(set) var capability: Capability = .unknown
+
+    /// Records a capability, logging only when it actually changes.
+    ///
+    /// The change guard is what keeps this off the hover path: `refresh()`
+    /// runs on hover and re-enters `startObserving()`, so an unguarded log
+    /// would write a line every time the user brushed the notch. `.notice`
+    /// rather than `.info` because this is exactly the forensic evidence
+    /// CLAUDE.md keeps out of the memory-only levels.
+    private func setCapability(_ new: Capability) {
+        guard capability != new else { return }
+        capability = new
+        if new.isFailure {
+            Self.logger.error("Capability: \(new.logDescription, privacy: .public)")
+        } else {
+            Self.logger.notice("Capability: \(new.logDescription, privacy: .public)")
+        }
+    }
 
     /// Gates `logCommandFailureOnce`. Not reset by `stopObserving`: it is
     /// about this process's log, not about one stream's lifetime.
@@ -175,6 +311,10 @@ final class SystemMediaAdapter: MediaSource {
 
     private var process: Process?
     private var stdoutPipe: Pipe?
+    private var stderrPipe: Pipe?
+    /// Retained so the termination handler can read what the child said on
+    /// its way out, and so teardown can drop the handler with the pipe.
+    private var stderrCollector: StderrCollector?
 
     /// The merged payload, retained across lines. A `diff` line carries only
     /// the fields that changed, so this is merged into rather than replaced —
@@ -248,14 +388,32 @@ final class SystemMediaAdapter: MediaSource {
 
     func startObserving() {
         guard process == nil else { return }
-        guard let tool = Self.tool else { return }
+        // Was a bare `return`: the reason had been logged once at resolve
+        // time and then existed nowhere. Now the cached reason is adopted,
+        // so a source that never starts can say why it never started.
+        guard case .resolved(let tool) = Self.resolution else {
+            if case .unavailable(let reason) = Self.resolution { setCapability(reason) }
+            return
+        }
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: tool.perlPath)
         task.arguments = Self.arguments(verb: ["stream"], tool: tool)
         let pipe = Pipe()
         task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
+
+        // Was `FileHandle.nullDevice`, which threw away the tool's own
+        // account of its death before anything could read it. A pipe nobody
+        // drains fills its buffer and blocks the child, so the handler below
+        // always reads; the collector caps what it *keeps* separately.
+        let errorPipe = Pipe()
+        task.standardError = errorPipe
+        let collector = StderrCollector()
+        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            collector.append(chunk)
+        }
 
         // Line assembly and JSON decoding run on the pipe's own queue; only
         // finished envelopes cross to the main actor. A line carrying artwork
@@ -297,23 +455,31 @@ final class SystemMediaAdapter: MediaSource {
         // `refresh()` is the recovery path.
         task.terminationHandler = { [weak self] finished in
             let status = finished.terminationStatus
+            // Available on this object all along and never read. Without it
+            // a segfaulting adapter and one exiting 1 are the same line.
+            let crashed = finished.terminationReason == .uncaughtSignal
+            // Best effort: the last stderr bytes may still be in flight on
+            // the pipe's queue when this fires. Whatever arrived is far more
+            // than the nothing that was kept before.
+            let stderr = collector.text
             Task { @MainActor [weak self] in
-                self?.handleStreamExit(status: status)
+                self?.handleStreamExit(status: status, crashed: crashed, stderr: stderr)
             }
         }
 
         do {
             try task.run()
         } catch {
-            Self.logger.error(
-                "adapter stream failed to launch: \(error.localizedDescription, privacy: .public); system source inert"
-            )
+            setCapability(.launchFailed(error.localizedDescription))
             pipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
             return
         }
 
         process = task
         stdoutPipe = pipe
+        stderrPipe = errorPipe
+        stderrCollector = collector
         Self.logger.notice(
             """
             Observing system now-playing: \(tool.perlPath, privacy: .public)             \(tool.scriptPath, privacy: .public)             framework=\(tool.frameworkPath, privacy: .public)
@@ -323,6 +489,7 @@ final class SystemMediaAdapter: MediaSource {
 
     func stopObserving() {
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
         if let process, process.isRunning {
             // Cleared first: this is an expected exit and must not be logged
             // as the stream dying.
@@ -331,6 +498,12 @@ final class SystemMediaAdapter: MediaSource {
         }
         process = nil
         stdoutPipe = nil
+        stderrPipe = nil
+        stderrCollector = nil
+        // Back to `.unknown`, not a failure: nothing broke, the stream was
+        // asked to stop. Leaving `.ok` behind would claim a live stream that
+        // is not there.
+        setCapability(.unknown)
         emptyTask?.cancel()
         emptyTask = nil
         state = SystemMediaPayload()
@@ -350,14 +523,29 @@ final class SystemMediaAdapter: MediaSource {
         }
     }
 
-    private func handleStreamExit(status: Int32) {
+    /// Records what an exit means, independent of whether a stream is up.
+    ///
+    /// Internal and split out for the same reason `ingest` and
+    /// `arguments(verb:tool:)` are: the mapping is the part worth asserting,
+    /// and driving it through a real subprocess would make the test depend
+    /// on spawning one — which `resolveTool`'s XCTest guard exists to
+    /// prevent in the first place.
+    func recordStreamExit(status: Int32, crashed: Bool, stderr: String?) {
+        setCapability(.exited(status: status, crashed: crashed, stderr: stderr))
+    }
+
+    private func handleStreamExit(status: Int32, crashed: Bool, stderr: String?) {
         guard process != nil else { return } // already torn down by stopObserving
-        Self.logger.error(
-            "adapter stream exited (status \(status, privacy: .public)); system source inert until refresh"
-        )
+        // Replaces the old status-only `.error`. The transition line carries
+        // strictly more — the signal/exit distinction and the tool's own
+        // stderr — and is the single line about this event.
+        recordStreamExit(status: status, crashed: crashed, stderr: stderr)
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
         process = nil
         stdoutPipe = nil
+        stderrPipe = nil
+        stderrCollector = nil
         publish()
     }
 
@@ -381,6 +569,10 @@ final class SystemMediaAdapter: MediaSource {
     /// driven directly in tests, the way `LineAssembler` is: everything above
     /// this point is a subprocess and a pipe.
     func ingest(_ envelopes: [SystemMediaEnvelope]) {
+        // Reaching here means a line came off the pipe and decoded, which is
+        // the only proof that perl, the script and the framework all work.
+        // Guarded by `setCapability`, so this logs once and not per line.
+        setCapability(.ok)
         for envelope in envelopes { apply(envelope) }
         publish()
     }
@@ -655,24 +847,46 @@ final class SystemMediaAdapter: MediaSource {
         task.executableURL = URL(fileURLWithPath: tool.perlPath)
         task.arguments = Self.arguments(verb: verb, tool: tool)
         task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
 
-        // Exit status only — never the output, which stays on nullDevice.
+        // stdout stays on nullDevice; stderr no longer does. `Invalid
+        // function name` — the 1.0.4 regression — was written here and
+        // discarded, leaving only an exit code to infer it from. Drained by
+        // the handler so the child cannot block on a full pipe.
+        let errorPipe = Pipe()
+        task.standardError = errorPipe
+        let collector = StderrCollector()
+        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            collector.append(chunk)
+        }
+
         // This exists because its absence is what hid the 1.0.4 bug for a
         // whole release: perl launched cleanly, rejected the argument, and
         // exited 1 with nobody looking. A rejected command is now visible in
         // the log instead of being a button that silently does nothing.
+        //
+        // Deliberately does NOT touch `capability`. That axis describes the
+        // stream; one refused command says nothing about whether the stream
+        // is alive, and conflating them would report a dead source because a
+        // button press failed.
         task.terminationHandler = { [weak self] finished in
             let status = finished.terminationStatus
+            let crashed = finished.terminationReason == .uncaughtSignal
+            let stderr = collector.text
+            errorPipe.fileHandleForReading.readabilityHandler = nil
             guard status != 0 else { return }
             Task { @MainActor [weak self] in
-                self?.logCommandFailureOnce("\(label): adapter exited \(status)")
+                let how = crashed ? "crashed (signal \(status))" : "adapter exited \(status)"
+                let detail = stderr.map { ": \($0.prefix(Capability.stderrLogLimit))" } ?? ""
+                self?.logCommandFailureOnce("\(label): \(how)\(detail)")
             }
         }
 
         do {
             try task.run()
         } catch {
+            errorPipe.fileHandleForReading.readabilityHandler = nil
             logCommandFailureOnce("\(label): \(error.localizedDescription)")
             return false
         }
@@ -721,6 +935,44 @@ nonisolated final class LineAssembler {
             buffer = Data(buffer[buffer.index(after: newline)...])
         }
         return complete
+    }
+}
+
+/// Drains a child's stderr, retaining only the first `limit` bytes.
+///
+/// Draining is not optional. A pipe nobody reads fills its buffer and the
+/// child blocks forever on the next write, so the handler always consumes
+/// what is available; the cap governs what is *kept*, which is a separate
+/// question. A tool failing in a loop can produce unbounded stderr, and this
+/// is retained on an adapter that runs for days.
+///
+/// Locked because the read handler and the termination handler are different
+/// queues. Not `private`, so the cap can be asserted directly.
+nonisolated final class StderrCollector {
+
+    /// 2KB: several perl errors with file and line, nowhere near enough to
+    /// matter against the app's memory budget.
+    static let limit = 2048
+
+    private var buffer = Data()
+    private let lock = NSLock()
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        let room = Self.limit - buffer.count
+        guard room > 0 else { return } // still drained by the caller, just not kept
+        buffer.append(chunk.prefix(room))
+    }
+
+    /// What was kept, or nil if the child said nothing.
+    var text: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !buffer.isEmpty else { return nil }
+        let decoded = String(decoding: buffer, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return decoded.isEmpty ? nil : decoded
     }
 }
 

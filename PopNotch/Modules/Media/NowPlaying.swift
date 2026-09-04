@@ -13,6 +13,15 @@ struct NowPlaying: Equatable {
     /// view layer, not here, so the model stays cheap to compare and copy.
     var artworkData: Data?
     var artworkIdentifier: String?
+    /// Where the artwork can be fetched from, when the player says. Only
+    /// Spotify's scripting interface offers one; Music hands over raw bytes
+    /// through an Apple Event and the system source base64 in its payload,
+    /// so both leave this nil.
+    ///
+    /// Deliberately absent from `==` below: it is derived from the track, so
+    /// a snapshot that gains it mid-track is the same player state, and
+    /// counting it would publish an extra update for no visible change.
+    var artworkURL: String?
     var duration: TimeInterval?
     var elapsed: TimeInterval?
     var isPlaying: Bool = false
