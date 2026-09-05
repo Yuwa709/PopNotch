@@ -103,6 +103,23 @@ final class MediaModule: NotchModule {
     /// can render the bars where the wave indicator used to sit. Nil in tests.
     @ObservationIgnored let visualizer: AudioVisualizerService?
     @ObservationIgnored private let webAPI: SpotifyWebAPI?
+    /// The open panel's live-sync clock. Exists only between
+    /// `didBecomeVisible()` and `didResignVisible()`, and is stopped by
+    /// display sleep in between — hard rule 9, all three clauses.
+    @ObservationIgnored private var liveSyncTimer: Timer?
+    @ObservationIgnored private var liveSyncWanted = false
+    @ObservationIgnored private var displayAsleep = false
+    @ObservationIgnored private var sleepObservers: [NSObjectProtocol] = []
+
+    /// Two seconds: the three-property read costs ~50ms on the main actor, so
+    /// this is a 2.5% duty cycle. One second would double it for a playhead
+    /// the local projection already keeps smooth between reads.
+    static let liveSyncInterval: TimeInterval = 2
+
+    /// Whether the clock is running. Exposed so "nothing polls while the panel
+    /// is closed" is a test rather than a comment.
+    var isLiveSyncing: Bool { liveSyncTimer != nil }
+
     @ObservationIgnored private var lastTrackKey: String?
     @ObservationIgnored private var hadPresence = false
     @ObservationIgnored private var hadExpandedContent = false
@@ -198,6 +215,35 @@ final class MediaModule: NotchModule {
             }
             source.startObserving()
         }
+
+        // Display sleep stops the clock even with the panel pinned open —
+        // the same observers every polling service in this app carries.
+        // Block-based rather than selector-based: this class is not an
+        // NSObject, and `SpotifyAdapter` already uses this exact form.
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObservers = [
+            center.addObserver(forName: NSWorkspace.screensDidSleepNotification,
+                               object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.displayAsleep = true
+                    self?.updateLiveSync()
+                }
+            },
+            center.addObserver(forName: NSWorkspace.screensDidWakeNotification,
+                               object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.displayAsleep = false
+                    self?.updateLiveSync()
+                }
+            }
+        ]
+    }
+
+    deinit {
+        // This app runs for days; a timer that outlives its module compounds.
+        liveSyncTimer?.invalidate()
+        let center = NSWorkspace.shared.notificationCenter
+        for observer in sleepObservers { center.removeObserver(observer) }
     }
 
     /// Picks which player owns the notch when more than one is running.
@@ -473,6 +519,42 @@ final class MediaModule: NotchModule {
         // This is what triggers the one-time Automation permission prompt.
         sources.forEach { $0.refresh() }
         refreshAccountExtras()
+        liveSyncWanted = true
+        updateLiveSync()
+    }
+
+    // MARK: - Live sync
+
+    /// Runs the clock iff the panel wants it and the display is awake.
+    /// One decision point, so the two conditions cannot drift apart.
+    private func updateLiveSync() {
+        let shouldRun = liveSyncWanted && !displayAsleep
+        guard shouldRun != (liveSyncTimer != nil) else { return }
+        if shouldRun {
+            let timer = Timer.scheduledTimer(withTimeInterval: Self.liveSyncInterval,
+                                             repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.liveSyncTick() }
+            }
+            // `.common`: the panel is open *because* the mouse is tracking,
+            // and a `.default`-mode timer does not fire during tracking.
+            RunLoop.main.add(timer, forMode: .common)
+            liveSyncTimer = timer
+            Self.logger.notice("Live sync started (\(Self.liveSyncInterval, privacy: .public)s)")
+        } else {
+            liveSyncTimer?.invalidate()
+            liveSyncTimer = nil
+            Self.logger.notice("Live sync stopped")
+        }
+    }
+
+    /// One beat. Two skips, both cheap and both before any Apple Event:
+    /// a source that is not Spotify has nothing this reads, and a paused
+    /// player has a position that is not moving and modes that rarely
+    /// change — they are read on the next play instead.
+    private func liveSyncTick() {
+        guard let spotify = activeSource as? SpotifyAdapter else { return }
+        guard nowPlaying?.isPlaying == true else { return }
+        spotify.refreshLive()
     }
 
     // MARK: - Account extras
@@ -616,7 +698,10 @@ final class MediaModule: NotchModule {
     }
 
     func didResignVisible() {
-        // Observation is push-based with no timers, so it stays on — that is
-        // how track changes can pop the notch while we are off screen.
+        // Observation is push-based and stays on — that is how track changes
+        // can pop the notch while we are off screen. The one timer this
+        // module owns, the live-sync clock, stops here (hard rule 9).
+        liveSyncWanted = false
+        updateLiveSync()
     }
 }

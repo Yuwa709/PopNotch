@@ -148,6 +148,84 @@ final class SpotifyAdapter: MediaSource {
         end tell
         """
 
+    // MARK: - Live poll
+
+    /// Exactly three properties — the three that go stale while the panel is
+    /// open and arrive by no notification: position (a seek in Spotify's own
+    /// window), shuffling, repeating. Nothing else, deliberately: each
+    /// property is one ~16.7ms IPC round-trip on the main actor, so this
+    /// costs ~50ms where the eight-field query costs 167ms. Play/pause and
+    /// track changes already arrive by notification and are not read here.
+    ///
+    /// No `player state` guard, which would be a fourth property: the caller
+    /// skips the tick while paused, so a stopped player is excluded upstream
+    /// and a failure here costs one logged miss, not the track.
+    ///
+    /// Its own script, separate from `queryScript` — same isolation reason as
+    /// `modesScript`, and it must stay that way.
+    private static let liveScriptSource = """
+        tell application "Spotify"
+            return (player position as text) & "\\n" & (shuffling as text) & "\\n" & (repeating as text)
+        end tell
+        """
+
+    /// Compiled once, on first use, and reused for every tick. Nil only if
+    /// the static source above fails to compile, which is a build-time bug.
+    private lazy var liveScript: NSAppleScript? = AppleScriptRunner.compile(Self.liveScriptSource)
+
+    /// Parses the three-line live output. Pure, for tests.
+    nonisolated static func parseLive(_ output: String)
+        -> (position: TimeInterval, shuffling: Bool, repeating: Bool)? {
+        guard output != "stopped" else { return nil }
+        let lines = output.components(separatedBy: "\n")
+        guard lines.count >= 3,
+              // AppleScript renders reals with the locale's decimal separator.
+              let position = Double(lines[0].trimmingCharacters(in: .whitespaces)
+                                        .replacingOccurrences(of: ",", with: ".")),
+              let shuffling = Bool(lines[1].trimmingCharacters(in: .whitespaces)),
+              let repeating = Bool(lines[2].trimmingCharacters(in: .whitespaces))
+        else { return nil }
+        return (position, shuffling, repeating)
+    }
+
+    /// One narrow read for the open panel. Re-anchors position and refreshes
+    /// the modes; publishes nothing new.
+    ///
+    /// Position goes out by the mechanism `reanchor()` already uses for
+    /// transport: the *existing* snapshot with `elapsed` and `capturedAt`
+    /// re-stamped, so the local projection restarts from the truth. No new
+    /// `NowPlaying` is built here.
+    ///
+    /// Modes are written before the publish, not after — publishing is what
+    /// makes `MediaModule` mirror them, so they must be current when it looks.
+    /// A failure logs and leaves every last-known value standing.
+    func refreshLive() {
+        guard isPlayerRunning, let script = liveScript else { return }
+        switch AppleScriptRunner.run(script) {
+        case .success(let descriptor):
+            guard let output = descriptor.stringValue,
+                  let live = Self.parseLive(output) else {
+                Self.logger.error("Live read returned unparseable output; keeping last known state")
+                return
+            }
+            let modesChanged = live.shuffling != shuffling || live.repeating != repeating
+            shuffling = live.shuffling
+            repeating = live.repeating
+            if modesChanged {
+                Self.logger.notice(
+                    "Modes: shuffling=\(live.shuffling, privacy: .public) repeating=\(live.repeating, privacy: .public)")
+            }
+            guard var snapshot = lastSnapshot else { return }
+            snapshot.elapsed = live.position
+            snapshot.capturedAt = Date()
+            lastSnapshot = snapshot
+            onUpdate?(snapshot)
+        case .failure(let failure):
+            Self.logger.error(
+                "Live read failed (\(failure.code, privacy: .public)); keeping last known state")
+        }
+    }
+
     /// Parses the two-line modes output. Pure, for tests.
     nonisolated static func parseModes(_ output: String) -> (shuffling: Bool, repeating: Bool)? {
         let lines = output.components(separatedBy: "\n")
