@@ -111,6 +111,13 @@ struct NotchOverlayView: View {
     /// overflow, shoving the band up under the screen edge (the clipped-
     /// buttons bug, measured 2026-09-01: root 82pt in a 42pt window).
     var chromeOnly: Bool = false
+    /// Capybara theme: draw `CapybaraPanelShape` around the body instead of
+    /// the card, and push the content column and the chrome band inward by
+    /// `silhouetteInsets` so both stay on the body. Declared after
+    /// `chromeOnly` so the memberwise initialiser's existing argument order
+    /// is unchanged. Ignored for chrome-only and every collapsed state.
+    var capybaraTheme: Bool = false
+    var silhouetteInsets: PanelSilhouetteInsets = .none
 
     /// The panel's visible side border, used by the content column.
     ///
@@ -135,12 +142,19 @@ struct NotchOverlayView: View {
         // neck-height, where the 34pt expanded bottom radius reads as a
         // blob rather than a bar.
         let expanded = content != nil
+        let capybara = expanded && !chromeOnly && capybaraTheme
+        let lobes = capybara ? silhouetteInsets : .none
         ZStack(alignment: .top) {
-            NotchShape(
-                topRadius: expanded && !chromeOnly ? NotchShape.expandedTopRadius : NotchShape.compactTopRadius,
-                bottomRadius: expanded && !chromeOnly ? NotchShape.expandedBottomRadius : NotchShape.compactBottomRadius
-            )
-            .fill(Color.black)
+            if capybara {
+                CapybaraPanelShape(insets: lobes)
+                    .fill(Color.black)
+            } else {
+                NotchShape(
+                    topRadius: expanded && !chromeOnly ? NotchShape.expandedTopRadius : NotchShape.compactTopRadius,
+                    bottomRadius: expanded && !chromeOnly ? NotchShape.expandedBottomRadius : NotchShape.compactBottomRadius
+                )
+                .fill(Color.black)
+            }
             if leadingWing != nil || trailingWing != nil {
                 // Centered in each wing: hugging the outer corners looked
                 // crowded, hugging the housing looked glued to it (both
@@ -162,7 +176,8 @@ struct NotchOverlayView: View {
                 // reach it, which the width floor prevents. See `bandLayout`.
                 let band = Self.bandLayout(panelWidth: panelWidth,
                                            housingLocal: housingLocalRange,
-                                           groups: chromeGroups)
+                                           groups: chromeGroups,
+                                           bodyInsets: lobes)
                 HStack(spacing: 0) {
                     if let topLeadingAccessory { topLeadingAccessory }
                     Spacer(minLength: 0)
@@ -179,6 +194,11 @@ struct NotchOverlayView: View {
                     .padding(.top, neckHeight + 20)
                     .padding(.horizontal, Self.contentSideInset)
                     .padding(.bottom, 20)
+                    // The lobes are outside the body: the column shifts by
+                    // exactly their width so it stays put on screen. Zero,
+                    // and so a no-op, whenever the card is drawn.
+                    .padding(.leading, lobes.leading)
+                    .padding(.trailing, lobes.trailing)
                     .modifier(RevealFromNotch(enabled: revealContent))
             }
         }
@@ -224,18 +244,25 @@ struct NotchOverlayView: View {
         var isClamped: Bool { leadingClamped || trailingClamped }
     }
 
+    /// `bodyInsets` is the capybara silhouette's sideways growth: the groups
+    /// hang off the *body's* corners, not the lobes', so each base inset
+    /// grows by its side's lobe. Zero for the card, which leaves every
+    /// number below exactly as it was.
     nonisolated static func bandLayout(panelWidth: CGFloat,
                                        housingLocal: ClosedRange<CGFloat>,
-                                       groups: NotchPanel.ChromeGroupWidths) -> BandLayout {
+                                       groups: NotchPanel.ChromeGroupWidths,
+                                       bodyInsets: PanelSilhouetteInsets = .none) -> BandLayout {
         let gap = bandGapRange(housingLocal: housingLocal)
-        var layout = BandLayout(leadingInset: accessorySideInset,
-                                trailingInset: accessorySideInset)
+        let leadingBase = accessorySideInset + bodyInsets.leading
+        let trailingBase = accessorySideInset + bodyInsets.trailing
+        var layout = BandLayout(leadingInset: leadingBase,
+                                trailingInset: trailingBase)
 
-        if accessorySideInset + groups.leading > gap.lowerBound {
+        if leadingBase + groups.leading > gap.lowerBound {
             layout.leadingInset = max(0, gap.lowerBound - groups.leading)
             layout.leadingClamped = true
         }
-        let trailingGroupMinX = panelWidth - accessorySideInset - groups.trailing
+        let trailingGroupMinX = panelWidth - trailingBase - groups.trailing
         if trailingGroupMinX < gap.upperBound {
             layout.trailingInset = max(0, panelWidth - gap.upperBound - groups.trailing)
             layout.trailingClamped = true

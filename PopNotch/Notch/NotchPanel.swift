@@ -76,7 +76,9 @@ final class NotchPanel: NSPanel {
         chromeOnly: Bool = false,
         reveal: Bool = false,
         topLeadingAccessory: AnyView? = nil,
-        topTrailingAccessory: AnyView? = nil
+        topTrailingAccessory: AnyView? = nil,
+        capybaraTheme: Bool = false,
+        silhouetteInsets: PanelSilhouetteInsets = .none
     ) {
         hostingView?.rootView = NotchOverlayView(
             content: content,
@@ -89,7 +91,9 @@ final class NotchPanel: NSPanel {
             housingLocalRange: housingLocalRange,
             panelWidth: panelWidth,
             chromeGroups: chromeGroups,
-            chromeOnly: chromeOnly
+            chromeOnly: chromeOnly,
+            capybaraTheme: capybaraTheme,
+            silhouetteInsets: silhouetteInsets
         )
     }
 
@@ -235,9 +239,10 @@ final class NotchPanel: NSPanel {
 
     static func expandedRect(on screen: NSScreen, contentSize: CGSize,
                              chromeOnly: Bool = false,
-                             chromeGroups: ChromeGroupWidths = ChromeGroupWidths()) -> NSRect {
+                             chromeGroups: ChromeGroupWidths = ChromeGroupWidths(),
+                             capybara: Bool = false) -> NSRect {
         expandedRect(housing: notchRect(on: screen), contentSize: contentSize,
-                     chromeOnly: chromeOnly, chromeGroups: chromeGroups)
+                     chromeOnly: chromeOnly, chromeGroups: chromeGroups, capybara: capybara)
     }
 
     /// The narrowest panel on which both chrome groups sit at
@@ -280,9 +285,16 @@ final class NotchPanel: NSPanel {
     /// growth. Width and placement are shared with every other expanded
     /// state, so the bar and a floor-width card sit at the same frame and
     /// the transition between them is a pure height change.
+    ///
+    /// `capybara` adds the themed silhouette's lobes *outside* the body:
+    /// every floor and ceiling below applies to the body exactly as before,
+    /// and the body is centred on the housing exactly as before; the frame
+    /// then grows left by the head and right by the rump. False, the
+    /// default, is today's card to the point.
     nonisolated static func expandedRect(housing: NSRect, contentSize: CGSize,
                                          chromeOnly: Bool = false,
-                                         chromeGroups: ChromeGroupWidths = ChromeGroupWidths()) -> NSRect {
+                                         chromeGroups: ChromeGroupWidths = ChromeGroupWidths(),
+                                         capybara: Bool = false) -> NSRect {
         let legacyMinWidth = housing.width + (leadingWingWidth + 24) * 2
         let minWidth = max(legacyMinWidth, bandMinWidth(housingWidth: housing.width,
                                                         groups: chromeGroups))
@@ -301,10 +313,12 @@ final class NotchPanel: NSPanel {
             // silhouette, where the square window edge cut it into a hard box.
             height = (min(max(contentSize.height, minHeight), 460)).rounded(.up)
         }
+        let lobes = capybara && !chromeOnly
+            ? CapybaraPanelShape.insets(bodyHeight: height) : .none
         return NSRect(
-            x: (housing.midX + opticalCenterOffset - width / 2).rounded(),
+            x: (housing.midX + opticalCenterOffset - width / 2).rounded() - lobes.leading,
             y: housing.maxY - height,
-            width: width,
+            width: width + lobes.total,
             height: height
         )
     }
@@ -320,21 +334,42 @@ final class NotchPanel: NSPanel {
     func setState(_ state: State, on screen: NSScreen,
                   expandedContentSize: CGSize = .zero,
                   chromeOnly: Bool = false,
-                  chromeGroups: ChromeGroupWidths = ChromeGroupWidths()) {
+                  chromeGroups: ChromeGroupWidths = ChromeGroupWidths(),
+                  capybara: Bool = false) {
         let visible: NSRect
         switch state {
         case .idle: visible = Self.notchRect(on: screen)
         case .compact: visible = Self.compactRect(on: screen)
         case .expanded: visible = Self.expandedRect(on: screen, contentSize: expandedContentSize,
-                                                    chromeOnly: chromeOnly, chromeGroups: chromeGroups)
+                                                    chromeOnly: chromeOnly, chromeGroups: chromeGroups,
+                                                    capybara: capybara)
         }
-        let label = state.rawValue + (chromeOnly && state == .expanded ? " (chrome only)" : "")
+        let themed = capybara && state == .expanded && !chromeOnly
+        let label = state.rawValue
+            + (chromeOnly && state == .expanded ? " (chrome only)" : "")
+            + (themed ? " (capybara)" : "")
         // Inflate by the hover halo: sides and downward, top stays flush.
         var target = visible
         target.origin.x -= Self.hoverMargin
         target.size.width += Self.hoverMargin * 2
         target.origin.y -= Self.hoverMargin
         target.size.height += Self.hoverMargin
+
+        // Hover follows the silhouette: slabs of the capybara plus halo for
+        // the themed card, and nil — one area over the whole frame, exactly
+        // as before — for everything else. Set before the frame moves so the
+        // rebuild AppKit triggers on the resize already sees them. Computed
+        // in the frame's top-left space and flipped into view coordinates.
+        if themed {
+            let slabs = CapybaraPanelShape.hoverSlabs(
+                frameSize: target.size, halo: Self.hoverMargin,
+                insets: CapybaraPanelShape.insets(bodyHeight: visible.height))
+            (contentView as? NotchHoverView)?.hoverRegions = slabs.map {
+                NSRect(x: $0.minX, y: target.height - $0.maxY, width: $0.width, height: $0.height)
+            }
+        } else {
+            (contentView as? NotchHoverView)?.hoverRegions = nil
+        }
 
         // The overlay must fit the frame it is being given. SwiftUI offers
         // no complaint when it does not: NSHostingView centres an oversized
