@@ -401,36 +401,17 @@ private struct MediaProgressBar: View {
     }
 
     private func track(fraction: Double, duration: TimeInterval) -> some View {
-        let themed = module.capybaraThemeEnabled
-        return GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.22))
-                    Capsule().fill(accent)
-                        .frame(width: max(6, geo.size.width * fraction))
-                        .shadow(color: accent.opacity(0.6), radius: 4)
-                    // No playhead dot (tried, user-rejected); the whole track
-                    // drags, so the handle was decoration.
-                }
-                .frame(height: MediaRunnerLayout.trackHeight)
-                // Anchored 4pt off the row's floor rather than centred: in
-                // the plain 14pt row that is exactly where centring put it,
-                // and in the themed row it leaves the runner's height above.
-                .padding(.bottom, MediaRunnerLayout.trackInset)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                if themed {
-                    FinishFlagView()
-                        .padding(.bottom, MediaRunnerLayout.trackInset + MediaRunnerLayout.trackHeight)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                        .allowsHitTesting(false)
-                    // Static: it moves only with the playhead, on the
-                    // TimelineView tick above. The bob is a separate task.
-                    CapybaraRunnerView()
-                        .offset(x: MediaRunnerLayout.runnerOriginX(fraction: fraction,
-                                                                   trackWidth: geo.size.width))
-                        .allowsHitTesting(false)
-                }
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.22))
+                Capsule().fill(accent)
+                    .frame(width: max(6, geo.size.width * fraction))
+                    .shadow(color: accent.opacity(0.6), radius: 4)
+                // No playhead dot (tried, user-rejected); the whole track
+                // drags, so the handle was decoration.
             }
+            .frame(height: 6)
+            .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -446,12 +427,7 @@ private struct MediaProgressBar: View {
                     }
             )
         }
-        .frame(height: MediaRunnerLayout.rowHeight(themed: themed))
-        // The time labels centre on the track, not on the row, so they stay
-        // put when the themed row grows upward.
-        .alignmentGuide(VerticalAlignment.center) { d in
-            d[.bottom] - MediaRunnerLayout.trackInset - MediaRunnerLayout.trackHeight / 2
-        }
+        .frame(height: 14)
     }
 
     private func format(_ seconds: TimeInterval) -> String {

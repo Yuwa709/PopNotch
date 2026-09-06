@@ -161,6 +161,73 @@ final class CapybaraPanelShapeTests: XCTestCase {
         XCTAssertEqual(bottom.maxY, frame.height, "the halo below the underside is kept")
     }
 
+    /// The flicker fix, stated as the property it has to deliver: a straight
+    /// path from the housing down into the head lobe never leaves the tracked
+    /// region. Before the edges were made convex this failed across the neck,
+    /// where the corner above the head sat inside the frame and outside every
+    /// slab, so a verified exit fired over a plainly visible panel.
+    func testStraightPathFromTheNotchToTheHeadStaysTracked() {
+        let halo = NotchPanel.hoverMargin
+        let frame = CGSize(width: drawn.width + 2 * halo, height: drawn.height + halo)
+        let slabs = CapybaraPanelShape.hoverSlabs(frameSize: frame, halo: halo, insets: lobes)
+        let start = CGPoint(x: halo + lobes.leading + body.width / 2, y: 4)      // under the housing
+        let end = CGPoint(x: halo + 12, y: CapybaraPanelShape.snoutTop * scale + 10)  // the snout
+        for i in 0...200 {
+            let t = CGFloat(i) / 200
+            let p = CGPoint(x: start.x + (end.x - start.x) * t,
+                            y: start.y + (end.y - start.y) * t)
+            XCTAssertTrue(slabs.contains { $0.contains(p) }, "untracked at t=\(t): \(p)")
+        }
+    }
+
+    /// Why that path is safe: convex left edges and concave right edges have
+    /// no re-entrant step for a cursor to fall through.
+    func testTrackedEdgesAreConvexDownThePanel() {
+        let halo = NotchPanel.hoverMargin
+        let frame = CGSize(width: drawn.width + 2 * halo, height: drawn.height + halo)
+        let slabs = CapybaraPanelShape.hoverSlabs(frameSize: frame, halo: halo, insets: lobes)
+            .sorted { $0.minY < $1.minY }
+        let l = slabs.map(\.minX), r = slabs.map(\.maxX)
+        XCTAssertGreaterThan(l.count, 10)
+        for i in 1..<(l.count - 1) {
+            XCTAssertGreaterThanOrEqual(l[i-1] - 2*l[i] + l[i+1], -0.001, "left not convex at \(i)")
+            XCTAssertLessThanOrEqual(r[i-1] - 2*r[i] + r[i+1], 0.001, "right not concave at \(i)")
+        }
+    }
+
+    func testMakeConvexOnlyEverMovesEdgesOutward() {
+        let v: [CGFloat] = [10, 4, 9, 2, 8, 3]
+        let lo = CapybaraPanelShape.makeConvex(v, lower: true)
+        let hi = CapybaraPanelShape.makeConvex(v, lower: false)
+        for i in v.indices {
+            XCTAssertLessThanOrEqual(lo[i], v[i], "minorant must not move inward at \(i)")
+            XCTAssertGreaterThanOrEqual(hi[i], v[i], "majorant must not move inward at \(i)")
+        }
+        for i in 1..<(v.count - 1) {
+            XCTAssertGreaterThanOrEqual(lo[i-1] - 2*lo[i] + lo[i+1], -0.001)
+            XCTAssertLessThanOrEqual(hi[i-1] - 2*hi[i] + hi[i+1], 0.001)
+        }
+    }
+
+    /// The anchoring fix. The panel's top edge is pinned to the screen and it
+    /// grows downward, so a region must keep its distance from the top at
+    /// every intermediate height of the 0.34s expand and 0.22s collapse.
+    /// Anchored to the target height instead, every region slid by
+    /// (target - current) for the whole animation.
+    func testHoverRegionsStayAtThePanelTopWhileTheFrameAnimates() {
+        let view = NotchHoverView(frame: NSRect(x: 0, y: 0, width: 200, height: 300))
+        view.hoverRegions = [CGRect(x: 20, y: 0, width: 160, height: 30),
+                             CGRect(x: 10, y: 30, width: 180, height: 30)]
+        for h in [80, 150, 300] as [CGFloat] {
+            view.frame = NSRect(x: 0, y: 0, width: 200, height: h)
+            view.updateTrackingAreas()
+            let top = view.trackingAreas.map(\.rect).max { $0.maxY < $1.maxY }
+            XCTAssertEqual(top?.maxY ?? -1, h, accuracy: 0.001,
+                           "top region must sit on the panel's top edge at bounds height \(h)")
+            XCTAssertEqual(top?.minY ?? -1, h - 30, accuracy: 0.001, "and keep its height")
+        }
+    }
+
     func testMultiRegionExitTestFollowsTheRegions() {
         let screenTop: CGFloat = 956
         let top = NSRect(x: 100, y: 900, width: 400, height: 56)     // flush with the screen

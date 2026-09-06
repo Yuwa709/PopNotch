@@ -41,16 +41,37 @@ final class NotchHoverView: NSView {
     /// listener re-derive which one happened.
     var onFileDragChange: ((Bool) -> Void)?
 
-    /// Where hover counts, in this view's coordinates. `nil` is the whole
-    /// bounds — one tracking area, today's behaviour, and every collapsed
-    /// state. The panel sets slabs of the capybara silhouette here so the
-    /// tracking follows that outline: `NSTrackingArea` is rectangular, and
-    /// the only way a cursor sliding sideways out of a curved shape produces
-    /// an event is if it crosses an area edge on the way. Exit verification
-    /// and the frame-change re-check judge against the same regions, so the
-    /// three can never disagree about what "over the panel" means.
+    /// Where hover counts, as rectangles measured from the panel's **top**
+    /// edge (top-left origin, y increasing downward — the space
+    /// `CapybaraPanelShape.hoverSlabs` produces). `nil` is the whole bounds:
+    /// one tracking area, today's behaviour, and every collapsed state. The
+    /// panel sets slabs of the capybara silhouette here so the tracking
+    /// follows that outline: `NSTrackingArea` is rectangular, and the only
+    /// way a cursor sliding sideways out of a curved shape produces an event
+    /// is if it crosses an area edge on the way. Exit verification and the
+    /// frame-change re-check judge against the same regions, so the three can
+    /// never disagree about what "over the panel" means.
+    ///
+    /// Top-anchored deliberately, and flipped into this view's bottom-left
+    /// coordinates against the **current** bounds on every rebuild. The
+    /// panel's top edge is pinned to the screen edge and it grows downward,
+    /// so a stationary cursor keeps a constant distance from that top while
+    /// the frame animates. Storing them already flipped against the *target*
+    /// height left every region displaced by (target − current) for the whole
+    /// 0.34s expand and 0.22s collapse — at a mid-expand height the panel's
+    /// real top row was covered by the slab meant for a row 100pt down — so a
+    /// mid-animation exit could be misjudged in either direction.
     var hoverRegions: [NSRect]? {
         didSet { updateTrackingAreas() }
+    }
+
+    /// `hoverRegions` in this view's coordinates, flipped against the bounds
+    /// as they are right now; the whole bounds when none are set.
+    private func liveRegions() -> [NSRect] {
+        guard let hoverRegions else { return [bounds] }
+        return hoverRegions.map {
+            NSRect(x: $0.minX, y: bounds.height - $0.maxY, width: $0.width, height: $0.height)
+        }
     }
 
     private var isHovering = false
@@ -109,7 +130,7 @@ final class NotchHoverView: NSView {
         // Clipped to the current bounds: mid-animation the frame is not yet
         // the one the regions were computed for. Should that leave nothing,
         // fall back to the whole bounds rather than track nothing at all.
-        var rects = (hoverRegions ?? [bounds]).map { $0.intersection(bounds) }.filter { !$0.isEmpty }
+        var rects = liveRegions().map { $0.intersection(bounds) }.filter { !$0.isEmpty }
         if rects.isEmpty { rects = [bounds] }
         for rect in rects {
             addTrackingArea(NSTrackingArea(
@@ -124,7 +145,7 @@ final class NotchHoverView: NSView {
     /// The hover regions in screen coordinates, for the verified exit.
     private func screenRegions() -> [NSRect] {
         guard let window else { return [] }
-        return (hoverRegions ?? [bounds]).map { window.convertToScreen(convert($0, to: nil)) }
+        return liveRegions().map { window.convertToScreen(convert($0, to: nil)) }
     }
 
     /// Whether the cursor still counts as over the panel, for the purpose of

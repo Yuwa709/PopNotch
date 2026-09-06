@@ -142,7 +142,7 @@ struct MusicSettingsTab: View {
             } header: {
                 Text("Theme")
             } footer: {
-                Text("A capybara walks along the scrub bar as the track plays, towards a finish flag at the end. Off by default.")
+                Text("Shapes the expanded notch like a capybara lying down, head to the left. Off by default.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -197,14 +197,16 @@ struct MusicSettingsTab: View {
         )
     }
 
-    /// Persists the choice and applies it to the live module in one place,
-    /// exactly as `visualizerBinding` does.
+    /// Persists the choice and applies it live in one place, the way
+    /// `visualizerBinding` does. The coordinator reads the stored flag when
+    /// it renders, so re-rendering is the whole of "apply": an open panel
+    /// changes silhouette immediately, a closed one opens with the new one.
     private var capybaraThemeBinding: Binding<Bool> {
         Binding(
             get: { settings.settings.capybaraThemeEnabled },
             set: { on in
                 settings.update { $0.capybaraThemeEnabled = on }
-                (NSApp.delegate as? AppDelegate)?.mediaModule?.capybaraThemeEnabled = on
+                (NSApp.delegate as? AppDelegate)?.coordinator.refreshPresentation()
             }
         )
     }

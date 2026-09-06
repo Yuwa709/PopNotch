@@ -95,19 +95,6 @@ final class MediaModule: NotchModule {
     /// the player, and stays open regardless of hover until dismissed.
     private(set) var showFullLyrics = false
 
-    /// Capybara theme: a sprite walks the scrub bar towards a finish flag.
-    /// Applied from the stored setting by AppDelegate at launch and live from
-    /// the Settings toggle, the way the visualiser flag is. Flipping it
-    /// changes the progress row's height, so it reflows the open panel
-    /// exactly as lyrics appearing does.
-    var capybaraThemeEnabled = false {
-        didSet {
-            guard oldValue != capybaraThemeEnabled else { return }
-            Self.logger.notice("Capybara theme \(self.capybaraThemeEnabled ? "on" : "off", privacy: .public)")
-            onContentReflow?()
-        }
-    }
-
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private let account: SpotifyAccount?

@@ -126,12 +126,29 @@ struct CapybaraPanelShape: Shape {
     // MARK: - Hover
 
     /// Horizontal slabs covering the silhouette plus its hover halo, in the
-    /// panel frame's top-left space. `NSTrackingArea` is rectangular, so the
-    /// outline is followed by stacking one area per slab: leaving the
-    /// silhouette sideways now crosses a slab edge and fires `mouseExited`,
-    /// where one bounds-sized area would fire nothing and hold the panel
-    /// open from an empty corner. Slabs are supersets of their band of the
-    /// path (widest sampled row, plus the halo), never subsets.
+    /// panel frame's **top-left** space (y increasing downward), which is the
+    /// space `NotchHoverView.hoverRegions` is defined in. `NSTrackingArea` is
+    /// rectangular, so the outline is followed by stacking one area per slab:
+    /// leaving the silhouette sideways crosses a slab edge and fires
+    /// `mouseExited`, where one bounds-sized area would fire nothing and hold
+    /// the panel open from an empty corner. Slabs are supersets of their band
+    /// of the path (widest sampled row, plus the halo), never subsets.
+    ///
+    /// The edge sequences are then made **convex** down the panel — the
+    /// discrete convex hull of the sampled edges, left as a convex minorant
+    /// and right as a concave majorant — which fills the neck's concavity in
+    /// the *tracking* while the drawing keeps it.
+    ///
+    /// That fill is not cosmetic. Without it the corner above the head is
+    /// inside the frame and outside every slab, and the natural hand path
+    /// from the notch across to the head lobe crosses it: dwell there past
+    /// the 0.1s grace and a *verified* exit fires over a panel that is still
+    /// plainly visible, so it collapses, the hand returns, and it reopens —
+    /// the flicker diagnosed on 2026-09-06 (16 open/close cycles in 100
+    /// seconds). Convex edges cannot trap a straight path between two
+    /// tracked points, which is exactly the guarantee that was missing. The
+    /// hull only ever moves an edge outward, so every point of the
+    /// silhouette stays covered.
     nonisolated static func hoverSlabs(frameSize: CGSize, halo: CGFloat,
                                        insets: PanelSilhouetteInsets,
                                        count: Int = 20) -> [CGRect] {
@@ -142,25 +159,64 @@ struct CapybaraPanelShape: Shape {
         let path = outline(in: drawn, insets: insets).cgPath
         let cx = drawn.minX + insets.leading + (drawn.width - insets.total) / 2
         let slabH = drawn.height / CGFloat(count)
-        var slabs: [CGRect] = []
+
+        var lefts = [CGFloat](repeating: .infinity, count: count)
+        var rights = [CGFloat](repeating: -.infinity, count: count)
+        let samples = 5
         for i in 0..<count {
             let t0 = drawn.minY + slabH * CGFloat(i)
-            var left = CGFloat.greatestFiniteMagnitude
-            var right = -CGFloat.greatestFiniteMagnitude
-            let samples = 5
             for k in 0..<samples {
                 let y = t0 + slabH * (CGFloat(k) + 0.5) / CGFloat(samples)
                 guard path.contains(CGPoint(x: cx, y: y), using: .winding) else { continue }
-                left = min(left, edge(of: path, atY: y, inside: cx, outside: drawn.minX - 1))
-                right = max(right, edge(of: path, atY: y, inside: cx, outside: drawn.maxX + 1))
+                lefts[i] = min(lefts[i], edge(of: path, atY: y, inside: cx, outside: drawn.minX - 1))
+                rights[i] = max(rights[i], edge(of: path, atY: y, inside: cx, outside: drawn.maxX + 1))
             }
+        }
+        let hullL = makeConvex(lefts, lower: true)
+        let hullR = makeConvex(rights, lower: false)
+
+        var slabs: [CGRect] = []
+        for i in 0..<count {
+            guard lefts[i].isFinite, rights[i].isFinite else { continue }
+            let left = min(lefts[i], hullL[i]), right = max(rights[i], hullR[i])
             guard left <= right else { continue }
-            var slab = CGRect(x: left - halo, y: t0, width: right - left + 2 * halo, height: slabH)
+            var slab = CGRect(x: left - halo, y: drawn.minY + slabH * CGFloat(i),
+                              width: right - left + 2 * halo, height: slabH)
             if i == count - 1 { slab.size.height += halo }   // the halo below the underside
             slab = slab.intersection(frame)
             if !slab.isEmpty { slabs.append(slab) }
         }
         return slabs.isEmpty ? [frame] : slabs
+    }
+
+    /// A sequence of slab edges replaced by its discrete convex hull, so the
+    /// tracked outline has no concave step for a cursor to fall through.
+    /// `lower` builds the convex minorant (left edges), otherwise the concave
+    /// majorant (right edges). Andrew's monotone chain over `(index, edge)`,
+    /// with the hull's segments interpolated back across the indices they
+    /// span. Non-finite entries are bands the path does not reach; they are
+    /// skipped rather than hulled through.
+    nonisolated static func makeConvex(_ v: [CGFloat], lower: Bool) -> [CGFloat] {
+        let idx = v.indices.filter { v[$0].isFinite }
+        guard idx.count >= 3 else { return v }
+        var hull: [Int] = []
+        for i in idx {
+            while hull.count >= 2 {
+                let a = hull[hull.count - 2], b = hull[hull.count - 1]
+                let cross = CGFloat(b - a) * (v[i] - v[a]) - (v[b] - v[a]) * CGFloat(i - a)
+                if lower ? (cross <= 0) : (cross >= 0) { hull.removeLast() } else { break }
+            }
+            hull.append(i)
+        }
+        guard hull.count >= 2 else { return v }
+        var out = v
+        for k in 0..<(hull.count - 1) {
+            let a = hull[k], b = hull[k + 1]
+            for i in a...b {
+                out[i] = v[a] + (v[b] - v[a]) * CGFloat(i - a) / CGFloat(b - a)
+            }
+        }
+        return out
     }
 
     /// The path's edge on one row, by bisection between a point known to be

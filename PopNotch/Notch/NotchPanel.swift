@@ -358,15 +358,15 @@ final class NotchPanel: NSPanel {
         // Hover follows the silhouette: slabs of the capybara plus halo for
         // the themed card, and nil — one area over the whole frame, exactly
         // as before — for everything else. Set before the frame moves so the
-        // rebuild AppKit triggers on the resize already sees them. Computed
-        // in the frame's top-left space and flipped into view coordinates.
+        // rebuild AppKit triggers on the resize already sees them. Handed
+        // over in the shape's own top-left space and left that way: the hover
+        // view flips them against its current bounds every rebuild, so they
+        // stay put on screen for the whole animation rather than riding the
+        // frame's growing bottom edge.
         if themed {
-            let slabs = CapybaraPanelShape.hoverSlabs(
+            (contentView as? NotchHoverView)?.hoverRegions = CapybaraPanelShape.hoverSlabs(
                 frameSize: target.size, halo: Self.hoverMargin,
                 insets: CapybaraPanelShape.insets(bodyHeight: visible.height))
-            (contentView as? NotchHoverView)?.hoverRegions = slabs.map {
-                NSRect(x: $0.minX, y: target.height - $0.maxY, width: $0.width, height: $0.height)
-            }
         } else {
             (contentView as? NotchHoverView)?.hoverRegions = nil
         }

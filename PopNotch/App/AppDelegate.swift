@@ -45,11 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// one of its sources; this is a reference, not ownership.
     private(set) var systemMediaSource: SystemMediaAdapter?
 
-    /// The media module, held only so the capybara theme toggle can apply
-    /// live from Settings. The coordinator owns it as a registered module;
-    /// this is a reference, not ownership.
-    private(set) var mediaModule: MediaModule?
-
     /// The media sources to register, honouring `SystemMediaAdapter.isRegistered`.
     ///
     /// Split out so the flag is consulted in exactly one place rather than
@@ -206,10 +201,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // launch — and so the source is ready the moment `isRegistered`
         // flips, without this wiring having to be rebuilt.
         self.systemMediaSource = systemMedia
-        // The stored theme, applied before the module registers so its first
-        // expanded layout already has the right row height.
-        media.capybaraThemeEnabled = settings.settings.capybaraThemeEnabled
-        self.mediaModule = media
         media.onLiveActivityRequest = { [weak self] request in
             self?.coordinator.requestLiveActivity(request)
         }
