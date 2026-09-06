@@ -137,6 +137,16 @@ struct MusicSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section {
+                Toggle("Capybara theme", isOn: capybaraThemeBinding)
+            } header: {
+                Text("Theme")
+            } footer: {
+                Text("A capybara walks along the scrub bar as the track plays, towards a finish flag at the end. Off by default.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Spotify") {
             if account.isConnected {
                 LabeledContent("Account") {
@@ -183,6 +193,18 @@ struct MusicSettingsTab: View {
             set: { on in
                 settings.update { $0.visualizerEnabled = on }
                 visualizer.setEnabled(on)
+            }
+        )
+    }
+
+    /// Persists the choice and applies it to the live module in one place,
+    /// exactly as `visualizerBinding` does.
+    private var capybaraThemeBinding: Binding<Bool> {
+        Binding(
+            get: { settings.settings.capybaraThemeEnabled },
+            set: { on in
+                settings.update { $0.capybaraThemeEnabled = on }
+                (NSApp.delegate as? AppDelegate)?.mediaModule?.capybaraThemeEnabled = on
             }
         )
     }

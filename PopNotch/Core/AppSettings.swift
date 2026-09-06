@@ -23,7 +23,8 @@ struct AppSettings: Codable, Equatable {
     /// v5: added showMenuBarIcon.
     /// v6: added preferMusicOverVideo.
     /// v7: added spotifyAccountConnected.
-    static let currentSchemaVersion = 7
+    /// v8: added capybaraThemeEnabled.
+    static let currentSchemaVersion = 8
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -92,11 +93,17 @@ struct AppSettings: Codable, Equatable {
     /// token itself stays in the Keychain and never touches UserDefaults.
     var spotifyAccountConnected: Bool?
 
+    /// Capybara theme on the scrub bar: a sprite walks the track as it
+    /// plays, towards a finish flag. Off by default — it is decoration, and
+    /// a theme nobody chose must not switch itself on across an upgrade.
+    var capybaraThemeEnabled: Bool = false
+
     // MARK: - Decoding
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, moduleEnablement, hoverEnterDelay, visualizerEnabled
         case showMenuBarIcon, preferMusicOverVideo, spotifyAccountConnected
+        case capybaraThemeEnabled
     }
 
     init() {}
@@ -128,6 +135,9 @@ struct AppSettings: Codable, Equatable {
         // fallback: it is what sends `SpotifyAccount` to the Keychain once.
         spotifyAccountConnected = try? container.decodeIfPresent(
             Bool.self, forKey: .spotifyAccountConnected)
+        // Absent in v7 and earlier; off is the shipped default.
+        capybaraThemeEnabled = (try? container.decode(Bool.self, forKey: .capybaraThemeEnabled))
+            ?? false
     }
 
     // MARK: - Migration
@@ -178,6 +188,10 @@ struct AppSettings: Codable, Equatable {
             // `SpotifyAccount.init` through one Keychain read, which then
             // records the answer — so an upgrading user who is connected
             // stays connected. Writing `false` here would log them out.
+            fallthrough
+        case 7:
+            // v8 added capybaraThemeEnabled; the lenient decoder fills false
+            // for v7 JSON, which is the off-by-default state. Nothing moves.
             fallthrough
         default:
             break

@@ -269,7 +269,7 @@ final class AppSettingsTests: XCTestCase {
         let settings = SettingsStore(defaults: defaults).settings
 
         XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
-        XCTAssertEqual(settings.schemaVersion, 7)
+        XCTAssertGreaterThanOrEqual(settings.schemaVersion, 7, "v6 lands at v7 or beyond")
         // Every v6 preference survives untouched.
         XCTAssertEqual(settings.moduleEnablement["media"], true)
         XCTAssertEqual(settings.moduleEnablement["clipboard"], false)
@@ -300,11 +300,48 @@ final class AppSettingsTests: XCTestCase {
     /// Older payloads all the way back to v1 must also arrive with a nil
     /// flag rather than a guessed one.
     func testEveryOlderSchemaLeavesTheSpotifyFlagUnknown() throws {
-        for version in 1...6 {
+        for version in 1...7 {
             defaults.removePersistentDomain(forName: suiteName)
             write("{\"schemaVersion\": \(version), \"moduleEnablement\": {}}")
             XCTAssertNil(store().settings.spotifyAccountConnected,
                          "v\(version) must not claim to know the Spotify state")
         }
+    }
+
+    // MARK: - v8: the capybara theme
+
+    /// CLAUDE.md's rule again: real v7 JSON must load with nothing dropped,
+    /// and the new flag must arrive OFF — a theme nobody chose must not
+    /// switch itself on across an upgrade.
+    func testV7JSONMigratesToV8WithNothingDropped() throws {
+        write("""
+        {"schemaVersion": 7,
+         "moduleEnablement": {"media": true, "clipboard": false, "system-stats": true},
+         "hoverEnterDelay": 0.42,
+         "visualizerEnabled": true,
+         "showMenuBarIcon": false,
+         "preferMusicOverVideo": false,
+         "spotifyAccountConnected": true}
+        """)
+        let settings = SettingsStore(defaults: defaults).settings
+
+        XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertEqual(settings.schemaVersion, 8)
+        // Every v7 preference survives untouched.
+        XCTAssertEqual(settings.moduleEnablement["media"], true)
+        XCTAssertEqual(settings.moduleEnablement["clipboard"], false)
+        XCTAssertEqual(settings.moduleEnablement["system-stats"], true)
+        XCTAssertEqual(settings.hoverEnterDelay, 0.42, accuracy: 0.0001)
+        XCTAssertTrue(settings.visualizerEnabled)
+        XCTAssertFalse(settings.showMenuBarIcon)
+        XCTAssertFalse(settings.preferMusicOverVideo)
+        XCTAssertEqual(settings.spotifyAccountConnected, true, "nothing dropped")
+        XCTAssertFalse(settings.capybaraThemeEnabled, "the new field arrives OFF")
+    }
+
+    func testCapybaraThemeDefaultsOffAndRoundTrips() {
+        XCTAssertFalse(AppSettings().capybaraThemeEnabled)
+        store().update { $0.capybaraThemeEnabled = true }
+        XCTAssertTrue(store().settings.capybaraThemeEnabled, "must survive a reload")
     }
 }
