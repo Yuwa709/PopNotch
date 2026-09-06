@@ -331,10 +331,6 @@ final class NotchCoordinator {
     /// Whether the expanded panel is chrome alone, as last rendered.
     private var isChromeOnly = false
 
-    /// Whether the expanded panel was last drawn as the capybara, so the
-    /// silhouette swap is logged once per change rather than per render.
-    private var isCapybara = false
-
     /// The state most recently applied to the panel, so renderContent can
     /// tell an entrance (play the reveal) from an in-place update (do not).
     private var lastAppliedState: NotchPanel.State = .idle
@@ -421,8 +417,7 @@ final class NotchCoordinator {
         panel.setState(state, on: screen,
                        expandedContentSize: expandedContentSize,
                        chromeOnly: isChromeOnly,
-                       chromeGroups: chromeGroups,
-                       capybara: settings.settings.capybaraThemeEnabled)
+                       chromeGroups: chromeGroups)
         lastAppliedState = state
         // Capture must not run for a panel nobody can see (hard rule 9's
         // spirit): the service tears the tap down whenever this goes false.
@@ -520,21 +515,10 @@ final class NotchCoordinator {
             // to occupy, so the band can flank it by position. Computed
             // from the same pure function `setState` uses with the same
             // inputs, so the two cannot disagree.
-            // The theme reshapes only the card with content: the chrome-only
-            // bar is neck-height, where a capybara cannot read.
-            let capybara = settings.settings.capybaraThemeEnabled && !chromeOnly
             let rect = NotchPanel.expandedRect(housing: housing,
                                                contentSize: expandedContentSize,
                                                chromeOnly: chromeOnly,
-                                               chromeGroups: chromeGroups,
-                                               capybara: capybara)
-            // The lobes' width, from the same pure function the rect used
-            // with the same height, so the padding and the frame agree.
-            let lobes = capybara ? CapybaraPanelShape.insets(bodyHeight: rect.height) : .none
-            if capybara != isCapybara {
-                Self.logger.notice("Expanded silhouette \(capybara ? "capybara" : "card", privacy: .public): head +\(lobes.leading, privacy: .public)pt, rump +\(lobes.trailing, privacy: .public)pt, body \(rect.width - lobes.total, privacy: .public)x\(rect.height, privacy: .public)")
-            }
-            isCapybara = capybara
+                                               chromeGroups: chromeGroups)
             let housingLocal = (housing.minX - rect.minX)...(housing.maxX - rect.minX)
             // The floor in `expandedRect` is derived so the housing clamp
             // never fires. If it does, the floor and the band layout have
@@ -543,8 +527,7 @@ final class NotchCoordinator {
             // (which is how the last two band bugs survived).
             let band = NotchOverlayView.bandLayout(panelWidth: rect.width,
                                                    housingLocal: housingLocal,
-                                                   groups: chromeGroups,
-                                                   bodyInsets: lobes)
+                                                   groups: chromeGroups)
             if band.isClamped {
                 Self.logger.error("Chrome band clamped off the panel corner: panel \(rect.width, privacy: .public)pt, groups \(self.chromeGroups.leading, privacy: .public)+\(self.chromeGroups.trailing, privacy: .public), insets \(band.leadingInset, privacy: .public)/\(band.trailingInset, privacy: .public), floor \(NotchPanel.bandMinWidth(housingWidth: housing.width, groups: self.chromeGroups), privacy: .public)")
             }
@@ -560,18 +543,14 @@ final class NotchCoordinator {
                              chromeOnly: chromeOnly,
                              reveal: entering,
                              topLeadingAccessory: leading,
-                             topTrailingAccessory: trailing,
-                             capybaraTheme: capybara,
-                             silhouetteInsets: lobes)
+                             topTrailingAccessory: trailing)
         case .compact:
             isChromeOnly = false
-            isCapybara = false
             let wings = standbyWings()
             panel.setContent(nil, leadingWing: wings?.leading, trailingWing: wings?.trailing,
                              neckHeight: neck)
         case .idle:
             isChromeOnly = false
-            isCapybara = false
             panel.setContent(nil, neckHeight: neck)
         }
     }

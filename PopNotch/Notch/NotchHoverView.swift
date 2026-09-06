@@ -41,39 +41,6 @@ final class NotchHoverView: NSView {
     /// listener re-derive which one happened.
     var onFileDragChange: ((Bool) -> Void)?
 
-    /// Where hover counts, as rectangles measured from the panel's **top**
-    /// edge (top-left origin, y increasing downward — the space
-    /// `CapybaraPanelShape.hoverSlabs` produces). `nil` is the whole bounds:
-    /// one tracking area, today's behaviour, and every collapsed state. The
-    /// panel sets slabs of the capybara silhouette here so the tracking
-    /// follows that outline: `NSTrackingArea` is rectangular, and the only
-    /// way a cursor sliding sideways out of a curved shape produces an event
-    /// is if it crosses an area edge on the way. Exit verification and the
-    /// frame-change re-check judge against the same regions, so the three can
-    /// never disagree about what "over the panel" means.
-    ///
-    /// Top-anchored deliberately, and flipped into this view's bottom-left
-    /// coordinates against the **current** bounds on every rebuild. The
-    /// panel's top edge is pinned to the screen edge and it grows downward,
-    /// so a stationary cursor keeps a constant distance from that top while
-    /// the frame animates. Storing them already flipped against the *target*
-    /// height left every region displaced by (target − current) for the whole
-    /// 0.34s expand and 0.22s collapse — at a mid-expand height the panel's
-    /// real top row was covered by the slab meant for a row 100pt down — so a
-    /// mid-animation exit could be misjudged in either direction.
-    var hoverRegions: [NSRect]? {
-        didSet { updateTrackingAreas() }
-    }
-
-    /// `hoverRegions` in this view's coordinates, flipped against the bounds
-    /// as they are right now; the whole bounds when none are set.
-    private func liveRegions() -> [NSRect] {
-        guard let hoverRegions else { return [bounds] }
-        return hoverRegions.map {
-            NSRect(x: $0.minX, y: bounds.height - $0.maxY, width: $0.width, height: $0.height)
-        }
-    }
-
     private var isHovering = false
     private var pendingEnter: DispatchWorkItem?
     private var pendingExit: DispatchWorkItem?
@@ -127,25 +94,12 @@ final class NotchHoverView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        // Clipped to the current bounds: mid-animation the frame is not yet
-        // the one the regions were computed for. Should that leave nothing,
-        // fall back to the whole bounds rather than track nothing at all.
-        var rects = liveRegions().map { $0.intersection(bounds) }.filter { !$0.isEmpty }
-        if rects.isEmpty { rects = [bounds] }
-        for rect in rects {
-            addTrackingArea(NSTrackingArea(
-                rect: rect,
-                options: [.mouseEnteredAndExited, .activeAlways],
-                owner: self,
-                userInfo: nil
-            ))
-        }
-    }
-
-    /// The hover regions in screen coordinates, for the verified exit.
-    private func screenRegions() -> [NSRect] {
-        guard let window else { return [] }
-        return liveRegions().map { window.convertToScreen(convert($0, to: nil)) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways],
+            owner: self,
+            userInfo: nil
+        ))
     }
 
     /// Whether the cursor still counts as over the panel, for the purpose of
@@ -167,27 +121,9 @@ final class NotchHoverView: NSView {
     nonisolated static func isInsideForExit(mouse: NSPoint,
                                             panel: NSRect,
                                             screenTop: CGFloat) -> Bool {
-        isInsideForExit(mouse: mouse, regions: [panel], screenTop: screenTop)
-    }
-
-    /// The same test over several regions: inside any one of them, or in
-    /// the top-edge carve-out above one that reaches the panel's top. Only
-    /// the topmost regions get the carve-out — extending it above a lower
-    /// slab would count the empty corner above the capybara's head as inside,
-    /// which is precisely the region the slabs exist to exclude.
-    nonisolated static func isInsideForExit(mouse: NSPoint,
-                                            regions: [NSRect],
-                                            screenTop: CGFloat) -> Bool {
-        guard let top = regions.map(\.maxY).max() else { return false }
-        for region in regions {
-            if region.contains(mouse) { return true }
-            if region.maxY == top
-                && mouse.x >= region.minX && mouse.x < region.maxX
-                && mouse.y >= region.maxY && mouse.y <= screenTop {
-                return true
-            }
-        }
-        return false
+        if panel.contains(mouse) { return true }
+        return mouse.x >= panel.minX && mouse.x < panel.maxX
+            && mouse.y >= panel.maxY && mouse.y <= screenTop
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -234,7 +170,7 @@ final class NotchHoverView: NSView {
             // still closes the exact-maxY case, which is the one that breaks.
             let screenTop = window.screen?.frame.maxY ?? window.frame.maxY
             guard !Self.isInsideForExit(mouse: NSEvent.mouseLocation,
-                                        regions: self.screenRegions(),
+                                        panel: window.frame,
                                         screenTop: screenTop) else {
                 Self.logger.debug("Spurious exit ignored; cursor still inside panel")
                 return
@@ -269,7 +205,7 @@ final class NotchHoverView: NSView {
         guard isHovering, !isDraggingOut, let window else { return }
         let screenTop = window.screen?.frame.maxY ?? window.frame.maxY
         guard !Self.isInsideForExit(mouse: NSEvent.mouseLocation,
-                                    regions: screenRegions(),
+                                    panel: window.frame,
                                     screenTop: screenTop) else { return }
         Self.logger.notice("Frame changed under the cursor; cursor is outside the new frame, collapsing by the normal exit rules")
         beginExit()
@@ -315,7 +251,7 @@ final class NotchHoverView: NSView {
     override func draggingExited(_ sender: NSDraggingInfo?) {
         if let window, Self.isInsideForExit(
             mouse: NSEvent.mouseLocation,
-            regions: screenRegions(),
+            panel: window.frame,
             screenTop: window.screen?.frame.maxY ?? window.frame.maxY) {
             Self.logger.debug("Drag exit ignored; cursor still over the panel")
             return

@@ -142,7 +142,7 @@ struct MusicSettingsTab: View {
             } header: {
                 Text("Theme")
             } footer: {
-                Text("Shapes the expanded notch like a capybara lying down, head to the left. Off by default.")
+                Text("A capybara theme for the notch. Off by default.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
