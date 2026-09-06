@@ -65,7 +65,6 @@
 		C6D352523048051B00C32F35 /* Exceptions for "PopNotch" folder in "PopNotch" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Assets.xcassets,
 				Info.plist,
 			);
 			target = C6F40DC630402B2F00F801FD /* PopNotch */;
