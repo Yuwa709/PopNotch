@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The expanded-notch silhouette: top edge flush with the screen top, concave
@@ -20,6 +21,21 @@ struct NotchShape: Shape {
 
     var topRadius: CGFloat = NotchShape.compactTopRadius
     var bottomRadius: CGFloat = NotchShape.compactBottomRadius
+
+    /// Makes the radii interpolate rather than cut.
+    ///
+    /// A `Shape` without this gets `EmptyAnimatableData`, so a radius change
+    /// is a hard swap even inside an animation — which is why the collapse
+    /// repainted 14/34 as 8/12 in a single frame. Declaring the pair
+    /// animatable is what lets the corners round down over the close;
+    /// `AnimatedSilhouette` below decides when that interpolation runs.
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topRadius, bottomRadius) }
+        set {
+            topRadius = newValue.first
+            bottomRadius = newValue.second
+        }
+    }
 
     func path(in rect: CGRect) -> Path {
         let topR = min(topRadius, rect.width / 4, rect.height / 2)
@@ -129,6 +145,16 @@ struct NotchOverlayView: View {
     /// failure the old comment here recorded when this was tried at 2pt.
     nonisolated static let accessorySideInset: CGFloat = 24
 
+    /// The close, as SwiftUI states it: the same duration and control points
+    /// `NotchPanel.setState` gives the frame animation, read from there
+    /// rather than restated, so the corners cannot round down on a different
+    /// clock than the window shrinks on.
+    nonisolated static var collapseAnimation: Animation {
+        let c = NotchPanel.collapseCurve
+        return .timingCurve(Double(c.x1), Double(c.y1), Double(c.x2), Double(c.y2),
+                            duration: NotchPanel.collapseDuration)
+    }
+
     var body: some View {
         // Expanded (has content) draws the softer card; compact, idle and
         // the chrome-only bar keep the tighter silhouette — chrome-only is
@@ -136,11 +162,7 @@ struct NotchOverlayView: View {
         // blob rather than a bar.
         let expanded = content != nil
         ZStack(alignment: .top) {
-            NotchShape(
-                topRadius: expanded && !chromeOnly ? NotchShape.expandedTopRadius : NotchShape.compactTopRadius,
-                bottomRadius: expanded && !chromeOnly ? NotchShape.expandedBottomRadius : NotchShape.compactBottomRadius
-            )
-            .fill(Color.black)
+            AnimatedSilhouette(soft: expanded && !chromeOnly)
             if leadingWing != nil || trailingWing != nil {
                 // Centered in each wing: hugging the outer corners looked
                 // crowded, hugging the housing looked glued to it (both
@@ -249,6 +271,53 @@ struct NotchOverlayView: View {
             if let view { view } else { Color.clear }
         }
         .frame(width: width, height: neckHeight, alignment: .center)
+    }
+}
+
+/// The silhouette, easing its corners down when they tighten.
+///
+/// `NotchShape.animatableData` makes the radii interpolable; this decides
+/// when that runs. Only the tightening is animated. The collapse used to
+/// repaint the open card's 14/34 as the compact 8/12 in one frame, at the
+/// moment the content went, so the panel visibly went sharp-cornered before
+/// it closed. Rounding *up* still snaps, which leaves the expand path drawing
+/// exactly as it always has.
+///
+/// Direction is read from the value itself rather than passed in, so nothing
+/// outside this view has to tell it which way the panel is going.
+///
+/// The `@State` lives here rather than on `NotchOverlayView` because a
+/// private stored property would make that struct's memberwise initialiser
+/// private too, and every call site — the panel and two test suites — uses
+/// it.
+private struct AnimatedSilhouette: View {
+
+    /// Whether the softer open-card radii are wanted: expanded, with content
+    /// below the neck.
+    let soft: Bool
+
+    /// What is actually drawn, which lags `soft` for the length of a
+    /// collapse. Nil until the first layout, when it adopts whatever state
+    /// the panel already has instead of animating into it.
+    @State private var drawnSoft: Bool?
+
+    var body: some View {
+        let drawn = drawnSoft ?? soft
+        NotchShape(
+            topRadius: drawn ? NotchShape.expandedTopRadius : NotchShape.compactTopRadius,
+            bottomRadius: drawn ? NotchShape.expandedBottomRadius : NotchShape.compactBottomRadius
+        )
+        .fill(Color.black)
+        .onAppear { drawnSoft = soft }
+        .onChange(of: soft) { _, wantsSoft in
+            // Hard rule 8: with Reduce Motion on, the frame snaps, so the
+            // corners must snap with it rather than easing on their own.
+            if wantsSoft || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                drawnSoft = wantsSoft
+            } else {
+                withAnimation(NotchOverlayView.collapseAnimation) { drawnSoft = wantsSoft }
+            }
+        }
     }
 }
 

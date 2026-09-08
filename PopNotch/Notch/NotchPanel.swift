@@ -309,6 +309,15 @@ final class NotchPanel: NSPanel {
         )
     }
 
+    /// The close's timing, named so the silhouette can round its corners
+    /// down on exactly the clock the window shrinks on
+    /// (`NotchOverlayView.collapseAnimation` reads these). The values are the
+    /// tuned originals, lifted out of the animation block below unchanged —
+    /// this names them, it does not retime anything.
+    nonisolated static let collapseDuration: TimeInterval = 0.22
+    nonisolated static let collapseCurve: (x1: Float, y1: Float, x2: Float, y2: Float)
+        = (0.30, 0.90, 0.55, 1.0)
+
     /// Animates the panel frame to a state's rect. Resizes the panel itself,
     /// not the inner view — the hosting view and tracking area follow via
     /// autoresizing and updateTrackingAreas.
@@ -403,8 +412,9 @@ final class NotchPanel: NSPanel {
             NSAnimationContext.runAnimationGroup({ context in
                 // Closing and wing transitions ease out with no bounce so
                 // they read as tidy.
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.30, 0.90, 0.55, 1.0)
+                context.duration = Self.collapseDuration
+                let c = Self.collapseCurve
+                context.timingFunction = CAMediaTimingFunction(controlPoints: c.x1, c.y1, c.x2, c.y2)
                 animator().setFrame(target, display: true)
             }, completionHandler: { [weak self] in
                 MainActor.assumeIsolated { self?.reevaluateHoverAfterFrameChange() }
