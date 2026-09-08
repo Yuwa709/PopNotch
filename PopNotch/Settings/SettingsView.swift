@@ -137,16 +137,6 @@ struct MusicSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                Toggle("Capybara theme", isOn: capybaraThemeBinding)
-            } header: {
-                Text("Theme")
-            } footer: {
-                Text("A capybara theme for the notch. Off by default.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Spotify") {
             if account.isConnected {
                 LabeledContent("Account") {
@@ -193,20 +183,6 @@ struct MusicSettingsTab: View {
             set: { on in
                 settings.update { $0.visualizerEnabled = on }
                 visualizer.setEnabled(on)
-            }
-        )
-    }
-
-    /// Persists the choice and applies it live in one place, the way
-    /// `visualizerBinding` does. The coordinator reads the stored flag when
-    /// it renders, so re-rendering is the whole of "apply": an open panel
-    /// changes silhouette immediately, a closed one opens with the new one.
-    private var capybaraThemeBinding: Binding<Bool> {
-        Binding(
-            get: { settings.settings.capybaraThemeEnabled },
-            set: { on in
-                settings.update { $0.capybaraThemeEnabled = on }
-                (NSApp.delegate as? AppDelegate)?.coordinator.refreshPresentation()
             }
         )
     }
