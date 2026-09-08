@@ -3,14 +3,14 @@
     <channel>
         <title>PopNotch</title>
         <item>
-            <title>1.0.5</title>
-            <pubDate>Wed, 02 Sep 2026 10:18:07 -0700</pubDate>
+            <title>1.0.6</title>
+            <pubDate>Tue, 08 Sep 2026 00:31:34 -0700</pubDate>
             <link>https://github.com/Yuwa709/PopNotch</link>
-            <sparkle:version>1.0.5</sparkle:version>
-            <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
+            <sparkle:version>1.0.6</sparkle:version>
+            <sparkle:shortVersionString>1.0.6</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/Yuwa709/PopNotch/releases/download/v1.0.5/PopNotch-1.0.5.zip" length="2039373" type="application/octet-stream" sparkle:edSignature="oMuOU8bMywhj1vBnBpznuaWyLsQiBgwimYf+EbZ5R8QefRhCutEIGiaLdj5EW8d2zJp4PE/zRu8A6NL7IdHOBA=="/>
+            <enclosure url="https://github.com/Yuwa709/PopNotch/releases/download/v1.0.6/PopNotch-1.0.6.zip" length="2088739" type="application/octet-stream" sparkle:edSignature="I0K2of83gusDlXxnd3zivnGU2KcFzurR6BRg7YfL6Wl73a4O1fQ8Lh+cV5ARFjCAFCXIMaDnVPXaLJaXK4zxDw=="/>
         </item>
     </channel>
 </rss>
