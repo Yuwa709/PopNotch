@@ -100,6 +100,14 @@ smoke_launch() {
 # credential that must never ship. The explicit re-sign below is belt to this
 # braces: it guarantees the identity regardless of project settings.
 #
+# CLANG_COVERAGE_MAPPING=NO keeps coverage instrumentation out of the release.
+# No scheme is committed, so xcodebuild generates one, and that scheme injects
+# CLANG_COVERAGE_MAPPING=YES into every configuration it builds — Release
+# included. Up to 1.0.6 that shipped profile counters and the LLVM profile
+# runtime, and left a default.profraw in the working directory on exit.
+# A command-line override outranks the scheme. Test runs never pass through
+# here, so they keep coverage. The binary is checked for it below.
+#
 # No `clean`: it is not needed for correctness and risks removing the SPM
 # artifacts that generate_appcast lives in.
 echo "==> Building Release $VERSION"
@@ -109,6 +117,7 @@ xcodebuild -scheme PopNotch -configuration Release -destination 'platform=macOS'
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="-" \
     DEVELOPMENT_TEAM="" \
+    CLANG_COVERAGE_MAPPING=NO \
     build | grep -E "error:|warning: (unable|failed)|BUILD (SUCCEEDED|FAILED)" || true
 
 BUILT_DIR=$(xcodebuild -scheme PopNotch -configuration Release -destination 'platform=macOS' \
@@ -267,6 +276,29 @@ if ! codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "apple-events"; t
     exit 1
 fi
 echo "    apple-events entitlement present"
+
+# Coverage instrumentation must not ship. CLANG_COVERAGE_MAPPING=NO on the
+# build line is the fix; this is the proof, read from the binary rather than
+# the build settings, so a future Xcode that turns coverage on through some
+# other setting still stops here. The counters section survives stripping; the
+# ___profc_ symbols survive a renamed section.
+#
+# Counted with `grep -c`, never `grep -q`: -q exits on the first match, nm dies
+# of SIGPIPE, and under pipefail that failure turns a hit into a pass.
+BINARY="$APP/Contents/MacOS/PopNotch"
+if ! LOAD_COMMANDS=$(otool -l "$BINARY") || ! SYMBOLS=$(nm "$BINARY"); then
+    echo "!! Could not read $BINARY with otool and nm. Refusing to package." >&2
+    exit 1
+fi
+PRF_CNTS=$(grep -c 'sectname __llvm_prf_cnts' <<<"$LOAD_COMMANDS" || true)
+PROFC=$(grep -c '___profc_' <<<"$SYMBOLS" || true)
+if [[ "$PRF_CNTS" -ne 0 || "$PROFC" -ne 0 ]]; then
+    echo "!! Coverage instrumentation in the built binary:" >&2
+    echo "   __llvm_prf_cnts sections: $PRF_CNTS, ___profc_ symbols: $PROFC." >&2
+    echo "   A release must not ship profile counters. Refusing to package." >&2
+    exit 1
+fi
+echo "    no coverage instrumentation (no __llvm_prf_cnts section, no ___profc_ symbols)"
 
 BUILT_PLIST="$APP/Contents/Info.plist"
 BUILT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$BUILT_PLIST")
