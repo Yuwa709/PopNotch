@@ -448,6 +448,38 @@ Stage 2 is guarded by `currentState == .expanded`, so a collapse landing between
 
 ---
 
+## Performance findings
+
+### Idle CPU floor from the wing waveform (found and fixed 2026-09-13)
+
+**Symptom.** Collapsed and paused, PopNotch idled at ~1.4% of one core on a fresh launch, but at 6–8% after any playback, and never came back down. Measured on a Release build with Time Profiler (on-CPU samples attributed by thread and call stack) and cross-checked with `ps` CPU-time deltas. `sample` was misleading here: the work is a short burst per frame on an otherwise waiting main thread, so its stacks looked idle.
+
+**Cause.** The four `WaveBar` animations in the collapsed right wing (`MediaViews.swift`). Every play started `withAnimation(.easeInOut(…).repeatForever(…).delay(…))`. Pausing ran a second `withAnimation` to bring the bars to rest, which does not stop a `repeatForever` — the paused bar height was a constant, so nothing replaced the running repeat. SwiftUI kept evaluating it every display refresh on the main thread (~98% of the process's CPU): `CA::Transaction::commit → NSHostingView.layout → ViewGraphRootValueUpdater.render → AnimatorState.update → AnimatableFrameAttribute.updateValue`.
+
+It accumulated as well as persisted — four more repeat animations per play:
+
+| Play/pause cycles | 0 | 1 | 3 | 10 | then one panel open/close |
+|---|---|---|---|---|---|
+| Idle CPU, % of one core | 1.35 | 6.35 | 6.75 | 8.05 | 1.30 |
+| Repeat-animation boxes in the heap | 0 | 4 | 12 | 40 | 0 |
+
+Combining-animation boxes were absent after one cycle and present by the third. Timers, notification observers, subprocesses, process taps and aggregate devices stayed flat throughout, and the live-sync tick measured 0.00% while paused.
+
+Opening and collapsing the panel rebuilds the wing views, which destroys the animations. That is why a single hover cleared the floor, and why measurements that never hovered between pausing and sampling saw it "never return to baseline".
+
+**The comment was wrong.** `MediaWingWaveform`'s doc comment said the bars were "repeating Core Animation animations" that "run in the render server … at effectively zero CPU", and that "when playback pauses the animations are removed entirely; nothing runs". Both claims were false: these are SwiftUI animations ticked in-process on the main thread, and nothing removed them. The comment has been replaced.
+
+**Fix.** `MediaWingWaveform` builds the animated bars only while playing. Pausing swaps in stateless resting bars at the same 4pt height, so the views that own the animations are destroyed rather than asked to stop. The playing appearance is unchanged. Not re-profiled after the change (by decision); awaiting on-screen verification.
+
+**Rule.** A non-terminating SwiftUI animation cannot be stopped by animating its state back to rest — remove the view that owns it. And never describe a SwiftUI animation as running in the render server at no cost without a profile that shows it.
+
+### Measured at the same time, not fixed
+
+- **Visibility never resigns.** `NotchArbiter` treats membership of the standby list as "visible", and media and system-stats are always in it, so `didResignVisible()` never runs — zero calls under lldb across launch, play, open, collapse, pause and quit. The live-sync timer and the 2s `SystemStatsService` sampler therefore run for the life of the process, against hard rule 9. The sampler alone is ~1.1–1.3% of a core, dominated by `readDisk()` reading `volumeAvailableCapacityForImportantUsageKey`, a CacheDelete round trip every 2 seconds.
+- **Release builds are coverage-instrumented.** The Release configuration resolves `CLANG_COVERAGE_MAPPING = YES`, and the shipped 1.0.6 binary carries `__llvm_prf_cnts` sections and 1,435 profile counters. It is not set in `project.pbxproj`; most likely it comes from the auto-generated scheme, since no `.xcscheme` is committed. A build-settings change, so the user's to make (hard rule 1).
+
+---
+
 ## Constraints the assistant cannot work around
 
 - **No visual verification.** This app is defined by pixel positioning and animation feel. Compiler success proves nothing about whether the panel is in the right place, whether the animation stutters, or whether hover feels responsive. For anything visual, build it and ask the user what they see.

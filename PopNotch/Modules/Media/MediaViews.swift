@@ -837,12 +837,18 @@ struct MediaWingArtwork: View {
 /// Decorative for now — bars move on time, not on real amplitude; the honest
 /// upgrade is the audio-capture feature behind its permission.
 ///
-/// Driven by repeating Core Animation animations, NOT per-frame SwiftUI
-/// updates: this panel can never become key (hard rule 3), and SwiftUI
-/// throttles TimelineView callbacks in non-key windows — two rounds of
-/// user-visible stutter proved it. CA repeats run in the render server,
-/// immune to that throttling, at effectively zero CPU. When playback
-/// pauses the animations are removed entirely; nothing runs.
+/// Not a `TimelineView`: this panel can never become key (hard rule 3), and
+/// SwiftUI throttles TimelineView callbacks in non-key windows — two rounds
+/// of user-visible stutter proved it.
+///
+/// **The animated bars exist only while playing.** `repeatForever` here is a
+/// SwiftUI animation, evaluated on the main thread every display refresh, not
+/// a Core Animation repeat in the render server — and it never terminates. A
+/// later `withAnimation` cannot retract it; it is combined with the running
+/// repeat instead. So pausing must remove the views that own the animation.
+/// Keeping them and animating them to rest left the notch re-rendering every
+/// frame indefinitely, with four more repeats stacked on every play. See
+/// PROJECT-CONTEXT.md, *Performance findings*.
 struct MediaWingWaveform: View {
     let module: MediaModule
 
@@ -850,8 +856,14 @@ struct MediaWingWaveform: View {
         let playing = module.nowPlaying?.isPlaying == true
         let accent = module.artworkAccent ?? .mediaAccent
         HStack(spacing: 2.5) {
-            ForEach(0..<4, id: \.self) { index in
-                WaveBar(index: index, playing: playing, color: accent)
+            if playing {
+                ForEach(0..<4, id: \.self) { index in
+                    WaveBar(index: index, color: accent)
+                }
+            } else {
+                ForEach(0..<4, id: \.self) { _ in
+                    RestingWaveBar(color: accent)
+                }
             }
         }
         // Fixed height so bars grow around their center instead of pushing
@@ -861,9 +873,9 @@ struct MediaWingWaveform: View {
     }
 }
 
+/// One animated bar. Only ever alive while playing — see `MediaWingWaveform`.
 private struct WaveBar: View {
     let index: Int
-    let playing: Bool
     let color: Color
 
     @State private var lifted = false
@@ -871,27 +883,29 @@ private struct WaveBar: View {
     var body: some View {
         Capsule()
             .fill(color.opacity(0.95))
-            .frame(width: 2.5, height: playing ? (lifted ? 12 : 5) : 4)
-            .onAppear { apply(playing) }
-            .onChange(of: playing) { _, nowPlaying in apply(nowPlaying) }
+            .frame(width: 2.5, height: lifted ? 12 : 5)
+            .onAppear {
+                // Speed matches the user-approved tempo. Distinct duration
+                // and start delay per bar keep them from ever syncing up.
+                withAnimation(
+                    .easeInOut(duration: 0.45 + Double(index) * 0.08)
+                    .repeatForever(autoreverses: true)
+                    .delay(Double(index) * 0.13)
+                ) {
+                    lifted = true
+                }
+            }
     }
+}
 
-    /// Speed matches the user-approved tempo. Distinct duration and start
-    /// delay per bar keep them from ever syncing up.
-    private func apply(_ playing: Bool) {
-        if playing {
-            withAnimation(
-                .easeInOut(duration: 0.45 + Double(index) * 0.08)
-                .repeatForever(autoreverses: true)
-                .delay(Double(index) * 0.13)
-            ) {
-                lifted = true
-            }
-        } else {
-            withAnimation(.easeOut(duration: 0.2)) {
-                lifted = false
-            }
-        }
+/// The paused bar: the same capsule at rest, with no state to animate.
+private struct RestingWaveBar: View {
+    let color: Color
+
+    var body: some View {
+        Capsule()
+            .fill(color.opacity(0.95))
+            .frame(width: 2.5, height: 4)
     }
 }
 
