@@ -72,6 +72,9 @@ protocol NotchModule: AnyObject {
     /// have something to draw. A module whose view can be empty (media
     /// between tracks) must answer from the same test the view branches
     /// on, so the two can never disagree.
+    ///
+    /// It also decides visibility: a module with nothing to draw in the
+    /// open stack is not told it is visible there.
     var hasExpandedContent: Bool { get }
 
     /// Non-nil when the module currently wants to take over the notch.
@@ -92,10 +95,18 @@ protocol NotchModule: AnyObject {
     func makeCompactLeadingView() -> AnyView?
     func makeCompactTrailingView() -> AnyView?
 
-    /// The module is now on screen. Start sampling here, not in `init`.
+    /// The module's expanded view is now on screen: the panel is open on the
+    /// arbitrated default and this module has something to draw there, or
+    /// its live activity has the notch. Start sampling here, not in `init`.
+    ///
+    /// Arbitrated onto the notch is not on screen. The collapsed wings do
+    /// not count — wing content is push-driven and must never need a timer —
+    /// and neither does a navigated screen, which owns its own lifecycle.
+    /// See `PanelSurface`.
     func didBecomeVisible()
 
-    /// The module is now off screen.
+    /// The module's expanded view is now off screen: the panel collapsed, a
+    /// navigated screen replaced the stack, or another activity took over.
     ///
     /// **Hard rule 9: invalidate every timer here.** This app runs for days;
     /// a module that keeps polling while invisible is the main way it would

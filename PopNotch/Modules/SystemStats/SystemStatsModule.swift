@@ -30,10 +30,12 @@ final class SystemStatsModule: NotchModule {
     /// second time under the media card was the duplication that removal was
     /// meant to end.
     ///
-    /// This module still contributes its compact view, still starts and stops
-    /// `SystemStatsService` on visibility, and `SystemStatsExpandedView`
-    /// below is kept intact — nothing is deleted, it simply no longer joins
-    /// the expanded standby stack. `NotchCoordinator.content(for:)` filters
+    /// It also means this module is never visible: with no row in the open
+    /// stack and no wings, nothing of it is on screen, so its visibility
+    /// callbacks do not fire and `SystemStatsService` samples only while the
+    /// stats page holds it. The callbacks and `SystemStatsExpandedView` below
+    /// are kept intact — nothing is deleted, it simply no longer joins the
+    /// expanded standby stack. `NotchCoordinator.content(for:)` filters
     /// on this flag, so the media card is left alone rather than stacked
     /// above an empty view and its 8pt of spacing.
     var hasExpandedContent: Bool { false }
@@ -46,7 +48,8 @@ final class SystemStatsModule: NotchModule {
     func didResignVisible() { service.stop() }
 }
 
-/// Shown beside other modules in the default state.
+/// Not currently drawn: the collapsed panel shows only module wings, and the
+/// coordinator builds content for the open panel alone. Kept for reuse.
 struct SystemStatsCompactView: View {
     let service: SystemStatsService
 

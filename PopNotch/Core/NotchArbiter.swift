@@ -10,6 +10,25 @@ enum NotchPresentation: Equatable {
     case liveActivity(ModuleID)
 }
 
+/// What the panel is physically showing, as the coordinator last applied it.
+///
+/// Visibility needs this as well as the presentation, because being
+/// arbitrated onto the notch is not the same as being on screen. Treating
+/// standby membership as "visible" told every always-on module it was on
+/// screen at launch and never otherwise, so their timers ran for the life of
+/// the process (zero `didResignVisible` calls under lldb, 2026-09-13).
+enum PanelSurface: Equatable {
+    /// Idle, or showing the compact wings. Nothing collapsed counts as
+    /// visible: wing content is push-driven and must never need a timer.
+    case collapsed
+    /// Open on the arbitrated default — the standby stack, or a live
+    /// activity's view.
+    case expanded
+    /// Open on a screen a chrome control navigated to. It replaces the
+    /// standby stack wholesale and owns its own sampling lifecycle.
+    case navigated
+}
+
 /// Decides what the notch displays.
 ///
 /// Deliberately free of AppKit: this type is pure decision logic so it can be
@@ -22,7 +41,8 @@ enum NotchPresentation: Equatable {
 /// - Equal or lower priority queues, FIFO within a priority
 /// - An activity yields when its duration elapses; the highest-priority
 ///   queued request takes over, otherwise the notch returns to standby
-/// - Modules not currently on screen are told so, and must stop their timers
+/// - A module is visible only while its expanded view is on screen (see
+///   `PanelSurface`); off screen, it is told so and must stop its timers
 ///
 /// Time is injected so tests are deterministic and never sleep.
 @MainActor
@@ -35,10 +55,16 @@ final class NotchArbiter {
     /// Fires whenever `presentation` actually changes.
     var onPresentationChange: ((NotchPresentation) -> Void)?
 
+    /// The modules last told they are on screen. Exposed so "nothing is
+    /// visible behind the collapsed wings" is a test rather than a comment.
+    private(set) var visibleIDs: Set<ModuleID> = []
+
     private var modules: [any NotchModule] = []
     private var active: (request: LiveActivityRequest, expiresAt: TimeInterval)?
     private var queue: [LiveActivityRequest] = []
-    private var visibleIDs: Set<ModuleID> = []
+    /// Collapsed until the coordinator says otherwise, so a panel that was
+    /// never created shows nobody.
+    private var surface: PanelSurface = .collapsed
     private let now: () -> TimeInterval
 
     /// `systemUptime` rather than wall clock: it does not jump when the user
@@ -144,26 +170,59 @@ final class NotchArbiter {
 
         guard next != presentation else { return }
         presentation = next
-        updateVisibility(for: next)
+        updateVisibility()
         Self.logger.notice("Presentation -> \(String(describing: next), privacy: .public)")
         onPresentationChange?(next)
     }
 
-    /// Tells modules when they go on and off screen. Hard rule 9 depends on
-    /// this: a module that is off screen must not be polling.
-    private func updateVisibility(for presentation: NotchPresentation) {
-        let nowVisible: Set<ModuleID>
-        switch presentation {
-        case .standby(let ids): nowVisible = Set(ids)
-        case .liveActivity(let id): nowVisible = [id]
-        }
+    // MARK: - Visibility
 
-        for id in visibleIDs.subtracting(nowVisible) {
+    /// Called by the coordinator after every state it applies to the panel.
+    ///
+    /// Re-checks even when the surface has not changed: a module's expanded
+    /// content can appear while the panel stays open (music starting under
+    /// the cursor), and the coordinator re-applies state on exactly those
+    /// changes.
+    func panelDidApply(_ surface: PanelSurface) {
+        self.surface = surface
+        updateVisibility()
+    }
+
+    /// Tells modules when their expanded view goes on and off screen. Hard
+    /// rule 9 depends on this: a module that is off screen must not be
+    /// polling.
+    ///
+    /// - Collapsed: nobody, wings included.
+    /// - A live activity: its module, whether or not a screen was navigated
+    ///   to — the coordinator draws the activity over either.
+    /// - Standby, open on the stack: the modules with something to draw, by
+    ///   the same `hasExpandedContent` filter the coordinator stacks with,
+    ///   so the two cannot disagree. System stats has no expanded row and is
+    ///   never visible here.
+    /// - Standby, open on a navigated screen: nobody.
+    private func updateVisibility() {
+        let nowVisible: Set<ModuleID>
+        switch (presentation, surface) {
+        case (_, .collapsed), (.standby, .navigated):
+            nowVisible = []
+        case (.liveActivity(let id), _):
+            nowVisible = [id]
+        case (.standby(let ids), .expanded):
+            nowVisible = Set(ids.filter { module(for: $0)?.hasExpandedContent == true })
+        }
+        guard nowVisible != visibleIDs else { return }
+
+        let resigned = visibleIDs.subtracting(nowVisible)
+        let became = nowVisible.subtracting(visibleIDs)
+        // Recorded before the callbacks, so a module reacting to one sees
+        // the settled state.
+        visibleIDs = nowVisible
+        Self.logger.notice("Visible -> \(String(describing: nowVisible.sorted()), privacy: .public)")
+        for id in resigned {
             module(for: id)?.didResignVisible()
         }
-        for id in nowVisible.subtracting(visibleIDs) {
+        for id in became {
             module(for: id)?.didBecomeVisible()
         }
-        visibleIDs = nowVisible
     }
 }

@@ -78,14 +78,16 @@ final class StatsSubscriberBalanceTests: XCTestCase {
         }
     }
 
-    /// With the module registered, the arbiter's visibility callbacks drive
-    /// `SystemStatsService` as well. Its baseline is one, not zero: the
-    /// compact view is on screen in standby and needs live values. That one
-    /// is the always-on subscriber, and cycling the page must not add to it.
-    func testRegisteredModuleReturnsToItsAlwaysOnBaseline() {
+    /// With the module registered and the panel created, the arbiter's
+    /// visibility callbacks could drive `SystemStatsService` as well. They do
+    /// not: stats draws nothing in the collapsed panel and has no row in the
+    /// open stack, so it is never visible and its baseline is zero. This was
+    /// one — an always-on subscriber for a compact view that is never drawn,
+    /// sampling every two seconds for the life of the process (2026-09-13).
+    func testRegisteredModuleHoldsNoSubscriberAtRest() {
         let (coordinator, stats, battery, history) = makeCoordinator(registerModule: true)
         let base = [stats.subscribers, battery.subscribers, history.subscribers]
-        XCTAssertEqual(base, [1, 0, 0], "the compact view holds exactly one stats subscriber")
+        XCTAssertEqual(base, [0, 0, 0], "nothing of system stats is on screen, so nothing samples")
 
         for cycle in 1...5 {
             coordinator.setPinned(true)

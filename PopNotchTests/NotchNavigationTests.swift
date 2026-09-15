@@ -264,8 +264,9 @@ final class NotchNavigationTests: XCTestCase {
                         "SystemStatsExpandedView is retained for reuse")
     }
 
-    /// Removing the row must not disturb the collapsed notch: the compact
-    /// view is what the collapsed panel shows, and it still renders.
+    /// Removing the row left the compact view and standby membership alone.
+    /// The compact view is not currently drawn — the collapsed panel shows
+    /// only wings — but it is kept, and still builds.
     func testSystemStatsStillContributesItsCompactView() {
         let module = SystemStatsModule(service: SystemStatsService())
         XCTAssertNotNil(module.makeCompactView())
@@ -273,8 +274,9 @@ final class NotchNavigationTests: XCTestCase {
                       "still an always-on standby module; only the expanded row went")
     }
 
-    /// And it must still drive the shared service on visibility, which is how
-    /// the compact chips get their numbers.
+    /// And it must still drive the shared service on visibility, balanced,
+    /// should it become visible again. Today it never is: no expanded row,
+    /// no wings.
     func testSystemStatsStillStartsAndStopsItsService() {
         let service = SystemStatsService()
         let module = SystemStatsModule(service: service)

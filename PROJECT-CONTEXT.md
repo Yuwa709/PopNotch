@@ -473,9 +473,25 @@ Opening and collapsing the panel rebuilds the wing views, which destroys the ani
 
 **Rule.** A non-terminating SwiftUI animation cannot be stopped by animating its state back to rest — remove the view that owns it. And never describe a SwiftUI animation as running in the render server at no cost without a profile that shows it.
 
+### Visibility never resigned (found 2026-09-13, fixed 2026-09-14)
+
+**Symptom.** A user reported battery drain. `NotchArbiter` treated membership of the standby list as "visible", and media and system-stats are always in it, so `didResignVisible()` never ran — zero calls under lldb across launch, play, open, collapse, pause and quit. The media live-sync clock (an Apple Event to Spotify every 2s while playing) and the 2s `SystemStatsService` sampler ran for the life of the process, against hard rule 9. The sampler alone was ~1.1–1.3% of a core, dominated by `readDisk()` reading `volumeAvailableCapacityForImportantUsageKey`, a CacheDelete round trip every 2 seconds — and it fed nothing on screen: `SystemStatsCompactView` is never drawn, because the collapsed panel renders only wings.
+
+**Fix.** Visible now means *the module's expanded view is on screen*. The coordinator reports a `PanelSurface` (`collapsed` / `expanded` / `navigated`) after every `applyState`, and the arbiter derives visibility from that plus the presentation. The collapsed wings are never visible (wing content must be push-driven), a navigated screen hides the standby stack, and a module with `hasExpandedContent == false` is never visible in the stack — so system stats is never visible, and its service samples only while the stats page holds it. MediaModule's launch pull moved from `didBecomeVisible()` to its `isEnabled` setter, so the wings still appear at launch and the Automation prompt still comes then. Nothing pulls on expand: `AppleScriptRunner` is synchronous.
+
+**Measured.** Debug build, panel collapsed on the wings, Spotify playing. CPU-time deltas over three 60s windows per build; the logs show no panel state change inside either run.
+
+| | Idle CPU, % of one core | Per window |
+|---|---|---|
+| Before (`640c558`) | 6.66 | 6.48 / 6.76 / 6.73 |
+| After | 3.90 | 4.01 / 3.92 / 3.78 |
+
+The remaining ~3.9% was not profiled. The playing wing waveform (four SwiftUI `repeatForever` animations ticked on the main thread, above) is the likeliest remainder, but that is an inference. RSS at the end of the runs was 88.2 MB before and 103.7 MB after — both over the 80 MB budget, single samples on different tracks (the second run fetched lyrics and new artwork), not attributed to this change.
+
+**Rule.** On the notch is not on screen. Decide visibility from what the panel actually draws; a module present only in the collapsed wings gets no visibility callbacks, and so must need no timer.
+
 ### Measured at the same time, not fixed
 
-- **Visibility never resigns.** `NotchArbiter` treats membership of the standby list as "visible", and media and system-stats are always in it, so `didResignVisible()` never runs — zero calls under lldb across launch, play, open, collapse, pause and quit. The live-sync timer and the 2s `SystemStatsService` sampler therefore run for the life of the process, against hard rule 9. The sampler alone is ~1.1–1.3% of a core, dominated by `readDisk()` reading `volumeAvailableCapacityForImportantUsageKey`, a CacheDelete round trip every 2 seconds.
 - **Release builds are coverage-instrumented.** The Release configuration resolves `CLANG_COVERAGE_MAPPING = YES`, and the shipped 1.0.6 binary carries `__llvm_prf_cnts` sections and 1,435 profile counters. It is not set in `project.pbxproj`; most likely it comes from the auto-generated scheme, since no `.xcscheme` is committed. A build-settings change, so the user's to make (hard rule 1).
 
 ---

@@ -19,7 +19,13 @@ final class MediaModule: NotchModule {
     @ObservationIgnored let id: ModuleID = "media"
     @ObservationIgnored let displayName = "Now Playing"
     @ObservationIgnored let priority: ModulePriority = .elevated
-    @ObservationIgnored var isEnabled = true
+    /// Switching on is what pulls the players: at launch, where
+    /// `NotchCoordinator.register` applies the stored preference, and again
+    /// when re-enabled from Settings. Not in `init`, so a user who has media
+    /// switched off never sends an Apple Event or sees the Automation prompt.
+    @ObservationIgnored var isEnabled = true {
+        didSet { if isEnabled { pullSources() } }
+    }
 
     /// Seconds the notch stays open on a track change.
     @ObservationIgnored static let popDuration: TimeInterval = 4
@@ -514,13 +520,25 @@ final class MediaModule: NotchModule {
         return AnyView(MediaWingWaveform(module: self).offset(x: -3))
     }
 
+    /// The expanded player is on screen. Starts the live-sync clock and
+    /// nothing else: no pull here, because `AppleScriptRunner` is
+    /// synchronous and an Apple Event per hover would land inside the expand
+    /// animation. Push observation keeps the snapshot current in between.
     func didBecomeVisible() {
-        // Pull once so the first hover after launch has data and artwork.
-        // This is what triggers the one-time Automation permission prompt.
-        sources.forEach { $0.refresh() }
-        refreshAccountExtras()
         liveSyncWanted = true
         updateLiveSync()
+    }
+
+    /// One pull from every player, plus the account extras.
+    ///
+    /// Sources observe by push and say nothing until playback changes, so
+    /// without this a track already playing at launch would not put the
+    /// wings up until the next skip. It is also what raises the one-time
+    /// Automation prompt. It ran from `didBecomeVisible()` while visibility
+    /// meant standby membership, which in practice fired once, at launch.
+    private func pullSources() {
+        sources.forEach { $0.refresh() }
+        refreshAccountExtras()
     }
 
     // MARK: - Live sync
@@ -698,9 +716,11 @@ final class MediaModule: NotchModule {
     }
 
     func didResignVisible() {
-        // Observation is push-based and stays on — that is how track changes
-        // can pop the notch while we are off screen. The one timer this
-        // module owns, the live-sync clock, stops here (hard rule 9).
+        // Observation is push-based and stays on — that is how the collapsed
+        // wings follow track changes. The one timer this module owns, the
+        // live-sync clock, stops here (hard rule 9): behind the wings with
+        // Spotify playing, it was an Apple Event every two seconds for a
+        // playhead nobody could see.
         liveSyncWanted = false
         updateLiveSync()
     }

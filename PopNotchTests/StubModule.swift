@@ -15,6 +15,8 @@ final class StubModule: NotchModule {
     let priority: ModulePriority
     var isEnabled: Bool
     let wantsCompactDisplay: Bool
+    /// Settable, so a test can have content appear while the panel is open.
+    var hasExpandedContent: Bool
 
     /// Ordered log of visibility transitions, for assertions.
     private(set) var visibilityLog: [Bool] = []
@@ -24,13 +26,15 @@ final class StubModule: NotchModule {
         id: ModuleID,
         priority: ModulePriority = .ambient,
         isEnabled: Bool = true,
-        wantsCompactDisplay: Bool = true
+        wantsCompactDisplay: Bool = true,
+        hasExpandedContent: Bool = true
     ) {
         self.id = id
         self.displayName = id.capitalized
         self.priority = priority
         self.isEnabled = isEnabled
         self.wantsCompactDisplay = wantsCompactDisplay
+        self.hasExpandedContent = hasExpandedContent
     }
 
     func makeCompactView() -> AnyView { AnyView(Text(id)) }

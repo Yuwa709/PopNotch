@@ -249,6 +249,9 @@ final class NotchCoordinator {
             Self.logger.error("Reposition (\(reason, privacy: .public)): no target screen; hiding panel")
             currentScreen = nil
             panel.orderOut(nil)
+            // Off screen counts as collapsed. `applyState` cannot report it
+            // without a screen, and nothing may poll for a hidden panel.
+            arbiter.panelDidApply(.collapsed)
             return
         }
 
@@ -419,9 +422,21 @@ final class NotchCoordinator {
                        chromeOnly: isChromeOnly,
                        chromeGroups: chromeGroups)
         lastAppliedState = state
+        // Visibility follows what the panel now shows, not what the arbiter
+        // presented: behind the collapsed wings or a navigated screen, the
+        // standby modules are off screen and their timers stop (hard rule 9).
+        arbiter.panelDidApply(surface(for: state))
         // Capture must not run for a panel nobody can see (hard rule 9's
         // spirit): the service tears the tap down whenever this goes false.
         audioVisualizer?.setPanelVisible(state == .expanded)
+    }
+
+    /// Open on a navigated screen only when `content(for:)` really shows
+    /// it. `isDoorAvailable` is the same registered-and-enabled test that
+    /// function falls through to the stack on, so the two cannot disagree.
+    private func surface(for state: NotchPanel.State) -> PanelSurface {
+        guard state == .expanded else { return .collapsed }
+        return isDoorAvailable(destination) ? .navigated : .expanded
     }
 
     /// Measures what the expanded panel is about to display by laying the
@@ -675,13 +690,12 @@ final class NotchCoordinator {
         })
     }
 
-    /// Builds the SwiftUI content for the current state.
+    /// Builds the SwiftUI content for the open panel.
     ///
-    /// In standby the modules sit side by side, showing their compact views
-    /// while collapsed and their expanded views once the notch opens — the
-    /// collapsed panel is exactly notch-sized, so anything drawn there is
-    /// hidden behind the camera housing anyway. A live activity gets the
-    /// notch to itself.
+    /// In standby the modules' expanded views stack; a live activity gets the
+    /// notch to itself. Only `renderContent`'s expanded branch calls this —
+    /// the collapsed panel draws wings, not content — so the compact-view
+    /// branch at the bottom is unreachable today. Kept, not deleted.
     private func content(for presentation: NotchPresentation) -> AnyView? {
         switch presentation {
         case .standby(let ids):

@@ -226,10 +226,118 @@ final class NotchArbiterTests: XCTestCase {
 
     // MARK: - Visibility (hard rule 9)
 
-    func testStandbyModulesAreToldTheyAreVisible() {
-        let stats = StubModule(id: "stats")
+    /// The regression this section exists for. Being arbitrated onto the
+    /// notch was treated as being on screen, so every standby module was
+    /// told it was visible at registration and never told otherwise.
+    func testStandbyModulesAreNotVisibleWhileCollapsed() {
+        let media = StubModule(id: "media")
+        arbiter.register(media)
+        XCTAssertEqual(arbiter.presentation, .standby(["media"]))
+        XCTAssertEqual(media.visibilityLog, [], "on the notch is not on screen")
+
+        arbiter.panelDidApply(.collapsed)
+        XCTAssertEqual(media.visibilityLog, [], "the collapsed wings do not count as visible")
+        XCTAssertTrue(arbiter.visibleIDs.isEmpty)
+    }
+
+    func testOpeningThePanelShowsStandbyModulesAndCollapsingHidesThem() {
+        let media = StubModule(id: "media")
+        arbiter.register(media)
+
+        arbiter.panelDidApply(.expanded)
+        XCTAssertTrue(media.isVisible)
+        XCTAssertEqual(arbiter.visibleIDs, ["media"])
+
+        arbiter.panelDidApply(.collapsed)
+        XCTAssertEqual(media.visibilityLog, [true, false])
+    }
+
+    /// Every hover is one cycle; five must leave exactly nothing visible.
+    func testRepeatedOpenCloseCyclesStayBalanced() {
+        let media = StubModule(id: "media")
+        arbiter.register(media)
+        for _ in 1...5 {
+            arbiter.panelDidApply(.expanded)
+            arbiter.panelDidApply(.collapsed)
+        }
+        XCTAssertEqual(media.visibilityLog, Array(repeating: [true, false], count: 5).flatMap { $0 })
+        XCTAssertTrue(arbiter.visibleIDs.isEmpty)
+    }
+
+    /// System stats has no expanded row: opening the panel draws nothing of
+    /// it, so it must not be told to start sampling.
+    func testModuleWithNothingToDrawIsNotVisibleWhenOpen() {
+        let media = StubModule(id: "media")
+        let stats = StubModule(id: "stats", hasExpandedContent: false)
+        arbiter.register(media)
         arbiter.register(stats)
-        XCTAssertEqual(stats.visibilityLog, [true])
+
+        arbiter.panelDidApply(.expanded)
+        XCTAssertTrue(media.isVisible)
+        XCTAssertEqual(stats.visibilityLog, [])
+    }
+
+    /// Music starting while the panel is open. The coordinator re-applies
+    /// the same surface on the presence change, and that must still re-check.
+    func testContentAppearingWhileOpenIsNoticedOnTheNextApply() {
+        let media = StubModule(id: "media", hasExpandedContent: false)
+        arbiter.register(media)
+        arbiter.panelDidApply(.expanded)
+        XCTAssertEqual(media.visibilityLog, [])
+
+        media.hasExpandedContent = true
+        arbiter.panelDidApply(.expanded)
+        XCTAssertEqual(media.visibilityLog, [true])
+
+        media.hasExpandedContent = false
+        arbiter.panelDidApply(.expanded)
+        XCTAssertEqual(media.visibilityLog, [true, false])
+    }
+
+    /// The stats page replaces the media card, so the card's clock stops.
+    func testNavigatedScreenHidesTheStandbyStack() {
+        let media = StubModule(id: "media")
+        arbiter.register(media)
+
+        arbiter.panelDidApply(.expanded)
+        arbiter.panelDidApply(.navigated)
+        XCTAssertFalse(media.isVisible, "a navigated screen replaces the stack")
+
+        arbiter.panelDidApply(.expanded)
+        XCTAssertTrue(media.isVisible, "and Back brings it back")
+    }
+
+    func testLiveActivityIsNotVisibleUntilThePanelOpensForIt() {
+        let media = StubModule(id: "media", priority: .elevated)
+        arbiter.register(media)
+
+        arbiter.requestLiveActivity(media.activity(duration: 5))
+        XCTAssertEqual(media.visibilityLog, [])
+
+        arbiter.panelDidApply(.expanded)
+        XCTAssertEqual(media.visibilityLog, [true])
+    }
+
+    /// The coordinator draws an activity over whatever screen was open, so
+    /// the activity is on screen there too.
+    func testLiveActivityIsVisibleOverANavigatedScreen() {
+        let media = StubModule(id: "media", priority: .elevated)
+        arbiter.register(media)
+        arbiter.panelDidApply(.navigated)
+        XCTAssertEqual(media.visibilityLog, [])
+
+        arbiter.requestLiveActivity(media.activity(duration: 5))
+        XCTAssertEqual(media.visibilityLog, [true])
+    }
+
+    func testDisablingAVisibleModuleResignsIt() {
+        let media = StubModule(id: "media")
+        arbiter.register(media)
+        arbiter.panelDidApply(.expanded)
+
+        media.isEnabled = false
+        arbiter.enablementDidChange()
+        XCTAssertEqual(media.visibilityLog, [true, false])
     }
 
     func testLiveActivitySuspendsTheModulesItCovers() {
@@ -237,6 +345,7 @@ final class NotchArbiterTests: XCTestCase {
         let media = StubModule(id: "media", priority: .elevated, wantsCompactDisplay: false)
         arbiter.register(stats)
         arbiter.register(media)
+        arbiter.panelDidApply(.expanded)
         XCTAssertTrue(stats.isVisible)
 
         arbiter.requestLiveActivity(media.activity(duration: 1))
@@ -251,9 +360,11 @@ final class NotchArbiterTests: XCTestCase {
     func testVisibilityIsNotRedundantlyRepeated() {
         let stats = StubModule(id: "stats")
         arbiter.register(stats)
+        arbiter.panelDidApply(.expanded)
+        arbiter.panelDidApply(.expanded)
         arbiter.register(StubModule(id: "weather"))
-        // Registering a second module changes standby, but stats stayed
-        // visible throughout and must not be told twice.
+        // Re-applying the same surface, and a second module joining the open
+        // stack, leave stats visible throughout: it must not be told twice.
         XCTAssertEqual(stats.visibilityLog, [true])
     }
 
