@@ -832,7 +832,9 @@ struct MediaWingArtwork: View {
     }
 }
 
-/// Right wing: a small animated waveform while playing, still while paused.
+/// Right wing: a small animated waveform while playing, still while paused —
+/// and still under Reduce Motion, which is honoured by never building the
+/// animated bars at all rather than by animating them to rest.
 ///
 /// Decorative for now — bars move on time, not on real amplitude; the honest
 /// upgrade is the audio-capture feature behind its permission.
@@ -852,11 +854,22 @@ struct MediaWingArtwork: View {
 struct MediaWingWaveform: View {
     let module: MediaModule
 
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    /// Animated bars only when they may actually move. Under Reduce Motion
+    /// the resting bars stand in, so no `WaveBar` is ever created and no
+    /// `repeatForever` starts (hard rule 8) — the same reason pausing swaps
+    /// the views out rather than animating them to rest.
+    private var animatesBars: Bool {
+        module.nowPlaying?.isPlaying == true && !reduceMotion
+    }
+
     var body: some View {
-        let playing = module.nowPlaying?.isPlaying == true
         let accent = module.artworkAccent ?? .mediaAccent
         HStack(spacing: 2.5) {
-            if playing {
+            if animatesBars {
                 ForEach(0..<4, id: \.self) { index in
                     WaveBar(index: index, color: accent)
                 }
