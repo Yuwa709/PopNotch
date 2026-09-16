@@ -28,6 +28,19 @@ struct AudioVisualizerBarsView: View {
     }
 
     var body: some View {
+        let reduceMotion = reduceMotion
+        content
+            // Hard rule 8. The bars do not animate themselves (see `bars`),
+            // but a transaction inherited from an ancestor could still fade
+            // the bars-to-hint swap or tween the shadow tint. Under Reduce
+            // Motion, nothing in this view animates.
+            .transaction { transaction in
+                if reduceMotion { transaction.animation = nil }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if service.isEnabled, service.lastError == nil {
             // Rendered whenever the feature is on and healthy. While the tap
             // is down — paused, stopped, nothing playing — the service has
@@ -60,12 +73,16 @@ struct AudioVisualizerBarsView: View {
         // the row's layout — same trick the wave indicator used.
         .frame(height: Self.maxHeight)
         .shadow(color: (accent ?? .white).opacity(0.4), radius: 3)
-        // Buffers arrive every ~22ms. A 60ms blend was interpolating across
-        // nearly three of them, averaging away motion the data contained;
-        // 30ms lets each buffer substantially arrive before the next, while
-        // still avoiding visible stepping. Hard rule 8: instant under
-        // Reduce Motion.
-        .animation(reduceMotion ? nil : .linear(duration: 0.03), value: service.bands)
+        // No implicit animation: each publish lands as it is. The bands
+        // arrive already smoothed — attack instant, release shaped by
+        // `AudioVisualizerService.barRelease` — so a view animation was a
+        // second smoother on top. It was `.animation(.linear(duration: 0.03),
+        // value: bands)`, and with ~47 publishes a second every update started
+        // a new animation over one still running, on all 16 heights and 16
+        // fill opacities. Removing it saved 7.6 points of a core by Time
+        // Profiler (2026-09-16; PROJECT-CONTEXT.md, *Performance findings*).
+        // Drawing the bars in one Canvas instead was also tried and measured
+        // no cheaper by CPU time (8.5 points against 8.6), so they stay shapes.
         .accessibilityLabel("Audio visualizer")
         .allowsHitTesting(false)
     }
