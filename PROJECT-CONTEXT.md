@@ -490,6 +490,62 @@ The remaining ~3.9% was not profiled. The playing wing waveform (four SwiftUI `r
 
 **Rule.** On the notch is not on screen. Decide visibility from what the panel actually draws; a module present only in the collapsed wings gets no visibility callbacks, and so must need no timer.
 
+### Audio visualiser CPU cost (measured 2026-09-16, not fixed)
+
+**What was measured.** The cost of the expanded header's 16-band spectrum (`AudioVisualizerService` plus `AudioVisualizerBarsView`) while it runs: panel pinned open on the player screen, Spotify playing. Capture is gated to the player screen (`9b045b7`), so no other screen was involved.
+
+**Build.** Release (whole-module optimised), built with `CLANG_COVERAGE_MAPPING=NO ENABLE_CODE_COVERAGE=NO` — the default Release build is coverage-instrumented (next section), which would distort a profile — and signed Apple Development, so the existing System Audio Recording and Automation grants applied and the profiler could attach (`get-task-allow`). Run from DerivedData in place of the installed Debug build. Built from an uncommitted working tree whose per-file line counts match `f943397` and `9b045b7`, committed shortly after; matched by diffstat, not byte for byte. MacBook Air, built-in 60 Hz display, macOS 27.0 (26A428).
+
+**Two methods.**
+- **Time Profiler:** `xcrun xctrace record --template 'Time Profiler' --attach <pid> --time-limit 60s`, exported with `xctrace export`. Every 1 ms on-CPU sample attributed by thread and call stack, each sample counted once. Attaching raises a macOS authorization prompt the user approves (Developer mode is off on this Mac).
+- **CPU time:** `ps` accumulated CPU-time delta over one 60 s window, taken immediately *after* each profile, not during it.
+
+Each run was checked from the logs (pin, panel state, capture on or off, one `bands:` line a second while capturing) and from Spotify's and coreaudiod's CPU activity, to confirm playback.
+
+**Results, % of one core.**
+
+| Run | State | Time Profiler | CPU time |
+|---|---|---|---|
+| A | visualiser on | 34.8 | **none — not taken** |
+| B | visualiser off | 13.3 | 13.0 |
+| C | visualiser on, Reduce Motion on | 27.2 | 21.6 |
+
+Run C is the visualiser with its implicit animation removed. `AudioVisualizerBarsView` already passes `nil` to `.animation` under Reduce Motion (hard rule 8), so no code change was needed to measure it.
+
+**There is no CPU-time reading for run A.** The step was skipped. The visualiser's full cost, 21.5 points (A − B), exists only as a profiler figure.
+
+**The two methods disagreed for run C: 27.2 by Time Profiler, 21.6 by CPU time — a 5.6-point gap.** For run B they agreed within 0.3. The explanation is untested: the Time Profiler template also records dispatch and run-loop events, and that overhead would scale with the ~47 dispatches and task hops a second the visualiser makes, which run B does not have. If that holds, the profiler's absolute figures for A and C are overstated, while comparisons between A and C (both profiled) remain like for like. By CPU time alone, the visualiser without animation costs about 8.6 points (C − B).
+
+**Where the profiled time goes**, each sample counted once:
+
+| | A: on | B: off | C: on, no animation |
+|---|---|---|---|
+| Graph update and layout (main thread) | 11.0 | 0.2 | 10.9 |
+| Animation ticks: fill style, bar opacity (main) | 7.3 | 0.0 | 0.2 |
+| Animation ticks: frame size, bar height (main) | 1.8 | 0.3 | 0.1 |
+| Display list, render, Core Animation commit (main) | 8.1 | 11.0 | 9.7 |
+| Publish path, including SwiftUI invalidation (main) | 0.9 | 0.0 | 0.5 |
+| Style resolution without animation (main) | 0.9 | 0.0 | 0.5 |
+| Bars view body (main) | 0.5 | 0.0 | 0.4 |
+| Analysis queue: FFT, band fold, gain, smoothing | 0.1 | 0.0 | 1.5 |
+| Audio IO thread | 1.3 | 0.0 | 0.6 |
+| Everything else | 3.0 | 1.8 | 2.8 |
+| **Whole process** | **34.8** | **13.3** | **27.2** |
+
+Rows are rounded, so A's add up to 34.9.
+
+**What it shows.**
+- **The FFT is not the cost.** The whole audio side — IO thread, analysis queue and publish path — is 2.3 points in A and 2.6 in C.
+- **With animation, the cost is SwiftUI animating 32 values.** `.animation(.linear(duration: 0.03), value: service.bands)` starts a new animation on every publish. Buffers are 1024 frames, about 47 a second at 48 kHz per the service's own notes, so each 30 ms animation starts over one about 70% complete and SwiftUI combines them. Animating the fill opacity cost about five times animating the height (7.3 against 1.4 points, net of run B). Opacity encodes the same `magnitude` as height: it adds emphasis, not information.
+- **Removing the animation did not remove the largest cost.** Animation ticks fell from 9.1 points to 0.3, but graph update and layout stayed at 10.9: that work follows the ~47 publishes a second, not the display's animation frames. An estimate made before run C predicted 9–15 points saved; the measured saving was 7.6 (profiler, A − C).
+- **Run-to-run noise is about a point per row.** Between A and C — the same binary, differing only in Reduce Motion, which does not touch audio code — the analysis queue went from 0.1 to 1.5 and the IO thread from 1.3 to 0.6. That is unexplained.
+
+**Outside PopNotch, single readings.** coreaudiod was 3.6% with the visualiser off (30 s, state B) and 4.6% with it on (60 s, state C), suggesting about one point for the tap and aggregate device. WindowServer was 43.7% and 21.0% in the same windows; it follows everything else on screen and cannot be attributed. There is no out-of-process reading for state A.
+
+**Not fixed.** Assessed, not measured: draw the 16 bars in one `Canvas` (targets the per-publish graph update and layout); coalesce publishes to 30 Hz (about 36% fewer updates, up to 33 ms more lag, weaker transients); static opacity (worth about half a point once the animation is gone).
+
+**Rule.** Before quoting a profiler total as a cost, take a CPU-time reading of the same state. For this workload the two differed by 5.6 points, and the profiler read higher.
+
 ### Measured at the same time, not fixed
 
 - **Release builds are coverage-instrumented.** The Release configuration resolves `CLANG_COVERAGE_MAPPING = YES`, and the shipped 1.0.6 binary carries `__llvm_prf_cnts` sections and 1,435 profile counters. It is not set in `project.pbxproj`; most likely it comes from the auto-generated scheme, since no `.xcscheme` is committed. A build-settings change, so the user's to make (hard rule 1).
