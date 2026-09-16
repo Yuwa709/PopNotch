@@ -33,6 +33,7 @@ final class NotchVisibilityTests: XCTestCase {
         let stats: SystemStatsService
         let battery: BatteryService
         let history: SystemStatsHistory
+        let visualizer: AudioVisualizerService
     }
 
     /// Wired the way AppDelegate wires it. Needs a screen: the coordinator
@@ -53,7 +54,10 @@ final class NotchVisibilityTests: XCTestCase {
             statsPage: .init(stats: stats, battery: battery, history: history))
 
         let player = StubMediaSource(id: "spotify", running: true)
-        let media = MediaModule(sources: [player])
+        // Left disabled, so no test opens a real system-audio tap; what the
+        // module reports is still readable as `spectrumVisible`.
+        let visualizer = AudioVisualizerService()
+        let media = MediaModule(sources: [player], visualizer: visualizer)
         media.onPresenceChange = { [weak coordinator] in coordinator?.refreshPresentation() }
         media.onContentReflow = { [weak coordinator] in coordinator?.refreshPresentation() }
         coordinator.register(media)
@@ -61,7 +65,8 @@ final class NotchVisibilityTests: XCTestCase {
         coordinator.start()
 
         let harness = Harness(coordinator: coordinator, arbiter: arbiter, media: media,
-                              player: player, stats: stats, battery: battery, history: history)
+                              player: player, stats: stats, battery: battery, history: history,
+                              visualizer: visualizer)
         if playing { play(on: harness) }
         return harness
     }
@@ -149,6 +154,60 @@ final class NotchVisibilityTests: XCTestCase {
 
         h.coordinator.setEnabled(false, for: "media")
         XCTAssertFalse(h.media.isLiveSyncing)
+
+        h.coordinator.setPinned(false)
+    }
+
+    // MARK: - The audio visualiser's spectrum
+
+    /// Only the player's header draws the bars.
+    func testOnlyThePlayerScreenDrawsTheSpectrum() {
+        var track = NowPlaying()
+        track.title = "Track"
+        XCTAssertTrue(MediaModule.drawsSpectrum(on: .player(track)))
+        XCTAssertFalse(MediaModule.drawsSpectrum(on: .fullLyrics), "the takeover replaces the header")
+        XCTAssertFalse(MediaModule.drawsSpectrum(on: .permissionDenied), "the banner has no bars")
+        XCTAssertFalse(MediaModule.drawsSpectrum(on: nil), "nothing to show, nothing drawn")
+    }
+
+    func testSpectrumIsOnScreenOnlyWhileTheOpenPanelShowsThePlayer() throws {
+        let h = try makeHarness()
+        XCTAssertFalse(h.visualizer.spectrumVisible, "collapsed on the wings: no bars")
+
+        h.coordinator.setPinned(true)
+        XCTAssertTrue(h.visualizer.spectrumVisible, "open on the player")
+
+        h.coordinator.setPinned(false)
+        XCTAssertFalse(h.visualizer.spectrumVisible, "collapsed again")
+    }
+
+    /// The regression: capture followed the panel, so it ran behind every
+    /// screen that fills an open panel without drawing a bar.
+    func testNoOtherScreenCountsAsTheSpectrum() throws {
+        let h = try makeHarness()
+        h.coordinator.register(ClipboardModule(service: ClipboardService()))
+        h.coordinator.register(FileShelfModule(service: FileShelfService()))
+        h.coordinator.setPinned(true)
+
+        let screens: [NotchCoordinator.Destination] = [.systemStats, .clipboard, .fileShelf]
+        for screen in screens {
+            h.coordinator.navigate(to: screen)
+            XCTAssertFalse(h.visualizer.spectrumVisible, "\(screen) draws no bars")
+            h.coordinator.navigate(to: .standby)
+            XCTAssertTrue(h.visualizer.spectrumVisible, "back on the player from \(screen)")
+        }
+
+        h.coordinator.setPinned(false)
+    }
+
+    /// The permission banner fills the player's slot and the module is
+    /// visible, but there are no bars.
+    func testPermissionBannerIsNotTheSpectrum() throws {
+        let h = try makeHarness(playing: false)
+        h.player.permissionDenied = true
+        h.coordinator.setPinned(true)
+        XCTAssertEqual(h.arbiter.visibleIDs, ["media"], "precondition: the banner is showing")
+        XCTAssertFalse(h.visualizer.spectrumVisible)
 
         h.coordinator.setPinned(false)
     }

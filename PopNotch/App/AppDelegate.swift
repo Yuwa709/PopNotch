@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// chrome read the same flag.
     let pinState = PinState()
     private(set) lazy var coordinator = NotchCoordinator(
-        settings: settings, caffeinate: caffeinate, audioVisualizer: audioViz,
+        settings: settings, caffeinate: caffeinate,
         pinState: pinState, statsPage: statsPage)
     /// Given the settings store so launch reads the cached connected flag
     /// instead of the Keychain.
@@ -36,8 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// so no module needs to know about it.
     private(set) lazy var caffeinate = CaffeinateService()
 
-    /// Panel-level, like caffeinate: enabled from the stored setting, made
-    /// visible by the coordinator only while the panel is expanded.
+    /// Enabled here from the stored setting. Whether it may capture is
+    /// MediaModule's to say: only while the player header that draws the
+    /// bars is on screen and the tracked player is playing.
     private(set) lazy var audioViz = AudioVisualizerService()
 
     /// The system now-playing source, held only so the music-over-video
@@ -235,8 +236,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
 
-        // The stored preference; off by default. Visibility is the
-        // coordinator's job, so no setPanelVisible here.
+        // The stored preference; off by default. Whether the bars are on
+        // screen is MediaModule's to report, so no setSpectrumVisible here.
         audioViz.setEnabled(settings.settings.visualizerEnabled)
     }
 

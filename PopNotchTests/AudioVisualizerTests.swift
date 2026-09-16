@@ -272,12 +272,12 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
         XCTAssertTrue(service.bands.allSatisfy { $0 == 0 })
     }
 
-    func testEnablingWithoutAVisiblePanelDoesNotRun() {
+    func testEnablingWithoutAVisibleSpectrumDoesNotRun() {
         // Both conditions are required: enabled AND on screen.
         let service = AudioVisualizerService()
         service.setEnabled(true)
         XCTAssertTrue(service.isEnabled)
-        XCTAssertFalse(service.isRunning, "an invisible panel must not capture audio")
+        XCTAssertFalse(service.isRunning, "bars nobody can see must not capture audio")
     }
 
     func testDisablingClearsRunningState() {
@@ -288,11 +288,11 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
         XCTAssertFalse(service.isRunning)
     }
 
-    func testPanelHiddenWhileEnabledStopsCapture() {
+    func testSpectrumHiddenWhileEnabledStopsCapture() {
         let service = AudioVisualizerService()
         service.setEnabled(true)
-        service.setPanelVisible(true)
-        service.setPanelVisible(false)
+        service.setSpectrumVisible(true)
+        service.setSpectrumVisible(false)
         XCTAssertFalse(service.isRunning)
     }
 
@@ -308,13 +308,13 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
     func testEnabledAndVisibleButNotPlayingDoesNotCapture() {
         let service = AudioVisualizerService()
         service.setEnabled(true)
-        service.setPanelVisible(true)
+        service.setSpectrumVisible(true)
         XCTAssertFalse(service.isRunning,
-                       "nothing playing means no tap, however visible the panel is")
+                       "nothing playing means no tap, however visible the bars are")
     }
 
     func testPlayingAloneDoesNotCapture() {
-        // Playback is necessary, not sufficient: the panel must be open and
+        // Playback is necessary, not sufficient: the bars must be on screen and
         // the feature enabled.
         let service = AudioVisualizerService()
         service.setPlaying(true)
@@ -324,7 +324,7 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
 
     func testPlayingWithoutBeingEnabledDoesNotCapture() {
         let service = AudioVisualizerService()
-        service.setPanelVisible(true)
+        service.setSpectrumVisible(true)
         service.setPlaying(true)
         XCTAssertFalse(service.isRunning, "an off feature must never open a tap")
     }
@@ -332,7 +332,7 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
     func testPauseAfterPlayingLeavesNothingRunning() {
         let service = AudioVisualizerService()
         service.setEnabled(true)
-        service.setPanelVisible(true)
+        service.setSpectrumVisible(true)
         service.setPlaying(true)
         service.setPlaying(false)
         XCTAssertFalse(service.isRunning)
@@ -343,7 +343,7 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
         // bands are what makes the bars rest rather than react.
         let service = AudioVisualizerService()
         service.setEnabled(true)
-        service.setPanelVisible(true)
+        service.setSpectrumVisible(true)
         service.setPlaying(false)
         XCTAssertTrue(service.bands.allSatisfy { $0 == 0 },
                       "silent baseline, not stale magnitudes")

@@ -35,8 +35,8 @@ import os
 /// `AudioDeviceStart` failing, which is handled as a logged, quiet decline.
 ///
 /// **Lifetime.** Off by default. Capture runs only while all three of
-/// enabled, panel-visible and *actively playing* hold, and is torn down the
-/// moment any of them stops — hard rule 9's "nothing runs when nobody is
+/// enabled, spectrum-on-screen and *actively playing* hold, and is torn down
+/// the moment any of them stops — hard rule 9's "nothing runs when nobody is
 /// looking", expressed without a timer.
 ///
 /// The playback condition matters beyond tidiness. The tap is whole-system:
@@ -67,7 +67,9 @@ final class AudioVisualizerService {
     private(set) var lastError: String?
 
     @ObservationIgnored private(set) var isEnabled = false
-    @ObservationIgnored private var panelVisible = false
+    /// Whether the view that draws the bars is on screen. Readable so tests
+    /// can check what the media module reported without opening a real tap.
+    @ObservationIgnored private(set) var spectrumVisible = false
     /// Driven by the media module from the active source's player state.
     @ObservationIgnored private var isPlaying = false
     @ObservationIgnored private var capture: SystemAudioTap?
@@ -211,11 +213,15 @@ final class AudioVisualizerService {
         reconcile()
     }
 
-    /// Called by whatever owns panel visibility. Capture must not run for a
-    /// panel nobody can see.
-    func setPanelVisible(_ visible: Bool) {
-        guard visible != panelVisible else { return }
-        panelVisible = visible
+    /// Whether the bars are on screen right now. Called by `MediaModule`, the
+    /// only thing that knows: an open panel is not enough. The stats page,
+    /// clipboard, shelf and full-lyrics takeover all fill an open panel
+    /// without drawing a bar, and while this was keyed on the panel alone,
+    /// capture ran behind each of them whenever music played (fixed
+    /// 2026-09-16).
+    func setSpectrumVisible(_ visible: Bool) {
+        guard visible != spectrumVisible else { return }
+        spectrumVisible = visible
         reconcile()
     }
 
@@ -227,7 +233,7 @@ final class AudioVisualizerService {
         reconcile()
     }
 
-    private var shouldRun: Bool { isEnabled && panelVisible && isPlaying }
+    private var shouldRun: Bool { isEnabled && spectrumVisible && isPlaying }
 
     private func reconcile() {
         if shouldRun {
@@ -239,7 +245,7 @@ final class AudioVisualizerService {
 
     private var stopReason: String {
         if !isEnabled { return "disabled" }
-        if !panelVisible { return "panel not visible" }
+        if !spectrumVisible { return "spectrum not on screen" }
         return "playback stopped"
     }
 

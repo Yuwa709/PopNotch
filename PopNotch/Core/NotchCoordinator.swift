@@ -133,10 +133,6 @@ final class NotchCoordinator {
     }
 
     private let caffeinate: CaffeinateService?
-    /// The coordinator owns only the capture LIFECYCLE — the tap must die
-    /// with the panel (setPanelVisible in applyState). Rendering moved into
-    /// the media header, where the wave indicator used to be. Nil in tests.
-    private let audioVisualizer: AudioVisualizerService?
 
     /// The stats page's services, or nil where the page is not wired up.
     private let statsPage: StatsPageServices?
@@ -144,13 +140,11 @@ final class NotchCoordinator {
     init(settings: SettingsStore,
          arbiter: NotchArbiter? = nil,
          caffeinate: CaffeinateService? = nil,
-         audioVisualizer: AudioVisualizerService? = nil,
          pinState: PinState? = nil,
          statsPage: StatsPageServices? = nil) {
         self.settings = settings
         self.pinState = pinState
         self.caffeinate = caffeinate
-        self.audioVisualizer = audioVisualizer
         self.statsPage = statsPage
         self.arbiter = arbiter ?? NotchArbiter()
         self.arbiter.onPresentationChange = { [weak self] presentation in
@@ -426,9 +420,9 @@ final class NotchCoordinator {
         // presented: behind the collapsed wings or a navigated screen, the
         // standby modules are off screen and their timers stop (hard rule 9).
         arbiter.panelDidApply(surface(for: state))
-        // Capture must not run for a panel nobody can see (hard rule 9's
-        // spirit): the service tears the tap down whenever this goes false.
-        audioVisualizer?.setPanelVisible(state == .expanded)
+        // The audio visualiser follows from the line above: MediaModule hears
+        // its visibility there, and allows capture only while the player
+        // header that draws the bars is on screen.
     }
 
     /// Open on a navigated screen only when `content(for:)` really shows

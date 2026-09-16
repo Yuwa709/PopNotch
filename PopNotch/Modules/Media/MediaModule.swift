@@ -104,9 +104,10 @@ final class MediaModule: NotchModule {
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private let account: SpotifyAccount?
-    /// Injected, not owned: the coordinator owns the capture lifecycle
-    /// (panel visibility); this reference exists only so the expanded header
-    /// can render the bars where the wave indicator used to sit. Nil in tests.
+    /// Injected, not owned. The expanded header renders the bars, and this
+    /// module is what tells the service whether they may capture: the
+    /// tracked player's play state, and whether the player header that
+    /// draws them is on screen. Nil in tests that do not care.
     @ObservationIgnored let visualizer: AudioVisualizerService?
     @ObservationIgnored private let webAPI: SpotifyWebAPI?
     /// The open panel's live-sync clock. Exists only between
@@ -114,6 +115,10 @@ final class MediaModule: NotchModule {
     /// display sleep in between — hard rule 9, all three clauses.
     @ObservationIgnored private var liveSyncTimer: Timer?
     @ObservationIgnored private var liveSyncWanted = false
+    /// Between `didBecomeVisible()` and `didResignVisible()`: this module's
+    /// expanded view is on screen. The spectrum needs this as well as the
+    /// screen, because the player stays the current screen of a closed panel.
+    @ObservationIgnored private var isVisible = false
     @ObservationIgnored private var displayAsleep = false
     @ObservationIgnored private var sleepObservers: [NSObjectProtocol] = []
 
@@ -404,6 +409,10 @@ final class MediaModule: NotchModule {
         // the notch is actually showing: paused, stopped or empty means the
         // tap comes down rather than reacting to unrelated system audio.
         visualizer?.setPlaying(snapshot?.isPlaying == true)
+        // This update can change which screen is showing — content arriving
+        // or leaving, the full-lyrics takeover ending on a new track — so the
+        // spectrum follows at every exit below.
+        defer { updateSpectrumVisibility() }
 
         // Recompute the accent only when the artwork bytes actually change —
         // a 24x24 downsample pass, cheap, but not worth repeating per tick.
@@ -520,13 +529,16 @@ final class MediaModule: NotchModule {
         return AnyView(MediaWingWaveform(module: self).offset(x: -3))
     }
 
-    /// The expanded player is on screen. Starts the live-sync clock and
-    /// nothing else: no pull here, because `AppleScriptRunner` is
-    /// synchronous and an Apple Event per hover would land inside the expand
-    /// animation. Push observation keeps the snapshot current in between.
+    /// The expanded view is on screen. Starts the live-sync clock, and lets
+    /// the spectrum capture if the player is the screen showing. No pull
+    /// here, because `AppleScriptRunner` is synchronous and an Apple Event
+    /// per hover would land inside the expand animation. Push observation
+    /// keeps the snapshot current in between.
     func didBecomeVisible() {
+        isVisible = true
         liveSyncWanted = true
         updateLiveSync()
+        updateSpectrumVisibility()
     }
 
     /// One pull from every player, plus the account extras.
@@ -573,6 +585,30 @@ final class MediaModule: NotchModule {
         guard let spotify = activeSource as? SpotifyAdapter else { return }
         guard nowPlaying?.isPlaying == true else { return }
         spotify.refreshLive()
+    }
+
+    // MARK: - Spectrum
+
+    /// Whether a screen draws the spectrum. Only the player does: the bars
+    /// live in its header, and the full-lyrics takeover and the permission
+    /// banner fill the same slot without them. Pure, so the mapping is a test
+    /// rather than a reading of `MediaExpandedView`.
+    static func drawsSpectrum(on screen: ExpandedScreen?) -> Bool {
+        guard case .player = screen else { return false }
+        return true
+    }
+
+    /// Tells the visualiser whether its bars are on screen. Called wherever
+    /// either input changes — visibility, and the screen showing — and the
+    /// service ignores repeats, so calling it freely costs nothing.
+    ///
+    /// Deliberately not called from `notchDidCollapse()`: that runs while
+    /// this module still counts as visible, so leaving the full-lyrics
+    /// takeover there would briefly turn capture back on. The resign that
+    /// follows it stops capture instead.
+    private func updateSpectrumVisibility() {
+        guard let visualizer else { return }
+        visualizer.setSpectrumVisible(isVisible && Self.drawsSpectrum(on: expandedScreen))
     }
 
     // MARK: - Account extras
@@ -676,6 +712,7 @@ final class MediaModule: NotchModule {
     func toggleFullLyrics() {
         guard lyrics?.isEmpty == false else { return }
         showFullLyrics.toggle()
+        updateSpectrumVisibility()
         onContentReflow?()
     }
 
@@ -721,7 +758,9 @@ final class MediaModule: NotchModule {
         // live-sync clock, stops here (hard rule 9): behind the wings with
         // Spotify playing, it was an Apple Event every two seconds for a
         // playhead nobody could see.
+        isVisible = false
         liveSyncWanted = false
         updateLiveSync()
+        updateSpectrumVisibility()
     }
 }
