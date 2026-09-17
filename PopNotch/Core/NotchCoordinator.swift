@@ -422,7 +422,7 @@ final class NotchCoordinator {
         arbiter.panelDidApply(surface(for: state))
         // The audio visualiser follows from the line above: MediaModule hears
         // its visibility there, and allows capture only while the player
-        // header that draws the bars is on screen.
+        // screen, whose progress row draws the spectrum, is on screen.
     }
 
     /// Open on a navigated screen only when `content(for:)` really shows

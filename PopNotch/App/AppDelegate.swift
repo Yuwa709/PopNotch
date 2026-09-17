@@ -37,8 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) lazy var caffeinate = CaffeinateService()
 
     /// Enabled here from the stored setting. Whether it may capture is
-    /// MediaModule's to say: only while the player header that draws the
-    /// bars is on screen and the tracked player is playing.
+    /// MediaModule's to say: only while the player screen, whose progress
+    /// row draws the spectrum, is on screen and the tracked player is playing.
     private(set) lazy var audioViz = AudioVisualizerService()
 
     /// The system now-playing source, held only so the music-over-video
@@ -236,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Self.logger.notice("Launched with \(modules.count, privacy: .public) modules registered")
 
-        // The stored preference; off by default. Whether the bars are on
+        // The stored preference; off by default. Whether the spectrum is on
         // screen is MediaModule's to report, so no setSpectrumVisible here.
         audioViz.setEnabled(settings.settings.visualizerEnabled)
     }

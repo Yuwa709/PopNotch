@@ -67,7 +67,7 @@ final class AudioVisualizerService {
     private(set) var lastError: String?
 
     @ObservationIgnored private(set) var isEnabled = false
-    /// Whether the view that draws the bars is on screen. Readable so tests
+    /// Whether the view that draws the spectrum is on screen. Readable so tests
     /// can check what the media module reported without opening a real tap.
     @ObservationIgnored private(set) var spectrumVisible = false
     /// Driven by the media module from the active source's player state.
@@ -116,22 +116,53 @@ final class AudioVisualizerService {
     /// until room tone lit the bars.
     nonisolated static let minimumGain: Float = -12
 
-    /// Per-frame decay of a falling bar. Attack stays instant, so a peak
-    /// lands immediately and only the fall is shaped.
+    /// How much of a *rising* band's previous value survives each buffer:
+    /// every buffer closes `1 - barAttack` of the gap to the new level. 0 is
+    /// an instant jump; nearer 1 is a slower swell.
     ///
-    /// **0.35 is measured, not guessed.** Frame-to-frame travel in the raw
-    /// band data is 0.073 of bar height per buffer; a release of 0.72 was
-    /// delivering only 0.038 of that to the screen, discarding roughly half
-    /// the motion the audio actually contains. Swept live 2026-08-30:
-    /// 0.72 -> 0.038, 0.55 -> 0.048, 0.40 -> 0.056, 0.25 -> 0.063, and
-    /// 0.00 -> 0.073, which is the raw signal with no smoothing at all.
-    /// 0.35 keeps about 80% of the available travel while still shaping the
-    /// fall enough that a single noisy buffer cannot strobe a bar.
+    /// **0.675: a rise covers half its travel in ~2 buffers (~40ms) and 90% in
+    /// ~6 (~125ms)**, at 1024-frame buffers and 48kHz, about 47 a second.
+    /// Attack was instant until 2026-09-16, when the spectrum had become the
+    /// scrub bar and every transient snapped it to full height: it read as
+    /// flicker rather than level. 0.8 (90% in ~220ms) then overcorrected into
+    /// a rectangle with a ripple, and 0.55 (~80ms) came back slightly too
+    /// jumpy; 0.675 splits the difference.
+    nonisolated static let barAttack: Float = 0.675
+
+    /// How much of a *falling* band's previous value survives each buffer:
+    /// every buffer closes `1 - barRelease` of the gap.
     ///
-    /// This changes only how a bar falls; it cannot reintroduce the
-    /// max-volume brick, which the adaptive gain owns and which measured
-    /// 0.00 pinned bands per frame.
-    nonisolated static let barRelease: Float = 0.35
+    /// **0.9: a fall covers half its travel in ~7 buffers (~140ms) and 90% in
+    /// ~22 (~470ms)**, so peaks subside smoothly while troughs still open up
+    /// between them (0.92 held the wave up and helped flatten it). Deliberately
+    /// slower than the attack: a band that falls as fast as it rises reads as
+    /// flicker rather than as level.
+    ///
+    /// It was 0.35, measured on 2026-08-30 to pass about 80% of the raw
+    /// frame-to-frame travel (0.073 of full height per buffer) to the old
+    /// header bars, where motion was the point. The scrub bar wants calm, and
+    /// gives most of that travel up on purpose. Neither constant can bring
+    /// back the max-volume brick, which the adaptive gain owns.
+    nonisolated static let barRelease: Float = 0.9
+
+    /// The shortest gap between two publishes: at most one every 40ms (25Hz).
+    ///
+    /// Analysis still runs on every buffer, so the smoothing above keeps its
+    /// time base; only what reaches the main actor is thinned. At 1024-frame
+    /// buffers that lets every second buffer through at 48kHz (~23Hz) and
+    /// 44.1kHz (~22Hz), and every fourth at 96kHz (~23Hz), against ~47 a
+    /// second before. Each publish dropped is a main-actor hop and a SwiftUI
+    /// update not made, and fewer updates are calmer too. See
+    /// `PublishThrottle`.
+    nonisolated static let publishInterval: TimeInterval = 1.0 / 25
+
+    /// One buffer of bar smoothing: an eased rise at `barAttack`, a slower
+    /// fall at `barRelease`. It only ever interpolates between the previous
+    /// value and the new one, so it cannot push a band out of range.
+    nonisolated static func smoothed(previous: Float, raw: Float) -> Float {
+        let keep = raw > previous ? barAttack : barRelease
+        return previous * keep + raw * (1 - keep)
+    }
 
     /// Per-frame decay of the ceiling, at roughly 46 buffers a second: about
     /// a four-second fall. The ceiling rises instantly so a transient cannot
@@ -213,10 +244,10 @@ final class AudioVisualizerService {
         reconcile()
     }
 
-    /// Whether the bars are on screen right now. Called by `MediaModule`, the
+    /// Whether the spectrum is on screen right now. Called by `MediaModule`, the
     /// only thing that knows: an open panel is not enough. The stats page,
     /// clipboard, shelf and full-lyrics takeover all fill an open panel
-    /// without drawing a bar, and while this was keyed on the panel alone,
+    /// without drawing the spectrum, and while this was keyed on the panel,
     /// capture ran behind each of them whenever music played (fixed
     /// 2026-09-16).
     func setSpectrumVisible(_ visible: Bool) {
@@ -325,6 +356,9 @@ private nonisolated final class SystemAudioTap {
     /// dropouts in the audio the user is actually listening to.
     private let analysisQueue = DispatchQueue(label: "com.techie.PopNotch.audioviz",
                                               qos: .userInitiated)
+    /// Thins publishes to `AudioVisualizerService.publishInterval`. Touched
+    /// only on `analysisQueue`, like the analyzer.
+    private var throttle = PublishThrottle(interval: AudioVisualizerService.publishInterval)
 
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
@@ -379,7 +413,11 @@ private nonisolated final class SystemAudioTap {
             let samples = Array(UnsafeBufferPointer(
                 start: raw.assumingMemoryBound(to: Float.self), count: count))
             self.analysisQueue.async {
-                guard let bands = self.analyzer.bands(from: samples) else { return }
+                // Analysed on every buffer, so the smoothing keeps its time
+                // base; published at most once per `publishInterval`.
+                guard let bands = self.analyzer.bands(from: samples),
+                      self.throttle.admit(at: ProcessInfo.processInfo.systemUptime)
+                else { return }
                 self.onBands(bands)
             }
         }
@@ -452,7 +490,7 @@ private nonisolated final class AudioAnalyzer {
     private let log2n: vDSP_Length
     private let fftSetup: FFTSetup?
     private var window: [Float]
-    /// Previous frame, for the decay that stops the bars strobing.
+    /// Previous frame, for the eased rise and slower fall.
     private var smoothed = [Float](repeating: 0, count: AudioVisualizerService.bandCount)
     /// Adaptive ceiling offset, in dB, tracking recent loudness. Starts at 0
     /// (the static references) and follows the material from there.
@@ -505,11 +543,36 @@ private nonisolated final class AudioAnalyzer {
         gain = AudioVisualizerService.updatedGain(
             current: gain, excess: AudioVisualizerService.excess(bandDecibels: decibels))
         let raw = AudioVisualizerService.normalize(bandDecibels: decibels, gain: gain)
-        // Attack fast, release slow: a bar that falls as fast as it rises
-        // reads as flicker rather than as level.
+        // Eased rise, slower fall: see `AudioVisualizerService.barAttack`
+        // and `barRelease`.
         for i in smoothed.indices {
-            smoothed[i] = raw[i] > smoothed[i] ? raw[i] : smoothed[i] * AudioVisualizerService.barRelease + raw[i] * (1 - AudioVisualizerService.barRelease)
+            smoothed[i] = AudioVisualizerService.smoothed(previous: smoothed[i], raw: raw[i])
         }
         return smoothed
+    }
+}
+
+/// Lets a publish through at most once per `interval`, measured from the last
+/// one it let through.
+///
+/// It admits once 90% of the interval has passed rather than all of it.
+/// Buffers arrive with a little scheduling jitter, and without that margin a
+/// buffer landing a hair early would be held back to the next one, so the
+/// stride would flip between two buffers and three and the rate would wobble.
+nonisolated struct PublishThrottle {
+
+    let interval: TimeInterval
+    private(set) var lastAdmitted: TimeInterval?
+
+    init(interval: TimeInterval) {
+        self.interval = interval
+    }
+
+    mutating func admit(at now: TimeInterval) -> Bool {
+        if let lastAdmitted, now - lastAdmitted < interval * 0.9 {
+            return false
+        }
+        lastAdmitted = now
+        return true
     }
 }

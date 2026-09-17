@@ -160,19 +160,19 @@ final class NotchVisibilityTests: XCTestCase {
 
     // MARK: - The audio visualiser's spectrum
 
-    /// Only the player's header draws the bars.
+    /// Only the player screen draws the spectrum, in its progress row.
     func testOnlyThePlayerScreenDrawsTheSpectrum() {
         var track = NowPlaying()
         track.title = "Track"
         XCTAssertTrue(MediaModule.drawsSpectrum(on: .player(track)))
-        XCTAssertFalse(MediaModule.drawsSpectrum(on: .fullLyrics), "the takeover replaces the header")
-        XCTAssertFalse(MediaModule.drawsSpectrum(on: .permissionDenied), "the banner has no bars")
+        XCTAssertFalse(MediaModule.drawsSpectrum(on: .fullLyrics), "the takeover replaces the player")
+        XCTAssertFalse(MediaModule.drawsSpectrum(on: .permissionDenied), "the banner has no spectrum")
         XCTAssertFalse(MediaModule.drawsSpectrum(on: nil), "nothing to show, nothing drawn")
     }
 
     func testSpectrumIsOnScreenOnlyWhileTheOpenPanelShowsThePlayer() throws {
         let h = try makeHarness()
-        XCTAssertFalse(h.visualizer.spectrumVisible, "collapsed on the wings: no bars")
+        XCTAssertFalse(h.visualizer.spectrumVisible, "collapsed on the wings: no spectrum")
 
         h.coordinator.setPinned(true)
         XCTAssertTrue(h.visualizer.spectrumVisible, "open on the player")
@@ -182,7 +182,7 @@ final class NotchVisibilityTests: XCTestCase {
     }
 
     /// The regression: capture followed the panel, so it ran behind every
-    /// screen that fills an open panel without drawing a bar.
+    /// screen that fills an open panel without drawing the spectrum.
     func testNoOtherScreenCountsAsTheSpectrum() throws {
         let h = try makeHarness()
         h.coordinator.register(ClipboardModule(service: ClipboardService()))
@@ -192,7 +192,7 @@ final class NotchVisibilityTests: XCTestCase {
         let screens: [NotchCoordinator.Destination] = [.systemStats, .clipboard, .fileShelf]
         for screen in screens {
             h.coordinator.navigate(to: screen)
-            XCTAssertFalse(h.visualizer.spectrumVisible, "\(screen) draws no bars")
+            XCTAssertFalse(h.visualizer.spectrumVisible, "\(screen) draws no spectrum")
             h.coordinator.navigate(to: .standby)
             XCTAssertTrue(h.visualizer.spectrumVisible, "back on the player from \(screen)")
         }
@@ -201,7 +201,7 @@ final class NotchVisibilityTests: XCTestCase {
     }
 
     /// The permission banner fills the player's slot and the module is
-    /// visible, but there are no bars.
+    /// visible, but there is no spectrum.
     func testPermissionBannerIsNotTheSpectrum() throws {
         let h = try makeHarness(playing: false)
         h.player.permissionDenied = true

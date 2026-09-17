@@ -198,53 +198,89 @@ final class AudioVisualizerGainTests: XCTestCase {
     }
 }
 
-/// Bar motion. The smoother sits between real audio dynamics and the
-/// screen, so an over-damped release throws away travel the data contains.
+/// Bar motion. The smoother sits between the analyser's raw bands and the
+/// scrub bar, and is tuned for calm: a rise eases in, and a fall subsides more
+/// slowly still. These pin that shape rather than exact curves, so the
+/// constants can be retuned without rewriting the tests.
 final class AudioVisualizerMotionTests: XCTestCase {
 
-    /// The shipped smoothing step: instant attack, shaped fall.
     private func smoothed(_ previous: Float, _ raw: Float) -> Float {
-        let release = AudioVisualizerService.barRelease
-        return raw > previous ? raw : previous * release + raw * (1 - release)
+        AudioVisualizerService.smoothed(previous: previous, raw: raw)
     }
 
-    func testAttackIsInstant() {
-        // A peak must land on the frame it happens, never be ramped into.
-        XCTAssertEqual(smoothed(0.2, 0.9), 0.9, accuracy: 0.0001)
-    }
-
-    func testFallDeliversMostOfTheAvailableTravel() {
-        // Measured: raw travel is ~0.073 of bar height per buffer, and a
-        // release of 0.72 delivered only ~0.038 of it. One frame of a drop
-        // must now cross well over half the distance.
-        let step = 1 - smoothed(1.0, 0.0)
-        XCTAssertGreaterThan(step, 0.6, "an over-damped release hides the motion")
-        XCTAssertLessThan(step, 1.0, "but a bar must not snap, or it strobes")
-    }
-
-    func testReleaseStaysInTheShapedRange() {
-        // 0 strobes on a single noisy buffer; toward 1 is the damping this
-        // was tuned away from.
-        XCTAssertGreaterThan(AudioVisualizerService.barRelease, 0)
-        XCTAssertLessThan(AudioVisualizerService.barRelease, 0.6)
-    }
-
-    func testFallIsMonotonicAndSettles() {
-        // No overshoot below the target, and it actually arrives.
-        var value: Float = 1
-        var previous: Float = 2
-        for _ in 0..<40 {
-            value = smoothed(value, 0)
-            XCTAssertLessThan(value, previous)
-            XCTAssertGreaterThanOrEqual(value, 0)
-            previous = value
+    /// Buffers until a step from `start` towards `target` covers `fraction`
+    /// of its travel.
+    private func buffersToCover(_ fraction: Float, from start: Float, to target: Float) -> Int {
+        var value = start
+        var count = 0
+        while abs(value - start) < abs(target - start) * fraction && count < 1000 {
+            value = smoothed(value, target)
+            count += 1
         }
-        XCTAssertLessThan(value, 0.01, "a bar must reach the floor, not hang above it")
+        return count
+    }
+
+    func testRiseEasesInRatherThanJumping() {
+        let first = smoothed(0, 1)
+        XCTAssertGreaterThan(first, 0, "a rise must start moving on its first buffer")
+        XCTAssertLessThan(first, 0.5, "a transient must not snap most of the way up in one buffer")
+    }
+
+    /// At about 47 buffers a second: 90% within 3 buffers (~65ms) reads as a
+    /// snap, and beyond 25 (~530ms) the bar lags the music it shows.
+    func testRiseArrivesAsASwellNotAFlicker() {
+        let buffers = buffersToCover(0.9, from: 0, to: 1)
+        XCTAssertGreaterThan(buffers, 3, "a rise this fast still snaps")
+        XCTAssertLessThan(buffers, 25, "a rise this slow lags the music")
+    }
+
+    func testFallIsSlowerThanRise() {
+        XCTAssertGreaterThan(buffersToCover(0.9, from: 1, to: 0),
+                             buffersToCover(0.9, from: 0, to: 1),
+                             "a band that falls as fast as it rises reads as flicker")
+    }
+
+    /// Stepped only until the band arrives: past that the gap is smaller
+    /// than a `Float` can resolve, `previous * keep + raw * (1 - keep)` rounds
+    /// back to `previous`, and a strict increase would fail on a curve that
+    /// had already landed.
+    func testRiseIsMonotonicAndArrives() {
+        var value: Float = 0
+        var steps = 0
+        while value < 0.99 && steps < 1000 {
+            let next = smoothed(value, 1)
+            XCTAssertGreaterThan(next, value, "a rise must never stall or reverse before it arrives")
+            XCTAssertLessThanOrEqual(next, 1)
+            value = next
+            steps += 1
+        }
+        XCTAssertGreaterThanOrEqual(value, 0.99, "a bar must reach its level, not hang below it")
+    }
+
+    /// Stepped only until the band settles, for the same reason as the rise.
+    func testFallIsMonotonicAndSettles() {
+        var value: Float = 1
+        var steps = 0
+        while value > 0.01 && steps < 1000 {
+            let next = smoothed(value, 0)
+            XCTAssertLessThan(next, value, "a fall must never stall or reverse before it settles")
+            XCTAssertGreaterThanOrEqual(next, 0)
+            value = next
+            steps += 1
+        }
+        XCTAssertLessThanOrEqual(value, 0.01, "a bar must reach the floor, not hang above it")
+    }
+
+    func testCoefficientsSmoothWithoutFreezing() {
+        for keep in [AudioVisualizerService.barAttack, AudioVisualizerService.barRelease] {
+            XCTAssertGreaterThan(keep, 0, "0 is no smoothing at all")
+            XCTAssertLessThan(keep, 1, "1 would never move")
+        }
     }
 
     func testSmoothingCannotPushABandOutOfRange() {
-        // Whatever the release, the smoother only ever interpolates between
-        // two in-range values, so it cannot create a clipped bar.
+        // The smoother only ever interpolates between two in-range values, so
+        // it cannot create a clipped band.
         for raw in [Float(0), 0.5, 1] {
             for previous in [Float(0), 0.5, 1] {
                 let result = smoothed(previous, raw)
@@ -252,6 +288,48 @@ final class AudioVisualizerMotionTests: XCTestCase {
                 XCTAssertLessThanOrEqual(result, 1)
             }
         }
+    }
+}
+
+/// Publish coalescing: the rate a steady stream of buffers reaches the main
+/// actor at.
+final class AudioVisualizerPublishRateTests: XCTestCase {
+
+    /// Publishes per second over ten seconds of buffers of this duration,
+    /// with alternating early and late arrival by `jitter`.
+    private func publishRate(bufferDuration: TimeInterval, jitter: TimeInterval = 0) -> Double {
+        var throttle = PublishThrottle(interval: AudioVisualizerService.publishInterval)
+        var admitted = 0
+        let buffers = Int((10 / bufferDuration).rounded())
+        for index in 0..<buffers {
+            let offset = index % 2 == 0 ? jitter : -jitter
+            if throttle.admit(at: Double(index) * bufferDuration + offset) {
+                admitted += 1
+            }
+        }
+        return Double(admitted) / 10
+    }
+
+    func testRateLandsBetweenTwentyAndThirtyHertzAtCommonSampleRates() {
+        for sampleRate in [44_100.0, 48_000.0, 88_200.0, 96_000.0] {
+            let rate = publishRate(bufferDuration: 1024 / sampleRate)
+            XCTAssertGreaterThanOrEqual(rate, 20, "too few publishes at \(sampleRate) Hz")
+            XCTAssertLessThanOrEqual(rate, 30, "too many publishes at \(sampleRate) Hz")
+        }
+    }
+
+    /// Two milliseconds early or late either side of 48kHz buffers must not
+    /// change which buffers get through.
+    func testJitterDoesNotWobbleTheRate() {
+        let steady = publishRate(bufferDuration: 1024 / 48_000.0)
+        let jittered = publishRate(bufferDuration: 1024 / 48_000.0, jitter: 0.002)
+        XCTAssertEqual(jittered, steady, accuracy: 0.2)
+    }
+
+    func testFirstBufferPublishesImmediately() {
+        var throttle = PublishThrottle(interval: AudioVisualizerService.publishInterval)
+        XCTAssertTrue(throttle.admit(at: 123.4))
+        XCTAssertFalse(throttle.admit(at: 123.41), "the next buffer 10ms later waits")
     }
 }
 
@@ -277,7 +355,7 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
         let service = AudioVisualizerService()
         service.setEnabled(true)
         XCTAssertTrue(service.isEnabled)
-        XCTAssertFalse(service.isRunning, "bars nobody can see must not capture audio")
+        XCTAssertFalse(service.isRunning, "a spectrum nobody can see must not capture audio")
     }
 
     func testDisablingClearsRunningState() {
@@ -310,11 +388,11 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
         service.setEnabled(true)
         service.setSpectrumVisible(true)
         XCTAssertFalse(service.isRunning,
-                       "nothing playing means no tap, however visible the bars are")
+                       "nothing playing means no tap, however visible the spectrum is")
     }
 
     func testPlayingAloneDoesNotCapture() {
-        // Playback is necessary, not sufficient: the bars must be on screen and
+        // Playback is necessary, not sufficient: the spectrum must be on screen and
         // the feature enabled.
         let service = AudioVisualizerService()
         service.setPlaying(true)

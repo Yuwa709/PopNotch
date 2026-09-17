@@ -9,12 +9,11 @@ extension Color {
 }
 
 /// Every tunable governing lyric motion, in one place so feel can be retuned
-/// without hunting through the file. Shared by the three-line ticker, the
+/// without hunting through the file. Shared by the one-line ticker, the
 /// full-lyrics page, and the zoom transition between them.
 private enum LyricsMotion {
-    /// Governs a line's own movement when the active index changes. One
-    /// spring for both the ticker and the full page, so a line carries the
-    /// same weight wherever it is shown.
+    /// Governs a line's own movement on the full lyrics page when the active
+    /// index changes.
     static let lineSpringResponse: Double = 0.30
     static let lineSpringDamping: Double = 0.86
     static var lineSpring: Animation {
@@ -26,24 +25,20 @@ private enum LyricsMotion {
     /// Used only by the full lyrics page, which renders every line unwindowed
     /// (see its own doc comment for why that makes a continuous curve safe).
     static let fadePerLine: Double = 0.42
-    /// The ticker's one visible neighbor (distance 1); distance 2 is always
-    /// exactly 0 — see `MediaLyricsView.fadeOpacity`.
-    static let tickerNeighborOpacity: Double = 0.35
 
-    /// Size of an inactive line relative to the active one. Applied with
-    /// `scaleEffect`, never a swapped font size — a font size change does not
-    /// interpolate between values, a scale does.
-    static let neighborScale: CGFloat = 0.85
     /// How much larger the active line grows on the full lyrics page, where
-    /// there is room for it. The ticker has no equivalent boost; its active
-    /// line is neighborScale's reciprocal effect alone (scale 1.0 vs 0.85).
+    /// there is room for it. The ticker shows its one line at natural size.
     static let fullPageActiveScale: CGFloat = 1.22
 
-    /// Vertical travel per line of distance, for the ticker only. Its lines
-    /// are `lineLimit(1)`, so every row is the same height and a flat step is
-    /// exact. The full page cannot use one — its lines wrap — so it measures
-    /// instead; see `LyricsLayout`.
-    static let tickerLineStep: CGFloat = 15
+    /// The ticker's row height, and so the whole lyric area's height in the
+    /// player: one `lineLimit(1)` line at 13pt, the same 15pt each line of the
+    /// old three-line ticker had. The full page cannot use a fixed row — its
+    /// lines wrap — so it measures instead; see `LyricsLayout`.
+    static let tickerLineHeight: CGFloat = 15
+    /// The ticker's cross-fade when the active line changes: the outgoing
+    /// line fades out while the incoming one fades in, in place. Short enough
+    /// to read as a swap rather than a linger.
+    static let tickerCrossfadeDuration: Double = 0.18
 
     /// Full page type size. Shared by the rendered `Text` and by the
     /// measurement that positions it — they must agree or every offset is
@@ -93,8 +88,8 @@ struct MediaCompactView: View {
     }
 }
 
-/// The open-notch player: artwork and titles up top, a scrubbable progress
-/// bar with elapsed/remaining times, transport controls beneath.
+/// The open-notch player: artwork on the left, titles with the scrub bar
+/// directly beneath them beside it, transport controls below.
 struct MediaExpandedView: View {
     let module: MediaModule
 
@@ -152,70 +147,87 @@ struct MediaExpandedView: View {
                                 isPlaying: playing.isPlaying,
                                 cornerRadius: 10
                             )
-                            .frame(width: 60, height: 60)
+                            // 74 = the column beside it: title 20 + 2 +
+                            // artist 16 + 6 + wave 30 (heights measured
+                            // 2026-09-16; the wave is
+                            // `SpectrumEnvelope.maxHeight`), so the artwork
+                            // and the scrub bar bottom-align exactly. The
+                            // followers line, when an account supplies one,
+                            // adds 15pt the artwork does not chase.
+                            .frame(width: 74, height: 74)
                         } else {
-                            ArtworkThumb(data: nil, side: 60, corner: 10)
+                            ArtworkThumb(data: nil, side: 74, corner: 10)
                         }
                     }
                     .buttonStyle(.plain)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(playing.title ?? "—")
-                            .font(.system(size: 17, weight: .semibold))
-                            .lineLimit(1)
-                        HStack(spacing: 5) {
-                            // Official artist avatar, when the account is
-                            // connected and Spotify has one.
-                            if let data = module.artistImageData, let image = NSImage(data: data) {
-                                Image(nsImage: image)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 15, height: 15)
-                                    .clipShape(Circle())
+                    // Everything right of the artwork is one column: titles
+                    // (and the trailing pill) on top, the scrub bar directly
+                    // beneath them, spanning from the artwork's edge to the
+                    // panel's. The bar is no longer its own full-width row
+                    // below the header.
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(playing.title ?? "—")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .lineLimit(1)
+                                HStack(spacing: 5) {
+                                    // Official artist avatar, when the account
+                                    // is connected and Spotify has one.
+                                    if let data = module.artistImageData,
+                                       let image = NSImage(data: data) {
+                                        Image(nsImage: image)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .frame(width: 15, height: 15)
+                                            .clipShape(Circle())
+                                    }
+                                    Text(playing.artist ?? "")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.white.opacity(0.6))
+                                        .lineLimit(1)
+                                }
+                                // Followers, labelled for what it is: the
+                                // official API does not expose monthly
+                                // listeners.
+                                if let followers = module.artistInfo?.followers, followers > 0 {
+                                    Text("\(CountFormatter.short(followers)) followers")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.white.opacity(0.42))
+                                        .lineLimit(1)
+                                }
                             }
-                            Text(playing.artist ?? "")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.white.opacity(0.6))
-                                .lineLimit(1)
-                        }
-                        // Followers, labelled for what it is: the official
-                        // API does not expose monthly listeners.
-                        if let followers = module.artistInfo?.followers, followers > 0 {
-                            Text("\(CountFormatter.short(followers)) followers")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.white.opacity(0.42))
-                                .lineLimit(1)
-                        }
-                    }
-                    // Bounded: the panel sizes itself to measured content;
-                    // an unbounded one-line title would balloon it.
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // Trailing column, per the reference: up-next above the
-                    // wave (their card sits in the same corner).
-                    VStack(alignment: .trailing, spacing: 5) {
-                        // Popularity pill, where the reference puts its play
-                        // count. Spotify's official 0-100 score, not plays.
-                        if let popularity = module.trackPopularity {
-                            HStack(spacing: 3) {
-                                Image(systemName: "chart.bar.fill")
-                                    .font(.system(size: 7, weight: .bold))
-                                Text("\(popularity)")
-                                    .font(.system(size: 10, weight: .bold))
+                            // Bounded: the panel sizes itself to measured
+                            // content; an unbounded one-line title would
+                            // balloon it.
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            // Trailing corner, per the reference: the pill,
+                            // and the one place in the panel a refused System
+                            // Audio Recording grant shows.
+                            VStack(alignment: .trailing, spacing: 5) {
+                                // Popularity pill, where the reference puts
+                                // its play count. Spotify's official 0-100
+                                // score, not plays.
+                                if let popularity = module.trackPopularity {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "chart.bar.fill")
+                                            .font(.system(size: 7, weight: .bold))
+                                        Text("\(popularity)")
+                                            .font(.system(size: 10, weight: .bold))
+                                    }
+                                    .foregroundStyle(.green)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Capsule().fill(.green.opacity(0.16)))
+                                }
+                                if let visualizer = module.visualizer {
+                                    AudioVisualizerPermissionHint(service: visualizer)
+                                }
                             }
-                            .foregroundStyle(.green)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(.green.opacity(0.16)))
                         }
-                        // The four-dot wave indicator lived here; the real
-                        // spectrum replaces it. (The compact wing keeps the
-                        // wave — it is the collapsed-state indicator.)
-                        if let visualizer = module.visualizer {
-                            AudioVisualizerBarsView(service: visualizer,
-                                                    accent: module.artworkAccent)
-                        }
+                        MediaProgressBar(module: module)
                     }
                 }
-                MediaProgressBar(module: module)
                 MediaLyricsView(module: module, namespace: lyricsNamespace)
                 controls(isPlaying: playing.isPlaying)
             }
@@ -287,9 +299,10 @@ struct MediaExpandedView: View {
     }
 }
 
-/// Elapsed — track — remaining. The fill advances once a second while the
-/// panel is open; dragging scrubs and releases into a seek. The 1s tick
-/// exists only while this view does, i.e. only while the notch is expanded.
+/// The scrub bar, in the header column under the titles. It advances once a
+/// second while the panel is open; dragging scrubs and releases into a seek.
+/// The 1s tick exists only while this view does, i.e. only while the notch
+/// is expanded. No time labels: the wave alone carries position.
 /// The favourite heart, in one of two modes decided by the *source*, not by
 /// this view.
 ///
@@ -383,74 +396,81 @@ private struct MediaProgressBar: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let elapsed = scrubFraction.map { $0 * duration }
                     ?? min(snapshot?.elapsedNow(at: context.date) ?? 0, duration)
-                HStack(spacing: 8) {
-                    timeLabel(format(elapsed))
-                    track(fraction: duration > 0 ? elapsed / duration : 0, duration: duration)
-                    timeLabel("-" + format(max(0, duration - elapsed)))
-                }
+                track(fraction: duration > 0 ? elapsed / duration : 0, duration: duration)
             }
         }
     }
 
-    private func timeLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .monospacedDigit()
-            .foregroundStyle(.white.opacity(0.65))
-            .frame(width: 38)
-    }
-
+    /// The bar is the spectrum wave: full width at all times, accent left of
+    /// the playhead and grey right of it. With no spectrum it lies flat, a
+    /// plain progress bar. See `AudioVisualizerSpectrumView`.
     private func track(fraction: Double, duration: TimeInterval) -> some View {
         GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.22))
-                Capsule().fill(accent)
-                    .frame(width: max(6, geo.size.width * fraction))
-                    .shadow(color: accent.opacity(0.6), radius: 4)
-                // No playhead dot (tried, user-rejected); the whole track
-                // drags, so the handle was decoration.
+            ZStack {
+                AudioVisualizerSpectrumView(service: module.visualizer,
+                                            accent: accent,
+                                            progress: fraction)
+                    // Drawing only. The taper thins the wave toward both
+                    // ends, so its shape must never decide where a click
+                    // lands.
+                    .allowsHitTesting(false)
+                // The hit area: the whole row, full height, edge to edge,
+                // whatever the wave looks like. No playhead dot (tried,
+                // user-rejected); the whole row drags, so a handle was
+                // decoration.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                scrubFraction = ScrubGeometry.fraction(atX: value.location.x,
+                                                                       width: geo.size.width)
+                            }
+                            .onEnded { value in
+                                let f = ScrubGeometry.fraction(atX: value.location.x,
+                                                               width: geo.size.width)
+                                module.seek(to: f * duration)
+                                // The adapter publishes the jump optimistically,
+                                // so the bar holds position on release.
+                                scrubFraction = nil
+                            }
+                    )
             }
-            .frame(height: 6)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        scrubFraction = (value.location.x / geo.size.width).clamped01()
-                    }
-                    .onEnded { value in
-                        let f = (value.location.x / geo.size.width).clamped01()
-                        module.seek(to: f * duration)
-                        // The adapter publishes the jump optimistically, so
-                        // the bar holds position on release.
-                        scrubFraction = nil
-                    }
-            )
+            .frame(width: geo.size.width, height: geo.size.height)
         }
-        .frame(height: 14)
-    }
-
-    private func format(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
+        // Taller than the old 14pt row with its 6pt capsule, so the wave has
+        // room to read as a wave. The panel grows by the difference.
+        .frame(height: SpectrumEnvelope.maxHeight)
     }
 }
 
-private extension Double {
-    func clamped01() -> Double { Swift.min(1, Swift.max(0, self)) }
+/// Where a click on the scrub bar lands, as a fraction of the track.
+///
+/// Linear across the row's full width, edge to edge: the wave's taper is
+/// drawing only, so nothing at either end is set aside and a drag one point
+/// from the edge moves exactly as far as one in the middle. Pure, so that is
+/// a test rather than a reading of the gesture.
+enum ScrubGeometry {
+    nonisolated static func fraction(atX x: CGFloat, width: CGFloat) -> Double {
+        guard width > 0 else { return 0 }
+        return Double(min(1, max(0, x / width)))
+    }
 }
 
 /// The line being sung, under the progress bar in the accent — like the
 /// reference design. Absent entirely (no reserved space) when the track has
 /// no synced lyrics. The half-second tick exists only while this view does.
-/// Lyrics as a three-line ticker: previous above, active centred, next below.
 ///
-/// Why this is not three labels swapping text: every line is positioned by
-/// its *distance* from the active index, so a single index change shifts
-/// every line by exactly one step under one spring. Lines are only inserted
-/// or removed two slots out, where opacity is already zero, so nothing
-/// appears or vanishes on screen. That is what makes it read as one scroll
-/// instead of three views changing content simultaneously.
+/// One line at a time. When the active line changes, the outgoing line fades
+/// out and the incoming one fades in, in place, fast enough to read as a swap.
+/// Instant under Reduce Motion (hard rule 8). Before the first timestamp a ♪
+/// stands in, and hands over to the opening line the same way.
+///
+/// Was a three-line ticker that rolled every line up one step on a spring,
+/// positioned by its distance from the active line. That roll depended on
+/// each line keeping one identity for its whole life on screen, because a
+/// replaced view cross-dissolves instead of moving. The cross-fade is now the
+/// point, so the line's identity is deliberately its index.
 private struct MediaLyricsView: View {
     let module: MediaModule
     let namespace: Namespace.ID
@@ -459,21 +479,15 @@ private struct MediaLyricsView: View {
     /// that holds the space while a lookup runs. One constant so the two can
     /// never disagree — a mismatch here would resize the panel by the
     /// difference and reintroduce the collapse this reservation prevents.
-    static let reservedHeight: CGFloat = LyricsMotion.tickerLineStep * 3
-    /// How many lines either side of the active one are rendered. Two, so a
-    /// line has faded to nothing before it joins or leaves the ForEach.
-    private let window = 2
+    static let reservedHeight: CGFloat = LyricsMotion.tickerLineHeight
 
     private var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
-    /// nil under Reduce Motion makes the change instant (hard rule 8).
-    /// Soft enough to read as a scroll, tight enough to settle inside the
-    /// 0.5s timeline tick — beyond that the words drift behind the audio,
-    /// which is the one thing this view cannot afford.
-    private var scroll: Animation? {
-        reduceMotion ? nil : LyricsMotion.lineSpring
+    /// nil under Reduce Motion makes the swap instant (hard rule 8).
+    private var crossfade: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: LyricsMotion.tickerCrossfadeDuration)
     }
 
     var body: some View {
@@ -492,82 +506,35 @@ private struct MediaLyricsView: View {
         if let lines = module.lyrics, !lines.isEmpty {
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 let elapsed = module.nowPlaying?.elapsedNow(at: context.date) ?? 0
-                // -1 before the first timestamp, so the opening line sits one
-                // slot below centre and scrolls up into it rather than
-                // appearing already in place.
+                // -1 before the first timestamp, while the ♪ run-in shows.
                 let active = LyricsParser.currentIndex(at: elapsed, in: lines) ?? -1
-                // Tapping anywhere in the ticker opens the full-lyrics takeover.
+                // Tapping the line opens the full-lyrics takeover.
                 Button { module.toggleFullLyrics() } label: {
-                    ticker(lines: lines, active: active)
+                    currentLine(lines: lines, active: active)
                 }
                 .buttonStyle(.plain)
-                .animation(scroll, value: active)
+                .animation(crossfade, value: active)
             }
             .frame(height: Self.reservedHeight)
         }
     }
 
-    private func ticker(lines: [LyricsLine], active: Int) -> some View {
-        let lo = max(0, active - window)
-        let hi = min(lines.count - 1, active + window)
-        return ZStack {
-            // Run-in before the first timestamp; fades out as the opening
-            // line arrives at centre.
-            Text("♪")
+    /// The active line, identified by its index. A new index is a new view,
+    /// so SwiftUI removes the old line and inserts the new one, and the
+    /// opacity transition turns that into the cross-fade. Both sit in the
+    /// one `ZStack`, so for the length of the fade they overlap in place
+    /// rather than stacking.
+    private func currentLine(lines: [LyricsLine], active: Int) -> some View {
+        ZStack {
+            Text(lines.indices.contains(active) ? lines[active].text : "♪")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(accent)
-                .opacity(active < 0 ? 1 : 0)
-
-            if lo <= hi {
-                ForEach(lo...hi, id: \.self) { i in
-                    line(lines[i].text, distance: i - active)
-                }
-            }
+                .lineLimit(1)
+                .id(active)
+                .transition(.opacity)
         }
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
-    }
-
-    /// `distance` is signed: -1 is the line above, 0 the active one, +1 below.
-    /// Offset, opacity and scale are all pure functions of it, so they move
-    /// together off the same spring.
-    ///
-    /// **One unconditional chain, deliberately.** A `@ViewBuilder` `if/else`
-    /// here — used briefly to put `matchedGeometryEffect` on only the active
-    /// line — compiles to `_ConditionalContent`, whose branches are distinct
-    /// view types. A line crossing into or out of `distance == 0` then
-    /// switched branches, so SwiftUI destroyed it and inserted a different
-    /// view rather than animating the one it had; the default transition for
-    /// that is a fade, which is what turned this ticker's roll into a
-    /// cross-dissolve. Every line must keep exactly one identity for its
-    /// whole life on screen, and its appearance must come only from
-    /// modifiers whose values change.
-    private func line(_ text: String, distance: Int) -> some View {
-        let magnitude = abs(distance)
-        // One font size scaled, never two sizes swapped: a font-size change
-        // does not interpolate between values, a scaleEffect does.
-        return Text(text)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(accent)
-            .lineLimit(1)
-            .scaleEffect(magnitude == 0 ? 1 : LyricsMotion.neighborScale)
-            .opacity(fadeOpacity(magnitude: magnitude))
-            .offset(y: CGFloat(distance) * LyricsMotion.tickerLineStep)
-    }
-
-    /// Two-step, not a continuous falloff: the ticker only ever shows
-    /// `window` (2) lines either side, and the outermost of those MUST land
-    /// on exactly 0 opacity, or a line silently joining/leaving the `ForEach`
-    /// at the edge of that window would visibly pop in rather than fade in
-    /// from nothing. The full-lyrics page renders every line unwindowed, so
-    /// it uses a genuinely continuous falloff instead — see
-    /// `MediaFullLyricsView.fadeOpacity`.
-    private func fadeOpacity(magnitude: Int) -> Double {
-        switch magnitude {
-        case 0: 1
-        case 1: LyricsMotion.tickerNeighborOpacity
-        default: 0
-        }
     }
 
     private var accent: Color { module.artworkAccent ?? Color.mediaAccent }
@@ -642,9 +609,9 @@ struct MediaFullLyricsView: View {
 /// Was a `ScrollViewReader` + `proxy.scrollTo(_:anchor:)` inside
 /// `withAnimation`: `scrollTo` snaps to an anchor rather than travelling
 /// continuously, which is why line changes read as a series of small jumps
-/// rather than one roll. Replaced with the same technique
-/// `MediaLyricsView`'s three-line ticker already used successfully: every
-/// line has a stable identity (`.id(index)` — the array itself does not
+/// rather than one roll. Replaced with a roll by offset (the player's ticker
+/// used the same technique while it showed three lines): every line has a
+/// stable identity (`.id(index)` — the array itself does not
 /// reorder or get rebuilt mid-track, so index is a valid identity for the
 /// duration of a track), and each line's vertical position is an `.offset`
 /// computed purely from its distance to the active line, moved by one shared
@@ -652,22 +619,18 @@ struct MediaFullLyricsView: View {
 /// often the driving state changes, so the motion is continuous even though
 /// `active` itself only updates on the underlying `TimelineView`'s 0.5s tick.
 ///
-/// Renders every line, unwindowed — unlike the ticker, which only builds a
-/// `window` of lines around the active one. The ticker's window exists to
-/// bound a ribbon that re-renders continuously; the full page is a few dozen
-/// lines shown occasionally, so there is no cost to keeping all of them
-/// present and letting offset and opacity carry the ones far from centre out
-/// of view. That also removes the ticker's constraint that the edge of the
-/// window must land on exactly zero opacity — nothing here ever joins or
-/// leaves the `ForEach`, so the fade can be a genuinely continuous function
-/// of distance instead of a two-step one.
+/// Renders every line, unwindowed. The full page is a few dozen lines shown
+/// occasionally, so there is no cost to keeping all of them present and
+/// letting offset and opacity carry the ones far from centre out of view.
+/// Nothing ever joins or leaves the `ForEach`, so no line can pop in at the
+/// edge of a window, and the fade can be a genuinely continuous function of
+/// distance.
 /// The full lyrics page's vertical geometry, pulled out of the view so it can
 /// be tested — it is exactly the "given sizes, does the position land where it
 /// should" question CLAUDE.md says to test rather than eyeball.
 ///
-/// The page cannot use a flat step per line the way the ticker does. Ticker
-/// lines are `lineLimit(1)` so every row is identically tall; page lines wrap,
-/// so a two-line lyric needs two lines of room. Positions here are therefore
+/// The page cannot use a flat step per line: its lines wrap, so a two-line
+/// lyric needs two lines of room. Positions here are therefore
 /// cumulative sums of real measured heights.
 enum LyricsLayout {
 
@@ -785,15 +748,19 @@ private struct MediaFullLyricsLines: View {
         }
     }
 
-    /// One unconditional chain — see `MediaLyricsView.line` for why a
-    /// `@ViewBuilder` `if/else` here destroys and reinserts a line instead of
-    /// animating it.
+    /// **One unconditional chain, deliberately.** A `@ViewBuilder` `if/else`
+    /// here compiles to `_ConditionalContent`, whose branches are distinct
+    /// view types. A line crossing into or out of `distance == 0` would switch
+    /// branches, so SwiftUI would destroy it and insert a different view —
+    /// a fade — instead of animating the one it had. Every line keeps one
+    /// identity for its whole life on screen, and its appearance comes only
+    /// from modifiers whose values change.
     private func line(_ text: String, distance: Int,
                       wrapWidth: CGFloat, offsetY: CGFloat) -> some View {
         let magnitude = abs(distance)
-        // One base size scaled, never two sizes swapped — see
-        // MediaLyricsView.line for why a scaleEffect is required here rather
-        // than the old code's direct `size: index == currentIndex ? 25 : 20`.
+        // One base size scaled, never two sizes swapped: a font-size change
+        // does not interpolate between values, a scaleEffect does. The old
+        // code's direct `size: index == currentIndex ? 25 : 20` jumped.
         //
         // `.frame(width:)`, not `maxWidth: .infinity`: the scale below is
         // applied AFTER layout, so a line laid out at full panel width was
@@ -813,8 +780,8 @@ private struct MediaFullLyricsLines: View {
             .offset(y: offsetY)
     }
 
-    /// Continuous, unlike the ticker's two-step fade — safe here because
-    /// nothing is windowed; see this type's own doc comment.
+    /// Continuous — safe because nothing is windowed; see this type's own doc
+    /// comment.
     private func fadeOpacity(magnitude: Int) -> Double {
         magnitude == 0 ? 1 : max(0, 1 - Double(magnitude) * LyricsMotion.fadePerLine)
     }

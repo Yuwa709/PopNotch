@@ -104,10 +104,10 @@ final class MediaModule: NotchModule {
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private let lyricsService = LyricsService()
     @ObservationIgnored private let account: SpotifyAccount?
-    /// Injected, not owned. The expanded header renders the bars, and this
+    /// Injected, not owned. The progress row renders the spectrum, and this
     /// module is what tells the service whether they may capture: the
-    /// tracked player's play state, and whether the player header that
-    /// draws them is on screen. Nil in tests that do not care.
+    /// tracked player's play state, and whether the player screen, whose
+    /// progress row draws it, is on screen. Nil in tests that do not care.
     @ObservationIgnored let visualizer: AudioVisualizerService?
     @ObservationIgnored private let webAPI: SpotifyWebAPI?
     /// The open panel's live-sync clock. Exists only between
@@ -589,16 +589,16 @@ final class MediaModule: NotchModule {
 
     // MARK: - Spectrum
 
-    /// Whether a screen draws the spectrum. Only the player does: the bars
-    /// live in its header, and the full-lyrics takeover and the permission
-    /// banner fill the same slot without them. Pure, so the mapping is a test
-    /// rather than a reading of `MediaExpandedView`.
+    /// Whether a screen draws the spectrum. Only the player does: the
+    /// spectrum lives in its progress row, and the full-lyrics takeover and the
+    /// permission banner replace the player without one. Pure, so the mapping
+    /// is a test rather than a reading of `MediaExpandedView`.
     static func drawsSpectrum(on screen: ExpandedScreen?) -> Bool {
         guard case .player = screen else { return false }
         return true
     }
 
-    /// Tells the visualiser whether its bars are on screen. Called wherever
+    /// Tells the visualiser whether its spectrum is on screen. Called wherever
     /// either input changes — visibility, and the screen showing — and the
     /// service ignores repeats, so calling it freely costs nothing.
     ///
