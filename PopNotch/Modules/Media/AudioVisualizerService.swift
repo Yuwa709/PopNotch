@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import CoreAudio
 import AudioToolbox
 import Accelerate
@@ -37,7 +38,9 @@ import os
 /// **Lifetime.** Off by default. Capture runs only while all three of
 /// enabled, spectrum-on-screen and *actively playing* hold, and is torn down
 /// the moment any of them stops — hard rule 9's "nothing runs when nobody is
-/// looking", expressed without a timer.
+/// looking", expressed without a timer. The one exception is the pause
+/// settle, a short bounded run of band updates after capture has already
+/// stopped; see `pauseSettleDuration`.
 ///
 /// The playback condition matters beyond tidiness. The tap is whole-system:
 /// with only enabled-and-visible gating, the bars would dance to a YouTube
@@ -73,6 +76,8 @@ final class AudioVisualizerService {
     /// Driven by the media module from the active source's player state.
     @ObservationIgnored private var isPlaying = false
     @ObservationIgnored private var capture: SystemAudioTap?
+    /// The pause settle in progress, if any. See `settle()`.
+    @ObservationIgnored private var settleTask: Task<Void, Never>?
     /// Throttles the verification logging; no timer, just a clock check on
     /// buffers that are arriving anyway.
     @ObservationIgnored private var lastLogged = Date.distantPast
@@ -155,6 +160,22 @@ final class AudioVisualizerService {
     /// update not made, and fewer updates are calmer too. See
     /// `PublishThrottle`.
     nonisolated static let publishInterval: TimeInterval = 1.0 / 25
+
+    /// How long the wave takes to sink to its silent baseline when playback
+    /// pauses, in seconds. Capture stops at once; this only eases the last
+    /// published bands down, stepping at `publishInterval` (0.4s is ten
+    /// steps). 0 drops the wave in a single frame, as it did before.
+    nonisolated static let pauseSettleDuration: TimeInterval = 0.4
+
+    /// The fraction of the paused level still showing `elapsed` seconds into
+    /// the settle. An ease-out: quickest at first and gentlest on landing, so
+    /// the wave sinks into the baseline rather than stopping against it.
+    /// Exactly 0 once `pauseSettleDuration` has passed.
+    nonisolated static func settleLevel(after elapsed: TimeInterval) -> Float {
+        guard pauseSettleDuration > 0 else { return 0 }
+        let remaining = 1 - min(1, max(0, elapsed / pauseSettleDuration))
+        return Float(remaining * remaining)
+    }
 
     /// One buffer of bar smoothing: an eased rise at `barAttack`, a slower
     /// fall at `barRelease`. It only ever interpolates between the previous
@@ -269,8 +290,16 @@ final class AudioVisualizerService {
     private func reconcile() {
         if shouldRun {
             if capture == nil { start() }
-        } else if capture != nil {
-            stop(reason: stopReason)
+            return
+        }
+        if capture != nil { stop(reason: stopReason) }
+        // Only a pause sinks: still enabled and on screen, with playback the
+        // one condition that stopped. Disabled or off screen, the bands drop
+        // at once, cancelling any settle already running.
+        if isEnabled && spectrumVisible {
+            settle()
+        } else {
+            rest()
         }
     }
 
@@ -283,6 +312,10 @@ final class AudioVisualizerService {
     // MARK: - Capture
 
     private func start() {
+        // Resumed mid-settle: the next live publish takes over from wherever
+        // the wave had sunk to.
+        settleTask?.cancel()
+        settleTask = nil
         let engine = SystemAudioTap { [weak self] bands in
             Task { @MainActor in self?.publish(bands) }
         }
@@ -295,19 +328,65 @@ final class AudioVisualizerService {
             capture = nil
             isRunning = false
             lastError = reason
+            // Nothing live will replace whatever a cancelled settle left.
+            rest()
             // Authorization shows up here, since the audio-only grant has no
             // preflight. Quiet decline, no retry loop.
             Self.logger.error("Capture failed: \(reason, privacy: .public)")
         }
     }
 
+    /// Tears capture down. Leaves `bands` alone: `reconcile` decides whether
+    /// they settle or drop.
     private func stop(reason: String) {
         guard let engine = capture else { return }
         capture = nil
         isRunning = false
-        bands = Array(repeating: 0, count: Self.bandCount)
         engine.stop()
         Self.logger.notice("Capture stopped (\(reason, privacy: .public))")
+    }
+
+    /// Eases the last published bands down to the silent baseline over
+    /// `pauseSettleDuration`, one plain band update per `publishInterval`.
+    ///
+    /// Only this transition moves the wave without audio behind it; there is
+    /// still no view animation, so nothing is added to live playback, where
+    /// the implicit animation cost 7.6 points of a core (see
+    /// `AudioVisualizerSpectrumView`). Bounded, not a poll (hard rule 9): it
+    /// ends itself at the baseline, and resuming, disabling, or hiding the
+    /// spectrum cancels it. Instant under Reduce Motion (hard rule 8).
+    private func settle() {
+        guard settleTask == nil else { return }
+        let from = bands
+        guard from.contains(where: { $0 > 0 }) else { return }
+        guard Self.pauseSettleDuration > 0,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            rest()
+            return
+        }
+        Self.logger.notice("Settling to baseline over \(Self.pauseSettleDuration, privacy: .public)s")
+        let clock = ContinuousClock()
+        let began = clock.now
+        settleTask = Task { [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(Self.publishInterval))
+                guard !Task.isCancelled, let self else { return }
+                let level = Self.settleLevel(after: (clock.now - began) / .seconds(1))
+                self.bands = from.map { $0 * level }
+                if level == 0 {
+                    self.settleTask = nil
+                    return
+                }
+            }
+        }
+    }
+
+    /// Drops the bands to the silent baseline at once, cancelling any settle.
+    private func rest() {
+        settleTask?.cancel()
+        settleTask = nil
+        guard bands.contains(where: { $0 != 0 }) else { return }
+        bands = Array(repeating: 0, count: Self.bandCount)
     }
 
     private func publish(_ newBands: [Float]) {

@@ -31,10 +31,17 @@ private enum LyricsMotion {
     static let fullPageActiveScale: CGFloat = 1.22
 
     /// The ticker's row height, and so the whole lyric area's height in the
-    /// player: one `lineLimit(1)` line at 13pt, the same 15pt each line of the
-    /// old three-line ticker had. The full page cannot use a fixed row — its
-    /// lines wrap — so it measures instead; see `LyricsLayout`.
+    /// player: one `lineLimit(1)` line at `tickerFontSize`, the same 15pt each
+    /// line of the old three-line ticker had. The full page cannot use a
+    /// fixed row — its lines wrap — so it measures instead; see `LyricsLayout`.
     static let tickerLineHeight: CGFloat = 15
+    /// The ticker's type. A step below the artist line's 13pt, and its accent
+    /// dimmed, so the song title stays the loudest thing in the player; at
+    /// full-strength accent the lyric was the brightest coloured text in the
+    /// panel and competed with it. Applied to the colour, not as `.opacity`,
+    /// so it never multiplies into the cross-fade's own opacity transition.
+    static let tickerFontSize: CGFloat = 12
+    static let tickerAccentOpacity: Double = 0.6
     /// The ticker's cross-fade when the active line changes: the outgoing
     /// line fades out while the incoming one fades in, in place. Short enough
     /// to read as a swap rather than a linger.
@@ -57,6 +64,48 @@ private enum LyricsMotion {
 
     /// The home <-> full-lyrics screen swap.
     static let zoomTransitionDuration: Double = 0.38
+}
+
+/// The player screen's spacing and control sizes, in one place so they can be
+/// retuned without hunting through `MediaExpandedView`.
+private enum PlayerLayout {
+    /// Gap between the header, the lyric line, and the controls row.
+    static let sectionSpacing: CGFloat = 14
+
+    /// Heights of the title (17pt semibold) and artist (13pt) rows, measured
+    /// 2026-09-16. Not enforced by layout — they only size the artwork.
+    static let titleLineHeight: CGFloat = 20
+    static let artistLineHeight: CGFloat = 16
+    static let titleArtistSpacing: CGFloat = 2
+    /// Artist line to the wave. Was 6; now the same as `titleArtistSpacing`
+    /// so the right-hand column reads as one block with one rhythm. Most of
+    /// the gap still visible above the wave at quiet levels is the wave's
+    /// own headroom: it grows up from the row's base, so this is not the
+    /// lever for that — `SpectrumEnvelope.maxHeight` is.
+    static let artistWaveSpacing: CGFloat = 2
+    /// The artwork is exactly as tall as the column beside it, so its bottom
+    /// edge and the wave's base line up. Derived, so retuning any term above
+    /// cannot leave the two misaligned. The followers line, when an account
+    /// supplies one, adds 15pt the artwork does not chase.
+    static let artworkSide: CGFloat = titleLineHeight + titleArtistSpacing
+        + artistLineHeight + artistWaveSpacing + SpectrumEnvelope.maxHeight
+
+    /// Glyph sizes. Shuffle and repeat are modes, not actions, so they draw
+    /// a clear step below the transport glyphs.
+    static let transportGlyphSize: CGFloat = 20
+    static let playGlyphSize: CGFloat = 26
+    static let modeGlyphSize: CGFloat = 13
+    /// Transport hit targets. The row's height is this, not the glyphs'.
+    static let transportButtonWidth: CGFloat = 40
+    static let transportButtonHeight: CGFloat = 32
+    /// Frame-to-frame gap inside previous / play / next: centre-to-centre
+    /// 46pt (was 96).
+    static let transportSpacing: CGFloat = 6
+    /// Gap from shuffle to previous, and from next to repeat. Wider than
+    /// `transportSpacing` so the modes read as flanking the transport rather
+    /// than as two more of it. The whole cluster is 228pt, centred (was
+    /// spread across the full 368pt).
+    static let modeSpacing: CGFloat = 20
 }
 
 /// Unused while the cross-screen morph is impossible (see
@@ -134,7 +183,7 @@ struct MediaExpandedView: View {
                 MediaFullLyricsView(module: module, namespace: lyricsNamespace)
                     .transition(.opacity)
             case .player(let playing):
-            VStack(spacing: 14) {
+            VStack(spacing: PlayerLayout.sectionSpacing) {
                 HStack(alignment: .top, spacing: 12) {
                     // Tapping the artwork opens the track in Spotify.
                     Button { module.activateSpotify() } label: {
@@ -147,16 +196,13 @@ struct MediaExpandedView: View {
                                 isPlaying: playing.isPlaying,
                                 cornerRadius: 10
                             )
-                            // 74 = the column beside it: title 20 + 2 +
-                            // artist 16 + 6 + wave 30 (heights measured
-                            // 2026-09-16; the wave is
-                            // `SpectrumEnvelope.maxHeight`), so the artwork
-                            // and the scrub bar bottom-align exactly. The
-                            // followers line, when an account supplies one,
-                            // adds 15pt the artwork does not chase.
-                            .frame(width: 74, height: 74)
+                            // As tall as the column beside it, so the
+                            // artwork and the scrub bar bottom-align; see
+                            // `PlayerLayout.artworkSide`.
+                            .frame(width: PlayerLayout.artworkSide,
+                                   height: PlayerLayout.artworkSide)
                         } else {
-                            ArtworkThumb(data: nil, side: 74, corner: 10)
+                            ArtworkThumb(data: nil, side: PlayerLayout.artworkSide, corner: 10)
                         }
                     }
                     .buttonStyle(.plain)
@@ -165,9 +211,9 @@ struct MediaExpandedView: View {
                     // beneath them, spanning from the artwork's edge to the
                     // panel's. The bar is no longer its own full-width row
                     // below the header.
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: PlayerLayout.artistWaveSpacing) {
                         HStack(alignment: .top, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: PlayerLayout.titleArtistSpacing) {
                                 Text(playing.title ?? "—")
                                     .font(.system(size: 17, weight: .semibold))
                                     .lineLimit(1)
@@ -258,32 +304,42 @@ struct MediaExpandedView: View {
 
     private func controls(isPlaying: Bool) -> some View {
         ZStack {
-            // Spacing and glyph sizes measured 1:1 off the reference.
-            HStack(spacing: 56) {
-                transportButton("backward.fill", size: 20) { module.send(.previousTrack) }
-                transportButton(isPlaying ? "pause.fill" : "play.fill", size: 26) {
-                    module.send(.togglePlayPause)
-                }
-                transportButton("forward.fill", size: 20) { module.send(.nextTrack) }
-            }
-            // Favourite sits bottom-leading, where the reference keeps its
-            // secondary actions. Shuffle goes BEFORE it so its position is
-            // fixed: the heart is conditional, and ordering them the other
-            // way would slide shuffle sideways whenever a track's favourite
-            // state became unknown.
-            HStack {
+            // One centred cluster: the transport tight in the middle, the
+            // modes flanking it a step further out. Symmetric about
+            // play/pause, so play stays dead centre whether or not the
+            // source offers shuffle and repeat. Was edge-to-edge, a holdover
+            // from the old full-width layout.
+            HStack(spacing: PlayerLayout.modeSpacing) {
                 if module.showsPlaybackModes {
                     ModeControl(symbol: "shuffle",
                                 isOn: module.isShuffling,
                                 accent: module.artworkAccent) { module.toggleShuffle() }
                 }
-                MediaFavoriteControl(module: module)
-                Spacer()
+                HStack(spacing: PlayerLayout.transportSpacing) {
+                    transportButton("backward.fill", size: PlayerLayout.transportGlyphSize) {
+                        module.send(.previousTrack)
+                    }
+                    transportButton(isPlaying ? "pause.fill" : "play.fill",
+                                    size: PlayerLayout.playGlyphSize) {
+                        module.send(.togglePlayPause)
+                    }
+                    transportButton("forward.fill", size: PlayerLayout.transportGlyphSize) {
+                        module.send(.nextTrack)
+                    }
+                }
                 if module.showsPlaybackModes {
                     ModeControl(symbol: "repeat",
                                 isOn: module.isRepeating,
                                 accent: module.artworkAccent) { module.toggleRepeat() }
                 }
+            }
+            // Favourite stays at the leading edge, under the artwork: it acts
+            // on the track, not on playback. Outside the cluster because it
+            // is conditional — inside, it would shift the transport sideways
+            // whenever a track's favourite state became unknown.
+            HStack {
+                MediaFavoriteControl(module: module)
+                Spacer()
             }
         }
     }
@@ -292,7 +348,8 @@ struct MediaExpandedView: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .semibold))
-                .frame(width: 40, height: 32)
+                .frame(width: PlayerLayout.transportButtonWidth,
+                       height: PlayerLayout.transportButtonHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -334,7 +391,7 @@ private struct ModeControl: View {
     var body: some View {
         Button(action: toggle) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: PlayerLayout.modeGlyphSize, weight: .semibold))
                 .foregroundStyle(isOn ? (accent ?? .mediaAccent) : .white.opacity(0.55))
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
@@ -457,8 +514,8 @@ enum ScrubGeometry {
     }
 }
 
-/// The line being sung, under the progress bar in the accent — like the
-/// reference design. Absent entirely (no reserved space) when the track has
+/// The line being sung, under the progress bar in a dimmed accent, a step
+/// quieter than the title and artist. Absent entirely (no reserved space) when the track has
 /// no synced lyrics. The half-second tick exists only while this view does.
 ///
 /// One line at a time. When the active line changes, the outgoing line fades
@@ -527,8 +584,8 @@ private struct MediaLyricsView: View {
     private func currentLine(lines: [LyricsLine], active: Int) -> some View {
         ZStack {
             Text(lines.indices.contains(active) ? lines[active].text : "♪")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(accent)
+                .font(.system(size: LyricsMotion.tickerFontSize, weight: .medium))
+                .foregroundStyle(accent.opacity(LyricsMotion.tickerAccentOpacity))
                 .lineLimit(1)
                 .id(active)
                 .transition(.opacity)

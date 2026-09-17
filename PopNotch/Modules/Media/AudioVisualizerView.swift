@@ -10,12 +10,15 @@ import AppKit
 /// is carried by colour: the accent left of the playhead, grey right of it,
 /// with a hard edge between. Within each, brightness follows the spectrum
 /// horizontally, and vertically fades from each column's crest down to the
-/// base, which is what gives the wave body rather than a flat fill.
+/// base, which is what gives the wave body rather than a flat fill. The played
+/// side also carries a soft bloom in the same accent; the grey carries none.
 ///
 /// Always drawn, whatever the visualiser is doing, because it is the scrub
 /// bar. Switched off, refused permission, paused, or between tracks, the
 /// service's `bands` are all zero and the wave lies flat at its minimum
-/// height: a plain progress bar. Capture itself is still gated by the
+/// height: a plain progress bar. On a pause they get there over a short
+/// settle rather than in one frame; see
+/// `AudioVisualizerService.pauseSettleDuration`. Capture itself is still gated by the
 /// service (enabled, playing, player screen visible); only the drawing is
 /// unconditional.
 ///
@@ -40,6 +43,27 @@ struct AudioVisualizerSpectrumView: View {
     nonisolated private static let playedOpacity: ClosedRange<Double> = 0.6...1.0
     nonisolated private static let unplayedOpacity: ClosedRange<Double> = 0.15...0.25
 
+    /// The played side's bloom: a blurred copy of the played fill, added on
+    /// top of it. A copy of the fill rather than a flat accent silhouette, so
+    /// it is brightest where the wave is — along the crest, fading down the
+    /// body — and keeps the crest-to-base fade instead of flooding the dim
+    /// base. Tinted by the same `accent`, so it retints per track.
+    ///
+    /// `glowRadius` is the blur radius in points: larger spreads the bloom
+    /// further off the crest. `glowOpacity` is its strength: 0 turns it off.
+    nonisolated private static let glowRadius: CGFloat = 3
+    nonisolated private static let glowOpacity: Double = 0.35
+    /// Fade steps in the blurred copy. Fewer than the sharp fill's
+    /// `SpectrumEnvelope.fadeSteps`: the blur hides the steps, and each one is
+    /// another fill every frame.
+    nonisolated private static let glowFadeSteps: Int = 4
+    /// How far the canvas reaches past the row, above and to the left, so the
+    /// bloom off a tall crest or the left cap fades out instead of being cut
+    /// by the canvas edge. Layout still sees the row alone. The base and the
+    /// right end need none: the bloom is cut at the base and at the playhead
+    /// anyway.
+    nonisolated private static var glowBleed: CGFloat { glowRadius * 2 }
+
     private var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
@@ -50,7 +74,10 @@ struct AudioVisualizerSpectrumView: View {
         let progress = progress
         let accent = accent
         return Canvas { context, size in
-            let rect = CGRect(origin: .zero, size: size)
+            // The row, inset from the canvas by the bleed above and left.
+            let bleed = Self.glowBleed
+            let rect = CGRect(x: bleed, y: bleed,
+                              width: size.width - bleed, height: size.height - bleed)
             guard rect.width > 0, rect.height > 0 else { return }
             let shading = GraphicsContext.Shading.linearGradient(
                 Gradient(stops: Self.gradientStops(bands: bands, progress: progress,
@@ -60,23 +87,36 @@ struct AudioVisualizerSpectrumView: View {
             let edge = SpectrumEnvelope.upperEdge(magnitudes: bands, in: rect)
             let outline = SpectrumEnvelope.path(SpectrumEnvelope.outline(edge: edge, in: rect))
 
-            // The vertical fade, as bands from each column's crest down to the
-            // base, each at its own brightness, clipped to the wave. They are
-            // drawn additively in their own layer: adjacent bands share an
-            // anti-aliased edge, and ordinary compositing would leave a faint
-            // dark seam along every one of them.
-            context.drawLayer { layer in
-                layer.clip(to: outline)
-                layer.blendMode = .plusLighter
-                for band in SpectrumEnvelope.fadeBands() {
-                    var step = layer
-                    step.opacity = band.brightness
-                    step.fill(SpectrumEnvelope.path(SpectrumEnvelope.ribbon(
-                                  edge: edge, in: rect, from: band.from, to: band.to)),
-                              with: shading)
+            Self.drawBody(context, edge: edge, outline: outline, region: nil,
+                          shading: shading, fadeBands: SpectrumEnvelope.fadeBands(), in: rect)
+
+            let playheadX = rect.minX + rect.width * CGFloat(min(1, max(0, progress)))
+            guard playheadX > rect.minX, Self.glowOpacity > 0 else { return }
+            // Everything left of the playhead and above the base, bleed
+            // included.
+            let played = Path(CGRect(x: 0, y: 0, width: playheadX, height: rect.maxY))
+            var bloom = context
+            bloom.blendMode = .plusLighter
+            bloom.drawLayer { glow in
+                // Cut after the blur, so none of it spills past the playhead
+                // onto the grey. The cut coincides with the fill's own hard
+                // colour edge there.
+                glow.clip(to: played)
+                glow.drawLayer { blurred in
+                    blurred.addFilter(.blur(radius: Self.glowRadius))
+                    blurred.opacity = Self.glowOpacity
+                    // Cut before the blur too, inside `drawBody`, so the grey
+                    // never feeds the bloom.
+                    Self.drawBody(blurred, edge: edge, outline: outline, region: played,
+                                  shading: shading,
+                                  fadeBands: SpectrumEnvelope.fadeBands(steps: Self.glowFadeSteps),
+                                  in: rect)
                 }
             }
         }
+        // Drawing overflows the row by the bloom's bleed; see `glowBleed`.
+        .padding(EdgeInsets(top: -Self.glowBleed, leading: -Self.glowBleed,
+                            bottom: 0, trailing: 0))
         // No implicit animation: each publish lands as it is. The bands
         // arrive already smoothed — an eased rise and a slower fall, see
         // `AudioVisualizerService.barAttack` and `barRelease` — and at most
@@ -88,13 +128,39 @@ struct AudioVisualizerSpectrumView: View {
         // PROJECT-CONTEXT.md, *Performance findings*). A Canvas was also tried
         // for those bars and measured no cheaper by CPU time (8.5 points
         // against 8.6); it is used here because the crest fade needs many
-        // fills per frame, not for cost.
+        // fills per frame, not for cost. The sink on pause is not an
+        // animation here either: the service publishes it as ordinary band
+        // updates, only after a pause.
         .accessibilityLabel("Playback position")
         // Hard rule 8. The wave does not animate itself, but a transaction
         // inherited from an ancestor could still tween it. Under Reduce
         // Motion, nothing in this view animates.
         .transaction { transaction in
             if reduceMotion { transaction.animation = nil }
+        }
+    }
+
+    /// The vertical fade, as bands from each column's crest down to the base,
+    /// each at its own brightness, clipped to the wave and, when given, to
+    /// `region`. They are drawn additively in their own layer: adjacent bands
+    /// share an anti-aliased edge, and ordinary compositing would leave a
+    /// faint dark seam along every one of them.
+    nonisolated private static func drawBody(_ context: GraphicsContext,
+                                             edge: SpectrumEnvelope.Edge, outline: Path,
+                                             region: Path?, shading: GraphicsContext.Shading,
+                                             fadeBands: [SpectrumEnvelope.FadeBand],
+                                             in rect: CGRect) {
+        context.drawLayer { layer in
+            layer.clip(to: outline)
+            if let region { layer.clip(to: region) }
+            layer.blendMode = .plusLighter
+            for band in fadeBands {
+                var step = layer
+                step.opacity = band.brightness
+                step.fill(SpectrumEnvelope.path(SpectrumEnvelope.ribbon(
+                              edge: edge, in: rect, from: band.from, to: band.to)),
+                          with: shading)
+            }
         }
     }
 
@@ -139,8 +205,8 @@ enum SpectrumEnvelope {
     /// The scrub bar row's height (`MediaProgressBar`), which is the wave's
     /// height at full level. Raised from 24 with `minHeight` lowered from 4
     /// (2026-09-16), so loud passages visibly swell and quiet ones visibly dip.
-    /// The artwork beside the header column is sized to include this; change
-    /// one and change the other.
+    /// The artwork beside the header column is sized from this
+    /// (`PlayerLayout.artworkSide`), so it follows any change here.
     nonisolated static let maxHeight: CGFloat = 30
     /// The wave's height at silence: a flat bar, so the scrub bar still reads
     /// as a progress bar with no spectrum behind it. Also the tips' height, so
@@ -343,16 +409,17 @@ enum SpectrumEnvelope {
     /// leaves an unpainted sliver.
     nonisolated private static let fadeOverreach: CGFloat = 0.1
 
-    /// The vertical fade, crest to base: `fadeSteps` equal bands, each the
-    /// same fraction of its column's height, brightness falling from full at
-    /// the crest to `baselineBrightness` at the base.
+    /// The vertical fade, crest to base: `steps` equal bands (`fadeSteps`
+    /// unless asked for fewer, as the blurred bloom does), each the same
+    /// fraction of its column's height, brightness falling from full at the
+    /// crest to `baselineBrightness` at the base.
     ///
     /// Proportional since 2026-09-16. It was measured in points below the
     /// crest, fading over 14pt, which left every part of the wave shorter
     /// than that fully bright down to the base — most of the wave, most of the
     /// time — so the row read bottom-heavy.
-    nonisolated static func fadeBands() -> [FadeBand] {
-        let steps = max(2, fadeSteps)
+    nonisolated static func fadeBands(steps requested: Int = fadeSteps) -> [FadeBand] {
+        let steps = max(2, requested)
         var bands: [FadeBand] = []
         for index in 0..<steps {
             let fraction = Double(index) / Double(steps - 1)
