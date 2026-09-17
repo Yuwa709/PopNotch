@@ -589,13 +589,15 @@ final class MediaModule: NotchModule {
 
     // MARK: - Spectrum
 
-    /// Whether a screen draws the spectrum. Only the player does: the
-    /// spectrum lives in its progress row, and the full-lyrics takeover and the
-    /// permission banner replace the player without one. Pure, so the mapping
-    /// is a test rather than a reading of `MediaExpandedView`.
+    /// Whether a screen draws the spectrum. Only the player does, and only
+    /// with a duration: the spectrum lives in its progress row, which a track
+    /// without one does not get (`NowPlaying.hasDuration`, the same test the
+    /// row makes). The full-lyrics takeover and the permission banner replace
+    /// the player without one. Pure, so the mapping is a test rather than a
+    /// reading of `MediaExpandedView`.
     static func drawsSpectrum(on screen: ExpandedScreen?) -> Bool {
-        guard case .player = screen else { return false }
-        return true
+        guard case .player(let playing) = screen else { return false }
+        return playing.hasDuration
     }
 
     /// Tells the visualiser whether its spectrum is on screen. Called wherever

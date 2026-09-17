@@ -73,11 +73,17 @@ final class NotchVisibilityTests: XCTestCase {
 
     /// A title with no artist: enough to have content and put the wings up,
     /// but nothing for the lyrics lookup to search, so no test reaches LRCLIB.
+    /// With a duration, so the player draws its progress row and spectrum.
     private func play(on harness: Harness) {
+        harness.player.publish(Self.track(duration: 200))
+    }
+
+    private static func track(duration: TimeInterval?) -> NowPlaying {
         var snapshot = NowPlaying()
         snapshot.title = "Track"
+        snapshot.duration = duration
         snapshot.isPlaying = true
-        harness.player.publish(snapshot)
+        return snapshot
     }
 
     /// The battery report's scenario.
@@ -162,12 +168,35 @@ final class NotchVisibilityTests: XCTestCase {
 
     /// Only the player screen draws the spectrum, in its progress row.
     func testOnlyThePlayerScreenDrawsTheSpectrum() {
-        var track = NowPlaying()
-        track.title = "Track"
-        XCTAssertTrue(MediaModule.drawsSpectrum(on: .player(track)))
+        XCTAssertTrue(MediaModule.drawsSpectrum(on: .player(Self.track(duration: 200))))
         XCTAssertFalse(MediaModule.drawsSpectrum(on: .fullLyrics), "the takeover replaces the player")
         XCTAssertFalse(MediaModule.drawsSpectrum(on: .permissionDenied), "the banner has no spectrum")
         XCTAssertFalse(MediaModule.drawsSpectrum(on: nil), "nothing to show, nothing drawn")
+    }
+
+    /// The progress row, and the spectrum in it, exist only with a duration.
+    func testAPlayerWithoutADurationDrawsNoSpectrum() {
+        XCTAssertFalse(MediaModule.drawsSpectrum(on: .player(Self.track(duration: nil))),
+                       "no duration, no progress row")
+        XCTAssertFalse(MediaModule.drawsSpectrum(on: .player(Self.track(duration: 0))),
+                       "a zero duration draws no row either")
+    }
+
+    /// A duration arriving after the title (artwork mid-load) turns the
+    /// spectrum on then, not before; losing it turns it off.
+    func testSpectrumFollowsTheDurationOnAnOpenPlayer() throws {
+        let h = try makeHarness(playing: false)
+        h.player.publish(Self.track(duration: nil))
+        h.coordinator.setPinned(true)
+        XCTAssertFalse(h.visualizer.spectrumVisible, "open on the player, but no row to draw in")
+
+        h.player.publish(Self.track(duration: 200))
+        XCTAssertTrue(h.visualizer.spectrumVisible, "the duration arrived")
+
+        h.player.publish(Self.track(duration: nil))
+        XCTAssertFalse(h.visualizer.spectrumVisible, "the duration went away")
+
+        h.coordinator.setPinned(false)
     }
 
     func testSpectrumIsOnScreenOnlyWhileTheOpenPanelShowsThePlayer() throws {

@@ -34,6 +34,14 @@ struct NowPlaying: Equatable {
         title != nil || artist != nil || artworkData != nil
     }
 
+    /// A usable duration: what the player's progress row, and so the
+    /// spectrum drawn in it, needs in order to exist. The row and
+    /// `MediaModule.drawsSpectrum` both read this, so capture cannot run for
+    /// a row that is not drawn.
+    var hasDuration: Bool {
+        (duration ?? 0) > 0
+    }
+
     /// When `elapsed` was captured, so it can be projected forward while
     /// playing instead of freezing between player updates.
     var capturedAt: Date = Date()

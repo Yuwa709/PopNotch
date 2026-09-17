@@ -449,7 +449,9 @@ private struct MediaProgressBar: View {
     var body: some View {
         let snapshot = module.nowPlaying
         let duration = snapshot?.duration ?? 0
-        if duration > 0 {
+        // The test `MediaModule.drawsSpectrum` makes, so capture runs only
+        // while this row exists.
+        if snapshot?.hasDuration == true {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let elapsed = scrubFraction.map { $0 * duration }
                     ?? min(snapshot?.elapsedNow(at: context.date) ?? 0, duration)
