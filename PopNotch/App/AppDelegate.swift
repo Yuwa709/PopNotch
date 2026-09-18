@@ -41,6 +41,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// row draws the spectrum, is on screen and the tracked player is playing.
     private(set) lazy var audioViz = AudioVisualizerService()
 
+    /// Per-app volume. Phase 3 of its plan: read-only enumeration and naming
+    /// of the processes that are playing, logged, with no taps and no UI.
+    private(set) lazy var appVolume = AppVolumeService()
+
     /// The system now-playing source, held only so the music-over-video
     /// preference can be applied live from Settings. MediaModule owns it as
     /// one of its sources; this is a reference, not ownership.
@@ -239,6 +243,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The stored preference; off by default. Whether the spectrum is on
         // screen is MediaModule's to report, so no setSpectrumVisible here.
         audioViz.setEnabled(settings.settings.visualizerEnabled)
+
+        // Debug builds only, for now. Phase 3 has no UI and no setting, so a
+        // release cut from this code must carry no listeners and log no app
+        // names. The per-app volume toggle in Settings (Phase 4) replaces
+        // this gate.
+        #if DEBUG
+        appVolume.startWatching()
+        #endif
     }
 
     /// Kept alive for the process lifetime; a released source stops firing.
@@ -272,6 +284,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator.stop()
+        #if DEBUG
+        appVolume.stopWatching()
+        #endif
         // The adapter runs as a child process, and a child is not reclaimed
         // the way an in-process timer is: on exit it is reparented to launchd
         // and keeps streaming. It only notices we are gone when its next
