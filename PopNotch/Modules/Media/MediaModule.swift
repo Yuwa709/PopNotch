@@ -87,6 +87,12 @@ final class MediaModule: NotchModule {
     /// the slider redraws under the pointer before the Apple Event lands.
     private(set) var volume: Int?
     private(set) var volumeSupported = false
+    /// Every scripted player's volume by bundle ID, as last read or written;
+    /// `volume` above is this for the active source. The mixer page's
+    /// Spotify and Music rows read and write it through
+    /// `ScriptedPlayerVolumes`, so the row and the player slider are one
+    /// value: moving either moves the other.
+    private(set) var playerVolumes: [String: Int] = [:]
     /// Official artist metadata: avatar, follower count, genres.
     private(set) var artistInfo: SpotifyArtistInfo?
     private(set) var artistImageData: Data?
@@ -155,6 +161,11 @@ final class MediaModule: NotchModule {
     /// publishes leave `volume` alone, or a read landing mid-drag would
     /// snap the slider back to a value from before the latest write.
     @ObservationIgnored private(set) var isEditingVolume = false
+    /// The player the open edit writes to, fixed when the edit begins: the
+    /// active source for the player slider, the row's own player for the
+    /// mixer page. Fixed so a change of active source mid-drag cannot
+    /// redirect the writes. Nil falls back to the active source.
+    @ObservationIgnored private var volumeEditSource: (any MediaSource)?
 
     @ObservationIgnored private var lastTrackKey: String?
     @ObservationIgnored private var hadPresence = false
@@ -377,7 +388,7 @@ final class MediaModule: NotchModule {
         repeating = active.repeating
         // The volume likewise, for the same reason.
         volumeSupported = active.supportsVolume
-        if !isEditingVolume { volume = active.volume }
+        if !isEditingVolume { mirrorVolume(active.volume, of: active) }
         if active is SpotifyAdapter {
             guard !accountConnected else { return } // Web API path owns these
             setUpNext(nil)
@@ -436,16 +447,26 @@ final class MediaModule: NotchModule {
         return volume != nil
     }
 
+    /// The player slider's edit: always the active source.
     func beginVolumeEdit() {
+        beginVolumeEdit(on: activeSource)
+    }
+
+    private func beginVolumeEdit(on source: (any MediaSource)?) {
         isEditingVolume = true
+        volumeEditSource = source
     }
 
     /// One drag step. The mirror moves immediately; the write to the player
     /// is thinned to one per `volumeSendInterval`, with the latest value
     /// sent when the wait runs out.
     func setVolume(_ value: Int) {
+        stepVolume(value, on: volumeEditSource ?? activeSource)
+    }
+
+    private func stepVolume(_ value: Int, on source: (any MediaSource)?) {
         let target = PlayerVolume.clamp(value)
-        volume = target
+        mirrorVolume(target, of: source)
         pendingVolume = target
         let wait = volumeThrottle.wait(at: ProcessInfo.processInfo.systemUptime)
         if wait == 0 {
@@ -466,19 +487,22 @@ final class MediaModule: NotchModule {
         trailingVolumeSend?.cancel()
         trailingVolumeSend = nil
         flushVolume()
+        let edited = volumeEditSource ?? activeSource
         isEditingVolume = false
-        if let volume, let source = activeSource?.sourceID {
-            Self.logger.notice("Volume set to \(volume, privacy: .public) on \(source, privacy: .public)")
+        volumeEditSource = nil
+        if let edited, let value = edited.volume ?? volume {
+            Self.logger.notice("Volume set to \(value, privacy: .public) on \(edited.sourceID, privacy: .public)")
         }
     }
 
     private func flushVolume() {
-        guard let target = pendingVolume, let active = activeSource, active.supportsVolume else {
+        guard let target = pendingVolume, let source = volumeEditSource ?? activeSource,
+              source.supportsVolume else {
             pendingVolume = nil
             return
         }
         pendingVolume = nil
-        active.setVolume(target)
+        source.setVolume(target)
         volumeThrottle.recordSend(at: ProcessInfo.processInfo.systemUptime)
     }
 
@@ -487,7 +511,17 @@ final class MediaModule: NotchModule {
     private func readVolume() {
         guard !isEditingVolume, let active = activeSource, active.supportsVolume else { return }
         active.refreshVolume()
-        volume = active.volume
+        mirrorVolume(active.volume, of: active)
+    }
+
+    /// The one place a player's volume lands in the observable state: its
+    /// bundle-ID entry, which the mixer row reads, and — for the active
+    /// source, or when there is no source to key by — `volume`, which the
+    /// player slider reads. A nil leaves the bundle-ID entry at its last
+    /// good value; `volume` takes the nil, as it always has.
+    private func mirrorVolume(_ value: Int?, of source: (any MediaSource)?) {
+        if let value, let id = source?.bundleID { playerVolumes[id] = value }
+        if source == nil || source === activeSource { volume = value }
     }
 
     /// The Up Next slot is removed from the layout entirely when there is
@@ -840,6 +874,13 @@ final class MediaModule: NotchModule {
     /// next hover shows the player, matching how every other view collapses.
     func notchDidCollapse() {
         showFullLyrics = false
+        // A mixer-page drag runs while this module is off screen, so the
+        // flush in `didResignVisible` never covers it. The collapse does:
+        // a throttled write still waiting is sent, and an edit whose release
+        // never arrived is closed, rather than left open freezing the mirror.
+        if isEditingVolume || trailingVolumeSend != nil {
+            endVolumeEdit()
+        }
     }
 
     /// Only ever called when `canToggleFavorite` is true. Spotify writes go
@@ -889,5 +930,61 @@ final class MediaModule: NotchModule {
         if isEditingVolume || trailingVolumeSend != nil {
             endVolumeEdit()
         }
+    }
+}
+
+// MARK: - Scripted player volumes (the mixer page's Spotify and Music rows)
+
+/// The mixer page's route to Spotify's and Music's own volume. Every call
+/// goes through the same mirror, throttle and edit guard as the player
+/// slider, retargeted at the row's player — so the two controls cannot
+/// disagree, and a player that is not the active source is still reachable.
+extension MediaModule: ScriptedPlayerVolumes {
+
+    /// The source that owns a bundle ID's volume. Only sources that support
+    /// one: the system source has neither a bundle ID nor a volume.
+    private func volumeSource(for bundleID: String) -> (any MediaSource)? {
+        sources.first { $0.supportsVolume && $0.bundleID == bundleID }
+    }
+
+    func handlesVolume(for bundleID: String) -> Bool {
+        isEnabled && volumeSource(for: bundleID) != nil
+    }
+
+    func volume(for bundleID: String) -> Int? {
+        playerVolumes[bundleID]
+    }
+
+    func refreshVolume(for bundleID: String) {
+        guard isEnabled, !isEditingVolume, let source = volumeSource(for: bundleID) else { return }
+        source.refreshVolume()
+        mirrorVolume(source.volume, of: source)
+    }
+
+    func beginVolumeEdit(for bundleID: String) {
+        guard isEnabled, let source = volumeSource(for: bundleID) else { return }
+        beginVolumeEdit(on: source)
+    }
+
+    func setVolume(_ value: Int, for bundleID: String) {
+        guard isEnabled, let source = volumeSource(for: bundleID) else { return }
+        guard isEditingVolume else {
+            // A lone step — keyboard, VoiceOver, or a click the slider did
+            // not bracket with an edit — is one write, with nothing left open.
+            beginVolumeEdit(on: source)
+            stepVolume(value, on: source)
+            endVolumeEdit()
+            return
+        }
+        // Another player's drag owns the edit; there is only one pointer,
+        // so this is a stray step, not a second drag.
+        guard volumeEditSource === source else { return }
+        stepVolume(value, on: source)
+    }
+
+    func endVolumeEdit(for bundleID: String) {
+        guard isEditingVolume, let source = volumeSource(for: bundleID),
+              volumeEditSource === source else { return }
+        endVolumeEdit()
     }
 }

@@ -1,6 +1,6 @@
 # Per-app audio mixer
 
-**Status: v1 planned, not started (2026-09-17).** Nothing is built. The deferral is lifted and v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
+**Status: v1 in progress (2026-09-18). Phases 2 and 3 are committed.** Phase 2 is the Spotify and Music volume slider on the player screen (`c532afb`, with the button's final look in `3dfc3c7` and `a10f088`). Phase 3 is process enumeration and naming with the corrected change trigger (`606af7d`); it has no UI, only logs its rows, and runs in Debug builds only. Phase 1 and Phases 4 to 7 are not started, and Phase 0 is partly answered. v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
 
 Recorded 2026-08-29 so the research is not re-done from scratch, and so the correction below does not get lost.
 
@@ -281,8 +281,10 @@ A plan was proposed, then an interview challenged it question by question. The d
 1. **Purpose and success.** v1 replaces FineTune for its owner, who uses only its volume sliders. **v1 succeeds if FineTune is uninstalled after the week of daily use.** Routing and EQ stay out on usage grounds, not only on cost.
 2. **Where the controls live.**
    - **A mixer page in the notch.** A navigated screen composed by the coordinator, the way the stats page is. It is needed because the controls must reach any app that plays audio, not just the current player: Discord never appears on the player screen, because it publishes no now-playing session (PopNotch's logs across a full call showed only Firefox and Chrome sessions).
-   - **A volume button on the player.** At the trailing edge of the controls row, opposite the heart. It is a sliders glyph (`slider.horizontal.3`), sized and tinted like the shuffle and repeat buttons rather than the heart. It shows no level; the slider it opens does. Clicking it swaps the transport cluster for a full-width slider until the pointer leaves, and under Reduce Motion the swap is instant (hard rule 8). The player layout is otherwise unchanged. This button is the shortcut for the most frequent moment: music too loud against Discord, several times a day.
+   - **A volume button on the player.** At the trailing edge of the controls row, opposite the heart. It is a speaker glyph (`speaker.wave.3`, slashed at zero), sized and tinted like the shuffle and repeat buttons rather than the heart. It shows no level; the slider it opens does. Clicking it swaps the transport cluster for a full-width slider until the pointer leaves, and under Reduce Motion the swap is instant (hard rule 8). The player layout is otherwise unchanged. This button is the shortcut for the most frequent moment: music too loud against Discord, several times a day.
      - **Revised after building (2026-09-17):** the plan first called for a speaker glyph mirroring the heart. At the heart's size it read too big, so it now matches the mode buttons.
+     - **Revised again (2026-09-18):** it was `slider.horizontal.3` for a day. The mixer door took that glyph in Phase 4, and the same glyph in both places read as a duplicate control, so the button is a speaker again, still at the mode buttons' size and tint.
+   - **The mixer page's Spotify and Music rows are the same control as this button's slider** (2026-09-18). Both go through the media module to the player's own `sound volume`, sharing one value, one write throttle and one read-back correction, so moving either moves the other. They work before the tap engine, because they need none; every other row is inert until Phase 5.
 3. **Two mechanisms, one per kind of app.**
    - **Spotify and Music use their own AppleScript `sound volume`,** which both scripting dictionaries declare read-write, 0 to 100. No tap and no new permission (the existing Automation grant covers it), so it is **on by default**. The volume lives in the app, so it survives PopNotch quitting or crashing, and it's never re-rendered.
    - **Everything else uses process taps,** **opt-in** behind a Settings toggle that is off by default. The audio-recording prompt appears when the toggle is turned on, because the prompt blocks until it is answered.
@@ -318,7 +320,7 @@ A plan was proposed, then an interview challenged it question by question. The d
 The mechanics the plan proposed and the interview did not revisit. They are recorded so they aren't rediscovered:
 
 - **Apps at 100% are never tapped.** A tap exists only while the app is below 100%, playing, not in the never-tap set, on a single stereo device, and permission is granted. It comes down after a short one-shot grace period once the app stops outputting.
-- **Everything is event-driven,** with no timers (hard rule 9): the process list, each process's is-running-output flag and devices, device aliveness, and sample rate.
+- **Everything is event-driven,** with no timers (hard rule 9): the process list, each process's is-running and output-devices notifications, device aliveness, and sample rate. The is-running-output flag is re-read on those notifications, because it sends none of its own (see *Phase 0*, *Answered so far*).
 - **Tap, aggregate and IOProc work runs on one serial queue, never main.** `AudioDeviceStart` blocks during the permission prompt. The visualiser currently starts its capture on the main actor, so it has the same exposure.
 - **The IOProc allocates nothing and takes no locks.** Gain is ramped across each buffer. On engaging, the gain ramps from 1.0 down to the target; on disengaging it ramps back to 1.0 before the tap is destroyed.
 - **App identity follows the public resolution chain** in *Mapping an audio process to its owning app*. It's keyed by the owning app's bundle ID, a synthetic key for web content, or the executable path for unbundled tools. PopNotch's own process is always excluded.
@@ -344,7 +346,7 @@ In the spike, not the app. It needs audio, a second participant for the call tes
 | **Spotify Connect:** what AppleScript `sound volume` does during remote playback. **Answered; see below** | Whether the slider disables during remote playback |
 | **Read-back** of a volume changed outside PopNotch (Spotify's own slider, a phone) | When to re-read |
 | **Level blip when a tap engages or disengages** | The ramp design |
-| **Whether the is-running-output and devices listeners fire;** tap behaviour when its target exits; in-place tap description update | The event handling |
+| **Whether the is-running-output and devices listeners fire** (**answered; see below**); tap behaviour when its target exits; in-place tap description update | The event handling |
 | **Frequency response** through the 48 kHz tap into a 44.1 kHz device, at 1, 10 and 16 kHz | Whether the resampling is audible |
 
 **Answered so far:**
@@ -356,6 +358,15 @@ In the spike, not the app. It needs audio, a second participant for the call tes
     - **The one difference is in `sound volume` itself, and it only shows after a write.** In the logs, across roughly when the owner switched to Connect and back (times not noted), reads returned 100, and a write of 7 was followed by a read of 100. Locally, writes stick. But a read of 100 before any write proves nothing: the first local read that session was also 100.
   - **Rejected:** Spotify's Web API reports the active device, but it is capped at 25 users and the project stepped away from it deliberately. A hiding rule built on it would work for almost nobody.
 - **Spotify reads a written volume back one lower (2026-09-17).** A write of N reads back as N−1, and keeps reading N−1 on every later read: set 52, 65 and 70 read back 51, 64 and 69. Corrected in Phase 2: after a write of N, reads of N−1 or N show as N until any other value is read.
+- **Which process listeners fire (2026-09-18).** Measured with a read-only probe while the owner played and paused Spotify, Safari and Chrome, and joined and left a Discord voice channel. The probe checked every flag directly as ground truth. It created no taps and played no audio.
+  - **`kAudioProcessPropertyIsRunningOutput` (`'piro'`) never notifies.** A listener on it registers with `noErr` and is never called: 0 callbacks across 31 changes to the flag. A wildcard listener on the same process objects never received it in any scope or element either.
+  - **`kAudioProcessPropertyIsRunning` (`'pir?'`) fired for everything except Discord's voice renderer:** 27 of 31 changes, across Spotify, Safari's WebKit helper, Chrome's audio helper, Discord's other helper, system sounds and Control Center. The renderer's 4 changes sent nothing.
+  - **`kAudioProcessPropertyDevices` in output scope (`'pdv#'`) fired for all of them,** 31 of 31, the renderer's included.
+  - **The flag is already updated when the callback runs.** In a separate run, each callback read the flag as its first action. All 28 callbacks read the new value, matching reads 50 ms, 250 ms and 1 s later, and each of the 16 flag changes got a callback that read it.
+  - **So the app listens on both `'pir?'` and `'pdv#'` in output scope, and re-reads the flag in either callback.** Phase 3 shipped this in `606af7d`, with registration failures logged.
+  - **PopNotch's own process got no notification of any kind** while its visualiser tap ran: 4 flag changes, 0 callbacks. It is always excluded from the rows, so this doesn't affect them. Its tap runs through a private aggregate device, and the guess is that such I/O isn't announced, which may also explain Discord's renderer. Unverified.
+  - **Chrome's audio helper keeps its output open after a pause, so a Chrome row lags a pause.** It stayed on through a pause and a resume, and stopped 64 s after it started, some time after the final pause. So the lag is up to about a minute; its exact length after a pause wasn't timed. The flag is accurate: the helper really is still running I/O.
+  - **Evidence:** the probe and its three logs are in `~/PopNotch-spikes/tapspike/evidence/2026-09-18/`.
 
 **D is already done,** on AirPods (see *D* above). Cross-device routing is out of v1 anyway.
 

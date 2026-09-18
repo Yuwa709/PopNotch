@@ -17,7 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let pinState = PinState()
     private(set) lazy var coordinator = NotchCoordinator(
         settings: settings, caffeinate: caffeinate,
-        pinState: pinState, statsPage: statsPage)
+        pinState: pinState, statsPage: statsPage,
+        appVolume: appVolume)
     /// Given the settings store so launch reads the cached connected flag
     /// instead of the Keychain.
     private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
@@ -41,8 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// row draws the spectrum, is on screen and the tracked player is playing.
     private(set) lazy var audioViz = AudioVisualizerService()
 
-    /// Per-app volume. Phase 3 of its plan: read-only enumeration and naming
-    /// of the processes that are playing, logged, with no taps and no UI.
+    /// Per-app volume. Phase 4 of its plan: read-only enumeration and naming
+    /// of the processes that are playing, shown on the coordinator's mixer
+    /// page with inert sliders. No taps; the engine is Phase 5.
+    /// `AppVolumeModule`'s toggle is what starts and stops the watching.
     private(set) lazy var appVolume = AppVolumeService()
 
     /// The system now-playing source, held only so the music-over-video
@@ -215,6 +218,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         media.onContentReflow = { [weak self] in
             self?.coordinator.refreshPresentation()
         }
+        // The mixer page's Spotify and Music rows drive those players'
+        // own volume through the media module, as a protocol, so the row
+        // and the player slider share one value and one write path.
+        appVolume.playerVolumes = media
         let clipboard = ClipboardModule(service: clipboardService)
         let modules: [any NotchModule] = [
             media,
@@ -232,6 +239,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // references to them is opt-in.
         coordinator.register(FileShelfModule(service: fileShelfService),
                              enabledByDefault: false)
+        // Off by default as well: watching enumerates and logs which apps
+        // play audio. Its `isEnabled` setter starts and stops the watching,
+        // so registering it disabled leaves no listeners registered — this
+        // toggle replaces Phase 3's #if DEBUG gate, as that gate's comment
+        // said it would.
+        coordinator.register(AppVolumeModule(service: appVolume),
+                             enabledByDefault: false)
         // The shelf's drag chooser needs to know when a drag is over the
         // panel; the coordinator hears it, the service displays it.
         coordinator.onFileDragActive = { [weak fileShelfService] active in
@@ -243,14 +257,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The stored preference; off by default. Whether the spectrum is on
         // screen is MediaModule's to report, so no setSpectrumVisible here.
         audioViz.setEnabled(settings.settings.visualizerEnabled)
-
-        // Debug builds only, for now. Phase 3 has no UI and no setting, so a
-        // release cut from this code must carry no listeners and log no app
-        // names. The per-app volume toggle in Settings (Phase 4) replaces
-        // this gate.
-        #if DEBUG
-        appVolume.startWatching()
-        #endif
     }
 
     /// Kept alive for the process lifetime; a released source stops firing.
@@ -284,9 +290,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator.stop()
-        #if DEBUG
-        appVolume.stopWatching()
-        #endif
+        // appVolume needs no stop here: its Core Audio listeners die with
+        // the process, and the module's toggle owns the in-session lifecycle.
         // The adapter runs as a child process, and a child is not reclaimed
         // the way an in-process timer is: on exit it is reparented to launchd
         // and keeps streaming. It only notices we are gone when its next

@@ -30,28 +30,46 @@ final class ExpandedBandClearanceTests: XCTestCase {
     /// chromeOnly, band groups). Content widths are the pinned real ones
     /// (see ChromeBandFitTests); .zero is anything at or below the width
     /// floor, which is where both regressions lived. Standby carries
-    /// settings + both doors leading; navigated screens carry Back alone.
-    /// Trailing is 76 since the stats door joined it: three 24pt controls at
-    /// `HStack(spacing: 2)`. Leading is unchanged — the stats door lives in
-    /// the trailing group, so it does not widen the leading one.
+    /// settings + up to three doors leading (clipboard, shelf, app volume:
+    /// four 24pt controls at `HStack(spacing: 2)` = 102); navigated screens
+    /// carry Back alone. Trailing is 76 since the stats door joined it:
+    /// three 24pt controls.
     private var states: [(name: String, content: CGSize, chromeOnly: Bool,
                           groups: NotchPanel.ChromeGroupWidths)] {
-        let standby = NotchPanel.ChromeGroupWidths(leading: 76, trailing: 76)
+        let standby = NotchPanel.ChromeGroupWidths(leading: 102, trailing: 76)
+        // The pre-mixer standby: the app-volume door off, the other two on.
+        let standbyTwoDoors = NotchPanel.ChromeGroupWidths(leading: 76, trailing: 76)
         let navigated = NotchPanel.ChromeGroupWidths(leading: 24, trailing: 76)
-        // A machine with both leading doors switched off still shows the
+        // A machine with every leading door switched off still shows the
         // gear, and the stats door can be off too — the narrow extremes.
         let minimal = NotchPanel.ChromeGroupWidths(leading: 24, trailing: 50)
         return [
             ("chrome-only bar", .zero, true, standby),
+            ("chrome-only bar, mixer door off", .zero, true, standbyTwoDoors),
             ("standby at the width floor (stats only)", .zero, false, standby),
+            ("standby at the floor, mixer door off", .zero, false, standbyTwoDoors),
             ("standby, media playing", CGSize(width: 432, height: 300), false, standby),
             ("navigated: clipboard", CGSize(width: 484, height: 260), false, navigated),
             ("navigated: shelf drop chooser", CGSize(width: 540, height: 220), false, navigated),
             ("navigated: resting shelf", CGSize(width: 690, height: 230), false, navigated),
             ("navigated: system stats page", CGSize(width: 624, height: 433), false, navigated),
+            ("navigated: app volume page", CGSize(width: 484, height: 455), false, navigated),
             ("stats page at the floor", .zero, false, navigated),
             ("everything off but the gear", .zero, false, minimal),
         ]
+    }
+
+    /// The leading group's real width with every door on, built from the
+    /// four controls the coordinator puts in it. Pins the 102 the states
+    /// above assume.
+    func testLeadingGroupMeasuresOneOhTwoWithAllThreeDoors() {
+        let width = NSHostingView(rootView: HStack(spacing: 2) {
+            PanelChromeButton(symbol: "gearshape", help: "Settings") {}
+            PanelChromeButton(symbol: "doc.on.clipboard", help: "Clipboard history") {}
+            PanelChromeButton(symbol: "tray.full", help: "File shelf") {}
+            PanelChromeButton(symbol: "slider.horizontal.3", help: "App volume") {}
+        }).fittingSize.width
+        XCTAssertEqual(width, 102, accuracy: 0.5, "4 x 24pt + 3 x 2pt spacing")
     }
 
     /// The trailing group's real width, built from the three controls the

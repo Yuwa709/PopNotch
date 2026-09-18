@@ -45,6 +45,7 @@ final class NotchCoordinator {
         case clipboard
         case fileShelf
         case systemStats
+        case appVolume
 
         /// The module a screen belongs to, so the disabled-module fallbacks
         /// stay one rule rather than one branch per destination.
@@ -54,6 +55,7 @@ final class NotchCoordinator {
             case .clipboard: "clipboard"
             case .fileShelf: "file-shelf"
             case .systemStats: "system-stats"
+            case .appVolume: "app-volume"
             }
         }
     }
@@ -88,6 +90,11 @@ final class NotchCoordinator {
             guard oldValue != destination else { return }
             if oldValue == .systemStats { setStatsPageObserving(false) }
             if destination == .systemStats { setStatsPageObserving(true) }
+            // Not a sampling lifecycle: watching is toggle-driven and
+            // event-driven. This re-prunes the session rows, so an app that
+            // quit since the last audio event is not still listed, and reads
+            // Spotify's and Music's current volume for their rows.
+            if destination == .appVolume { appVolume?.pageDidOpen() }
         }
     }
 
@@ -137,18 +144,33 @@ final class NotchCoordinator {
     /// The stats page's services, or nil where the page is not wired up.
     private let statsPage: StatsPageServices?
 
+    /// The mixer page's service, or nil where the page is not wired up —
+    /// which hides its door, the same rule `statsPage` follows.
+    private let appVolume: AppVolumeService?
+
     init(settings: SettingsStore,
          arbiter: NotchArbiter? = nil,
          caffeinate: CaffeinateService? = nil,
          pinState: PinState? = nil,
-         statsPage: StatsPageServices? = nil) {
+         statsPage: StatsPageServices? = nil,
+         appVolume: AppVolumeService? = nil) {
         self.settings = settings
         self.pinState = pinState
         self.caffeinate = caffeinate
         self.statsPage = statsPage
+        self.appVolume = appVolume
         self.arbiter = arbiter ?? NotchArbiter()
         self.arbiter.onPresentationChange = { [weak self] presentation in
             self?.presentationChanged(presentation)
+        }
+        // The mixer page's height follows its row count, and rows come and
+        // go with audio events while the page is open — re-measure then, or
+        // a new row draws into a panel sized for one fewer. Guarded to the
+        // page itself so audio events never re-render other screens.
+        appVolume?.onRowsChange = { [weak self] in
+            guard let self, self.destination == .appVolume else { return }
+            self.renderContent()
+            self.applyState()
         }
     }
 
@@ -590,11 +612,21 @@ final class NotchCoordinator {
     }
 
     /// Screens reachable right now: a door only exists while the feature
-    /// behind it is on.
+    /// behind it is on. The mixer door additionally requires the service —
+    /// nil in tests and wherever the page is not wired up, the same rule as
+    /// the stats door's `statsPage` check.
     private func availableDoors() -> [(Destination, String, String)] {
-        [(.clipboard, "doc.on.clipboard", "Clipboard history"),
-         (.fileShelf, "tray.full", "File shelf")]
-            .filter { isDoorAvailable($0.0) }
+        var doors: [(Destination, String, String)] = [
+            (.clipboard, "doc.on.clipboard", "Clipboard history"),
+            (.fileShelf, "tray.full", "File shelf"),
+        ]
+        if appVolume != nil {
+            // Not the player's speaker: the door is the whole mixer, the
+            // speaker is one player's volume, and one glyph for both read as
+            // a duplicate control.
+            doors.append((.appVolume, "slider.horizontal.3", "App volume"))
+        }
+        return doors.filter { isDoorAvailable($0.0) }
     }
 
     /// Whether a destination's module is registered and switched on. The one
@@ -712,11 +744,22 @@ final class NotchCoordinator {
                                                        battery: statsPage.battery,
                                                        history: statsPage.history))
                 }
+                // The mixer page, composed here like the stats page: the
+                // engine is AppDelegate's service, not the module's
+                // (decision 4), so the module has no view to offer. With no
+                // service the generic branch below would render the module's
+                // empty placeholder, so this destination skips it and falls
+                // through to the stack instead.
+                if destination == .appVolume {
+                    if let appVolume, isDoorAvailable(.appVolume) {
+                        return AnyView(AppVolumePageView(service: appVolume))
+                    }
+                }
                 // A navigated screen replaces the arbitrated stack wholesale.
                 // Falls through if its module got disabled underneath it, so
                 // the panel can never show a screen whose feature is off.
-                if let moduleID = destination.moduleID,
-                   let module = arbiter.module(for: moduleID), module.isEnabled {
+                else if let moduleID = destination.moduleID,
+                        let module = arbiter.module(for: moduleID), module.isEnabled {
                     return module.makeExpandedView()
                 }
                 // Stacked, not side by side: several expanded modules in a row

@@ -531,16 +531,19 @@ private struct MediaFavoriteControl: View {
 /// The volume button at the controls row's trailing edge, opposite the
 /// heart. Sized and tinted like the shuffle and repeat buttons at rest
 /// (`modeGlyphSize` in the shared 28pt frame, `modeRestingOpacity`), not
-/// like the heart, which read too big (user-tuned 2026-09-17). The glyph, `slider.horizontal.3`, has no
-/// level to show, so the level lives in the slider it opens and in the
-/// VoiceOver value, not in the glyph.
+/// like the heart, which read too big (user-tuned 2026-09-17).
+///
+/// A speaker, slashed at zero. It was `slider.horizontal.3` for a day, until
+/// the mixer door took that glyph and the two read as one control twice
+/// over (2026-09-18): the door is every app's volume, this is one player's.
+/// The level itself lives in the slider it opens and the VoiceOver value.
 private struct MediaVolumeButton: View {
     let volume: Int?
     let open: () -> Void
 
     var body: some View {
         Button(action: open) {
-            Image(systemName: "slider.horizontal.3")
+            Image(systemName: volume == 0 ? "speaker.slash" : "speaker.wave.3")
                 .font(.system(size: PlayerLayout.modeGlyphSize, weight: .semibold))
                 .foregroundStyle(.white.opacity(PlayerLayout.modeRestingOpacity))
                 .frame(width: PlayerLayout.edgeControlSide, height: PlayerLayout.edgeControlSide)

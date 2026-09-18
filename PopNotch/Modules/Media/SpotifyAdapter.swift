@@ -298,6 +298,7 @@ final class SpotifyAdapter: MediaSource {
     /// fresh as the last `refreshVolume()`.
     private(set) var volume: Int?
     var supportsVolume: Bool { true }
+    var bundleID: String? { Self.bundleID }
     private let scriptedVolume = ScriptedVolume(application: "Spotify")
     /// Spotify reads a written value back one lower; see `VolumeReadBack`.
     private var readBack = VolumeReadBack()

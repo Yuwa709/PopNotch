@@ -286,4 +286,85 @@ final class NotchNavigationTests: XCTestCase {
         // underflow the count into keeping a timer alive.
         module.didResignVisible()
     }
+
+    // MARK: - The mixer door
+
+    /// Wired the way AppDelegate wires it: the coordinator holds the service
+    /// (the stats-page pattern) and the module holds it too, for the toggle.
+    /// The stub source keeps real Core Audio listeners out of the tests.
+    private func makeMixerCoordinator(enabled: Bool = true)
+        -> (NotchCoordinator, AppVolumeService, StubAudioProcessSource) {
+        let source = StubAudioProcessSource()
+        let service = AppVolumeService(source: source,
+                                       resolve: { _ in nil },
+                                       isAppRunning: { _ in false })
+        let coordinator = NotchCoordinator(
+            settings: SettingsStore(defaults: defaults),
+            arbiter: NotchArbiter(),
+            appVolume: service)
+        coordinator.register(AppVolumeModule(service: service),
+                             enabledByDefault: enabled)
+        return (coordinator, service, source)
+    }
+
+    func testAppVolumeDestinationMapsToItsModule() {
+        XCTAssertEqual(NotchCoordinator.Destination.appVolume.moduleID, "app-volume")
+    }
+
+    func testNavigateReachesTheMixerPage() {
+        let (coordinator, _, _) = makeMixerCoordinator()
+        coordinator.navigate(to: .appVolume)
+        XCTAssertEqual(coordinator.destination, .appVolume)
+    }
+
+    func testDisablingAppVolumeUnderItsPageSendsYouHome() {
+        let (coordinator, _, _) = makeMixerCoordinator()
+        coordinator.navigate(to: .appVolume)
+        coordinator.setEnabled(false, for: "app-volume")
+        XCTAssertEqual(coordinator.destination, .standby)
+    }
+
+    /// The module's toggle is the single point where watching starts and
+    /// stops — the replacement for Phase 3's #if DEBUG gate. Off means no
+    /// listeners registered and nothing logged.
+    func testTheToggleStartsAndStopsTheWatching() {
+        let (coordinator, _, source) = makeMixerCoordinator(enabled: true)
+        XCTAssertTrue(source.isRunning, "registering enabled starts watching")
+        coordinator.setEnabled(false, for: "app-volume")
+        XCTAssertFalse(source.isRunning, "toggling off stops it")
+        coordinator.setEnabled(true, for: "app-volume")
+        XCTAssertTrue(source.isRunning)
+    }
+
+    func testRegisteringDisabledStartsNothing() {
+        let (_, _, source) = makeMixerCoordinator(enabled: false)
+        XCTAssertFalse(source.isRunning,
+                       "off by default must mean no listeners at all")
+    }
+
+    /// Opening the page re-prunes the session rows, so an app that quit
+    /// since the last audio event is not still listed. The quit fires no
+    /// Core Audio notification when the app held no process objects.
+    func testOpeningTheMixerPageRefreshesItsRows() {
+        let source = StubAudioProcessSource()
+        var running: Set<String> = ["app.a"]
+        let owner = AudioOwner(key: "app.a", name: "Alpha",
+                               kind: .app, resolution: .ownApp)
+        let service = AppVolumeService(source: source,
+                                       resolve: { _ in .shown(owner) },
+                                       isAppRunning: { running.contains($0) })
+        let coordinator = NotchCoordinator(
+            settings: SettingsStore(defaults: defaults),
+            arbiter: NotchArbiter(),
+            appVolume: service)
+        coordinator.register(AppVolumeModule(service: service), enabledByDefault: true)
+
+        source.publish([AudioProcessSnapshot(objectID: 1, pid: 10, bundleID: nil,
+                                          isRunningOutput: true)])
+        source.quietly([])      // the app quits; no notification arrives
+        running = []
+        XCTAssertFalse(service.mixerRows.isEmpty, "stale before the page opens")
+        coordinator.navigate(to: .appVolume)
+        XCTAssertTrue(service.mixerRows.isEmpty, "opening the page pruned it")
+    }
 }

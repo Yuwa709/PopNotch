@@ -330,4 +330,10 @@ final class StubAudioProcessSource: AudioProcessSource {
         processes = snapshots
         onChange?(snapshots)
     }
+
+    /// The world changing with no notification — an app quitting once its
+    /// audio objects were already gone. What `refreshRows()` exists for.
+    func quietly(_ snapshots: [AudioProcessSnapshot]) {
+        processes = snapshots
+    }
 }

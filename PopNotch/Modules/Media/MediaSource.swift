@@ -137,6 +137,12 @@ protocol MediaSource: AnyObject {
     /// `supportsVolume`; callers check first so the UI never offers a dead
     /// control.
     func setVolume(_ value: Int)
+
+    /// The player app's bundle ID, when this source is one app. The mixer
+    /// page keys its rows by the owning app's bundle ID, so this is how a
+    /// Spotify or Music row finds the source that controls its volume. Nil
+    /// for the system source, which speaks for whichever app is playing.
+    var bundleID: String? { get }
 }
 
 /// Defaults for sources whose player exposes neither concept, so an adapter
@@ -154,6 +160,7 @@ extension MediaSource {
     var volume: Int? { nil }
     func refreshVolume() {}
     func setVolume(_ value: Int) {}
+    var bundleID: String? { nil }
 }
 
 /// Runs an AppleScript source and reports the result or the error code.

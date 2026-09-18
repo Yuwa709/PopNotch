@@ -33,6 +33,9 @@ final class StubMediaSource: MediaSource {
     /// read; every write is recorded, in order, with no AppleScript.
     var supportsVolume = false
     var volume: Int?
+    /// Nil like the system source unless a test names the player, which is
+    /// how the mixer page's row finds it.
+    var bundleID: String?
     var nextRead: Int?
     private(set) var volumeReads = 0
     private(set) var volumeWrites: [Int] = []

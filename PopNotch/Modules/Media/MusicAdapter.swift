@@ -219,6 +219,7 @@ final class MusicAdapter: MediaSource {
     /// slider shows. Like Spotify, no notification says when it changes.
     private(set) var volume: Int?
     var supportsVolume: Bool { true }
+    var bundleID: String? { Self.bundleID }
     private let scriptedVolume = ScriptedVolume(application: "Music")
 
     /// A failure logs and keeps the last value read. It deliberately does
