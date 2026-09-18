@@ -107,9 +107,11 @@ private enum PlayerLayout {
     /// spread across the full 368pt).
     static let modeSpacing: CGFloat = 20
 
-    /// The heart at the controls row's leading edge and the volume button at
-    /// its trailing edge share these, so the two mirror each other exactly.
+    /// The heart's glyph, at the controls row's leading edge.
     static let edgeGlyphSize: CGFloat = 15
+    /// The frame of the controls at the row's two edges: the heart, and the
+    /// volume button opposite it. The same 28pt as shuffle and repeat, so the
+    /// row stays at `transportButtonHeight`.
     static let edgeControlSide: CGFloat = 28
 
     /// The swap between the transport cluster and the volume slider, a
@@ -355,10 +357,9 @@ private struct MediaControlsRow: View {
             } else {
                 transportCluster
                     .transition(.opacity)
-                // The heart and the volume button mirror each other at the
-                // two edges. Both sit outside the cluster because both are
-                // conditional; inside, either appearing would shift the
-                // transport sideways.
+                // The heart and the volume button sit at the two edges. Both
+                // are outside the cluster because both are conditional;
+                // inside, either appearing would shift the transport sideways.
                 HStack {
                     MediaFavoriteControl(module: module)
                     Spacer()
@@ -524,19 +525,20 @@ private struct MediaFavoriteControl: View {
     }
 }
 
-/// The speaker at the controls row's trailing edge, mirroring the heart at
-/// the leading edge: the same frame, weight and resting tint, from the same
-/// constants. The glyph's waves fill with the level, so it reads as a
-/// volume before it is clicked.
+/// The volume button at the controls row's trailing edge, opposite the
+/// heart. Sized like the shuffle and repeat buttons (`modeGlyphSize` in the
+/// shared 28pt frame), not like the heart: at the heart's size it read too
+/// big (user-tuned 2026-09-17). The glyph, `slider.horizontal.3`, has no
+/// level to show, so the level lives in the slider it opens and in the
+/// VoiceOver value, not in the glyph.
 private struct MediaVolumeButton: View {
     let volume: Int?
     let open: () -> Void
 
     var body: some View {
         Button(action: open) {
-            Image(systemName: volume == 0 ? "speaker.slash" : "speaker.wave.3",
-                  variableValue: Double(volume ?? 100) / 100)
-                .font(.system(size: PlayerLayout.edgeGlyphSize, weight: .semibold))
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: PlayerLayout.modeGlyphSize, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.7))
                 .frame(width: PlayerLayout.edgeControlSide, height: PlayerLayout.edgeControlSide)
                 .contentShape(Rectangle())
