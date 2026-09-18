@@ -1,6 +1,6 @@
-# Deferred: per-app audio mixer
+# Per-app audio mixer
 
-**Status: deferred, not started.** Nothing is built. No decision here is final except the deferral itself. A throwaway spike has since measured the mechanism itself, outside the app; see *Spike results*.
+**Status: v1 planned, not started (2026-09-17).** Nothing is built. The deferral is lifted and v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
 
 Recorded 2026-08-29 so the research is not re-done from scratch, and so the correction below does not get lost.
 
@@ -62,6 +62,8 @@ This maps directly onto the scoping rule below: the cheap half is also the valua
 
 PopNotch's performance budget (under 1% CPU idle, under 80MB resident) was written for an overlay that samples stats. A mixer processing audio continuously is a different kind of load and would need its own measured budget, not an assumption that the existing one still holds.
 
+**Budget set 2026-09-17,** before any measurement: at most **2 points of one core per tapped app** while it plays, PopNotch and coreaudiod combined, measured by CPU time. The idle budget is unchanged. Recorded in `CLAUDE.md`, *Performance budget*; see *v1 plan*.
+
 ---
 
 ## Why it is deferred until PopNotch ships
@@ -74,13 +76,18 @@ Three reasons, none of them technical:
 
 Revisit **after** PopNotch has shipped and been used daily, per the roadmap's own checkpoint about building for a hypothetical user.
 
+**Lifted 2026-09-17.** PopNotch has shipped. The reasons above are kept for the record, but two of them no longer hold:
+
+- **Reason 2 is overridden by decision.** The mixer lives in the notch: a screen the coordinator composes, plus a volume button on the player. That reuses the stats page's pattern rather than building a second surface.
+- **Reason 3 is answered by a user.** v1 exists to replace FineTune for its owner, who uses only its volume sliders. The advantage is being in the notch and one less app at login. See *v1 plan*.
+
 ---
 
 ## Known traps, for whoever builds it
 
 Recorded now because these are the parts that are discovered late and expensively.
 
-- **DAWs, VoIP, and low-level routing apps break under process taps.** They already manage their own audio path, and interposing on it causes glitching, dropouts, or silence. **Logic Pro is the example** — and it is precisely the app named in the original motivating use case ("turn Spotify down while Logic Pro is up"), so the feature's headline scenario is also its worst failure mode. A **per-app ignore/bypass list is not a polish item; it is a v1 requirement**, and it should ship with sensible defaults already populated rather than waiting for users to discover the problem. **Still unverified:** Logic Pro was not installed on the spike machine, so this was neither confirmed nor refuted.
+- **DAWs, VoIP, and low-level routing apps break under process taps.** They already manage their own audio path, and interposing on it causes glitching, dropouts, or silence. **Logic Pro is the example** — and it is precisely the app named in the original motivating use case ("turn Spotify down while Logic Pro is up"), so the feature's headline scenario is also its worst failure mode. A **per-app ignore/bypass list is not a polish item; it is a v1 requirement**, and it should ship with sensible defaults already populated rather than waiting for users to discover the problem. **Revised 2026-09-17:** v1 uses a fixed never-tap set instead of an editable list; *v1 plan* says why. **Still unverified:** Logic Pro was not installed on the spike machine, so this was neither confirmed nor refuted.
 - **The tapped process may not be the app.** Some apps play audio through helper processes, so the PID producing sound does not match the application the user recognises. Naive enumeration will show a helper's name, or attribute audio to the wrong app, or miss it entirely. Mapping helper processes back to their parent application is real work. **Confirmed for both browsers.** Chrome and Electron apps map back with public information; Safari only through a private API. See *Spike results*, *Mapping an audio process to its owning app*.
 - **Only show apps that actually produce audio.** A list built from "running applications" will include Terminal, Finder, and everything else the user has open. The list must be driven by what is actually producing audio, or the UI is a junk drawer.
 
@@ -96,7 +103,7 @@ Recorded now because these are the parts that are discovered late and expensivel
 
 **Confounds.** FineTune was quit for every measurement, because it holds its own taps and would skew them.
 
-**Evidence.** Logs for B and C are in `~/PopNotch-spikes/tapspike/evidence/2026-09-17/`. A's raw logs were lost when a reboot wiped the temp directory the spike first lived in, so the A results below come from the session notes.
+**Evidence.** Logs for B, C and D are in `~/PopNotch-spikes/tapspike/evidence/2026-09-17/`. A's raw logs were lost when a reboot wiped the temp directory the spike first lived in, so the A results below come from the session notes.
 
 ### Permissions
 
@@ -143,9 +150,9 @@ All three processes (tone, taps, mic) logged against one wall clock, so the rows
 - **Proven acoustically, with the EarPods lying by the mic.** Reroute gain of 0, −20 and −60 dB gave a mic level of −48.2, −69.0 and about −107 dB (the noise floor). The mic tracked the gain, so the sound came from the EarPods, and the speakers stayed muted throughout. It also shows a gain applied in the IOProc lands exactly, which is the operation per-app volume needs.
 - **The tap's own stream is 48 kHz whatever the source device's rate** (seen with 44.1 kHz sources too), and the aggregate resamples to the render device. At 19 kHz, going into 44.1 kHz, that path cost 3.4 dB: the resampler's passband edge near Nyquist. Normal audio frequencies were not tested.
 
-### The shared-clock measurement, and why D can't run here
+### The shared-clock measurement
 
-The reroute was meant to cross into an **independent** clock. It didn't, because no device on the test machine has one. Each device's sample rate was measured from its IO timestamps against host time:
+The reroute was meant to cross into an **independent** clock. It didn't, because none of the wired devices has one. Each device's sample rate was measured from its IO timestamps against host time:
 
 | Device | Transport | Measured rate vs nominal |
 |---|---|---|
@@ -157,9 +164,43 @@ The reroute was meant to cross into an **independent** clock. It didn't, because
 - **The +6.7 ppm is the host clock's offset from the Mac's audio reference**, and both USB devices follow that reference. That's typical of USB audio devices that take their clock from the host's USB frames instead of their own crystal.
 - **`kAudioDevicePropertyClockDomain` can't detect independence.** It reported the same value for every device.
 
-**So D, the 30-minute drift soak, was not run: on this hardware it would be a false pass.** With every device on one clock, there is no drift to compensate, and the soak would count zero drift glitches whether or not tap drift compensation works.
+**So D, the 30-minute drift soak, could not run on these devices: it would have been a false pass.** With every device on one clock, there is no drift to compensate, and the soak would count zero drift glitches whether or not tap drift compensation works. D ran on AirPods instead; see *D* below.
 
-D needs **AirPods (Bluetooth) or a USB DAC with its own clock**, and it should be confirmed independent first with the same rate measurement. The spike's `scripts/soak.sh` runs D, the drift-compensation-off control, and the 44.1 kHz-into-48 kHz case.
+### D. Drift soak into AirPods: 0 glitches over 30 minutes
+
+- **The setup:** a muted tap on the tone playing on the built-in speakers, rerouted to AirPods (Bluetooth, 48 kHz) as the aggregate's main subdevice, with tap drift compensation on. The mute happens on one device and the rendering on another, which is the real cross-device case.
+- **Render gain was −60 dB** to keep the tone out of the wearer's ears. Glitches are counted on the tapped stream before the gain, so the gain doesn't affect the count.
+- **Discord was moved off the AirPods first.** A call puts them in a different Bluetooth mode, and a mode switch mid-run would count as glitches that have nothing to do with drift.
+
+**The AirPods' clock was measured first**, the same way as the table above:
+
+| Device | Measured rate vs host clock |
+|---|---|
+| AirPods | exactly 48000.000 Hz, **+0.00 ppm** (150 s, and again over the full 1800 s soak) |
+| MacBook Air Speakers | **+6.1 ppm** (the same 150 s), **+6.3 ppm** over the soak |
+
+- **The Mac times Bluetooth output from its host clock.** A rate that is exactly nominal, to 0.01 ppm, comes from host time, not from a crystal. Core Audio never sees the AirPods' own clock. Whatever matches it to the Mac happens below the HAL, in the Bluetooth stack or in the AirPods. So no Bluetooth device will read tens of ppm here; only a USB DAC with its own clock could.
+- **This confirms the reading of the table above.** A device timed straight from host time reads exactly 0, so the +6 to +7 ppm on the wired devices is the audio reference's offset from host time.
+- **So the drift was real: 6.3 ppm.** Speakers to AirPods crosses from the audio reference to the host clock. That is about 0.3 samples a second, or roughly 545 samples over the 30 minutes.
+
+**The result, over 1800 s in 180 ten-second intervals:**
+
+- **0 glitches**, 0 dropout runs, 0 input or output timestamp jumps, 0 overloads.
+- Every interval received a full set of callbacks (937 or 938), and the tapped stream stayed 100% non-zero.
+
+**The aggregate resampled the drift away, and the tone level shows it.**
+
+- **On the AirPods, the tapped 19 kHz tone read −27 to −30 dB,** though its peak and RMS were at the full −12 dBFS.
+- **A 1-minute control read a flat −12.1 dB.** It used the same reroute and the same 10 s windows, into the dock's "Headphones", which share the speakers' clock.
+- **The gap is what a frequency shift does to a 10 s level measurement.** A tone about 0.12 Hz off loses that much over 10 s, and 0.12 Hz at 19 kHz is 6.1 to 6.3 ppm. So the tap stream was resampled continuously from the speakers' clock to the AirPods', not passed through sample for sample with slips.
+
+**Limits:**
+
+- **The count stops at the Mac's output.** It covers the tapped stream after drift compensation, and the HAL's output timing. Bluetooth encoding, the link, and the AirPods matching their own crystal all happen after that, where no tap can see. A dropout there would be heard, not counted.
+- **The drift-compensation-off control wasn't run.** So it is unproven that the harness would count glitches at a drift this small when compensation is missing. The tone shift shows the drift was in the stream and was resampled, but the uncorrected case is unmeasured. At 6.3 ppm the drift builds slowly, so that control needs the full 30 minutes, not 5.
+- **Only one crossing was tested:** the audio reference to the host clock, at 6.3 ppm. A USB DAC with its own crystal, at tens of ppm, is untested, and so is the 44.1 kHz-source case.
+
+**Evidence:** `D0-clock-*.log` (the rate check), `D-soak-airpods-*.log` (the soak) and `D-control-headphones-*.log` (the same-clock control). `scripts/soak.sh` now takes the render gain as an optional fifth argument.
 
 **Also not run:** E (latency), the SIGKILL half of F, and G (conflict with the visualiser's global tap).
 
@@ -211,8 +252,8 @@ D needs **AirPods (Bluetooth) or a USB DAC with its own clock**, and it should b
 ### What this settles
 
 - **The driver correction stands, now measured.** A regular app with no entitlements can mute one process's audio and re-render it, with only one audio-recording prompt.
-- **The pieces v1 needs work:** muting at the source, re-rendering, and a gain step. v1 is per-app volume on the device the app already uses. Cross-device routing stays out of scope, and its drift behaviour is still unknown.
-- **Still open before building:** Logic Pro's behaviour (the headline case); whether to adopt the private responsible-process API for WebKit audio or label it generically; SIGKILL recovery; and whether PopNotch's own global visualiser tap double-counts a re-rendered app.
+- **The pieces v1 needs work:** muting at the source, re-rendering, and a gain step. v1 is per-app volume on the device the app already uses. Cross-device routing stays out of scope. Its drift handling has been measured for one crossing: 0 glitches over 30 minutes at 6.3 ppm, within the limits listed in *D*.
+- **Still open before building:** Logic Pro's behaviour (the headline case); SIGKILL recovery, which is v1's gate; and whether PopNotch's own global visualiser tap double-counts a re-rendered app. All three are in *v1 plan*, *Phase 0*. The WebKit question is decided: no private API, and WebKit audio is labelled generically.
 
 ---
 
@@ -228,6 +269,98 @@ Before any of them is considered:
 2. Its **battery cost is measured**, not assumed, against a stated budget.
 
 Only then does EQ or routing get discussed. This is the same discipline the roadmap applies elsewhere: ship the small thing, live with it, then decide.
+
+---
+
+## v1 plan (decided 2026-09-17)
+
+A plan was proposed, then an interview challenged it question by question. The decisions below are its outcome. They implement the scoping rule above: volume sliders only. Every assumed default was accepted as written.
+
+### Settled decisions
+
+1. **Purpose and success.** v1 replaces FineTune for its owner, who uses only its volume sliders. **v1 succeeds if FineTune is uninstalled after the week of daily use.** Routing and EQ stay out on usage grounds, not only on cost.
+2. **Where the controls live.**
+   - **A mixer page in the notch.** A navigated screen composed by the coordinator, the way the stats page is. It is needed because the controls must reach any app that plays audio, not just the current player: Discord never appears on the player screen, because it publishes no now-playing session (PopNotch's logs across a full call showed only Firefox and Chrome sessions).
+   - **A speaker button on the player.** At the trailing edge of the controls row, mirroring the heart. Clicking it swaps the transport cluster for a full-width slider until the pointer leaves, and under Reduce Motion the swap is instant (hard rule 8). The player layout is otherwise unchanged. This button is the shortcut for the most frequent moment: music too loud against Discord, several times a day.
+3. **Two mechanisms, one per kind of app.**
+   - **Spotify and Music use their own AppleScript `sound volume`,** which both scripting dictionaries declare read-write, 0 to 100. No tap and no new permission (the existing Automation grant covers it), so it is **on by default**. The volume lives in the app, so it survives PopNotch quitting or crashing, and it's never re-rendered.
+   - **Everything else uses process taps,** **opt-in** behind a Settings toggle that is off by default. The audio-recording prompt appears when the toggle is turned on, because the prompt blocks until it is answered.
+   - **Why not taps for everything:** stacking a tap gain on top of Spotify's own volume would give two numbers that multiply, and the most-adjusted app would pay re-render cost and latency the whole time it plays.
+4. **Engine ownership.** The tap engine is a service owned by AppDelegate, not a NotchModule.
+5. **No private API.** WebKit audio is one row labelled "Web content", covering Safari, Mail and every app with a web view. See *Mapping an audio process to its owning app*.
+6. **Discord stays adjustable during calls.** The plan's proposed pause while an app captures the mic is dropped. The risk is to the *other* people in the call: re-render timing and level could confuse Discord's echo cancellation, which only matters when output goes to speakers the mic can hear.
+   - **Gate:** a real Discord call on the laptop speakers in *Phase 0*, with a second participant listening for echo while the slider moves.
+   - **If echo appears:** restrict call-time adjustment to non-built-in outputs, with the slider saying why.
+7. **Crash safety is a hard exit.** If *Phase 0* shows a SIGKILL leaves tapped apps muted, **v1 stops.** No recovery machinery: no public taps recorded on disk, no relaunch agent.
+8. **Budget.** Idle is unchanged. Active is **at most 2 points of one core per tapped app**, PopNotch and coreaudiod combined, measured by CPU time with 1 and 3 tapped apps.
+   - **Over budget means v1 doesn't ship until the cost is fixed.** The first fix to try is one shared aggregate per output device.
+   - Recorded in `CLAUDE.md`, *Performance budget*.
+9. **A fixed never-tap set replaces the editable bypass list.** The set covers DAWs, routing and mixer tools, PopNotch itself, and system daemons that can't be traced to an app. It has no editor and no settings fields. Each bundle ID is verified against a real install before it ships, never guessed. Why not an editable list:
+   - **An app at 100% is never tapped,** so dragging a misbehaving app back to 100% already removes its tap.
+   - **The headline case, "Spotify down while Logic is up", taps nothing,** because Spotify uses AppleScript.
+   - **The remaining DAW risk can't be solved by a list:** a tap on *another* app disturbing a DAW on the same output device. *Phase 0* tests it with GarageBand, and the result decides whether all taps pause while a DAW is running.
+
+### Accepted defaults
+
+- **Mute behaviour: `.mutedWhenTapped`.** It fails open: if PopNotch's audio thread stops or the process dies, the app returns to full volume rather than silence. This is the behaviour the SIGKILL test in *Phase 0* measures.
+- **One private aggregate per tapped app,** so one app's helper restarting can't glitch another. One aggregate per output device only if the budget is exceeded.
+- **The visualiser's global tap excludes PopNotch's own process,** so a re-rendered app isn't counted twice. *Phase 0* test G confirms both the problem and this fix.
+- **What the mixer page lists:**
+  - apps playing now, plus apps played this session that are still running
+  - apps in the never-tap set, shown greyed with the reason
+  - audio that can't be traced to an app, not shown
+- **The player's speaker button is hidden** when the current player is a system-source app and taps are off.
+- **Settings schema v9:** `appVolume { tapsEnabled, volumes[ownerKey] }`. Spotify's and Music's volumes are stored by the apps themselves, not here.
+
+### Carried from the plan, not re-decided
+
+The mechanics the plan proposed and the interview did not revisit. They are recorded so they aren't rediscovered:
+
+- **Apps at 100% are never tapped.** A tap exists only while the app is below 100%, playing, not in the never-tap set, on a single stereo device, and permission is granted. It comes down after a short one-shot grace period once the app stops outputting.
+- **Everything is event-driven,** with no timers (hard rule 9): the process list, each process's is-running-output flag and devices, device aliveness, and sample rate.
+- **Tap, aggregate and IOProc work runs on one serial queue, never main.** `AudioDeviceStart` blocks during the permission prompt. The visualiser currently starts its capture on the main actor, so it has the same exposure.
+- **The IOProc allocates nothing and takes no locks.** Gain is ramped across each buffer. On engaging, the gain ramps from 1.0 down to the target; on disengaging it ramps back to 1.0 before the tap is destroyed.
+- **App identity follows the public resolution chain** in *Mapping an audio process to its owning app*. It's keyed by the owning app's bundle ID, a synthetic key for web content, or the executable path for unbundled tools. PopNotch's own process is always excluded.
+- **Device changes are make-before-break:** the new aggregate is built before the old one is torn down. Devices are keyed by UID, because the dock reconnect in the spike renumbered every device's object ID. Processes on several devices, or on a non-stereo device, are left untouched.
+- **A zero-input watchdog catches revoked permission.** Sustained all-zero input while the app reports output triggers one rebuild. If `AudioDeviceStart` then fails, the app falls back to direct playback and the page shows "permission needed".
+- **Settings:** 100% is stored as absence. Slider positions are stored, not gains, so the taper can be retuned without a migration. Slider drags write settings only on release.
+- **Clean quit tears down in reverse order,** synchronously on the engine queue, from `applicationWillTerminate`. SIGTERM already routes there.
+- **Tests never open a real tap.** The engine and the process source sit behind protocols with fakes. The resolver and reconciler are pure functions, tested with fixtures taken from the spike. One existing visualiser test, `testPauseAfterPlayingLeavesNothingRunning`, does open a real tap; it gets fixed in Phase 1.
+
+### Phase 0: measure before building
+
+In the spike, not the app. It needs audio, a second participant for the call test, and a GarageBand install.
+
+| Measurement | Decides |
+|---|---|
+| **F:** SIGKILL recovery with `.mutedWhenTapped` | **Whether v1 exists** (decision 7) |
+| **G:** the visualiser's global tap alongside a re-rendered app, with and without excluding PopNotch's own process | The visualiser default |
+| **E:** re-render latency, from the tap callback to audible output | Lip-sync risk for browser video |
+| **CPU time** with 1 and 3 tapped apps, PopNotch and coreaudiod | The budget (decision 8) |
+| **A Discord call on the laptop speakers,** second participant listening, slider moving | Call-time adjustment (decision 6) |
+| **GarageBand running** while another app is tapped on the same device | Whether taps pause while a DAW runs (decision 9) |
+| **Firefox's emitting process,** the owner's main browser, untested in the spike | Its resolution path |
+| **Spotify Connect:** what AppleScript `sound volume` does during remote playback; **read-back** of volume changed outside PopNotch | Whether the slider disables during remote playback; when to re-read |
+| **Level blip when a tap engages or disengages** | The ramp design |
+| **Whether the is-running-output and devices listeners fire;** tap behaviour when its target exits; in-place tap description update | The event handling |
+| **Frequency response** through the 48 kHz tap into a 44.1 kHz device, at 1, 10 and 16 kHz | Whether the resampling is audible |
+
+**D is already done,** on AirPods (see *D* above). Cross-device routing is out of v1 anyway.
+
+### Phases
+
+One session per phase (hard rule 7). Each ends with a clean build, green tests, and a check on hardware.
+
+| Phase | Content | Depends on |
+|---|---|---|
+| **0. Measure** | The table above | The soak finishing; a second participant; GarageBand |
+| **1. Schema** | Settings v9 and its migration test; fix the visualiser test that opens a real tap | — |
+| **2. Spotify and Music volume** | AppleScript volume and the player's speaker button. **Shippable on its own:** it covers the most frequent moment with no new permission and no tap | Phase 0's Spotify Connect check only |
+| **3. Enumerate and name** | Read-only process source and resolver; rows logged, no taps | — |
+| **4. Mixer page** | The screen, its door and its row states, behind the Settings toggle | 3 |
+| **5. Tap engine** | Taps, aggregates, the IOProc, device changes, quit teardown, the watchdog | **Phase 0's F, E and CPU results** |
+| **6. Coexistence** | The visualiser exclusion; a warning when FineTune or Sapphire is running | Phase 0's G result |
+| **7. Live with it** | CPU time measured against the budget; a week of daily use; the FineTune decision | 5 |
 
 ---
 

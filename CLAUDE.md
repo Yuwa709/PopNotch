@@ -170,9 +170,11 @@ An always-running overlay that samples CPU and GPU is itself a CPU consumer. Tar
 
 - Under **1% CPU** at idle
 - Under **80MB** resident memory
-- Zero energy impact contribution when the display is asleep
+- Zero energy impact contribution when the display is asleep, whenever no tapped app is playing
 
 If a change pushes past these, the sampling interval is wrong or a timer is not suspending. This is a correctness bug, not a nice-to-have.
+
+**Per-app volume, while active.** A tapped app's re-render is its audio path while it plays, so it cannot suspend for a collapsed panel or a sleeping display: stopping it would jump the app back to full volume. The budget is at most **2 points of one core per tapped app**, PopNotch and coreaudiod combined. Measure it by **CPU time**, the `ps` accumulated CPU-time delta over a 60 s window, not a profiler total, with 1 and with 3 tapped apps. Spotify and Music are adjusted through AppleScript, not taps, and do not count. Decided 2026-09-17; see `docs/FUTURE-audio-mixer.md`, *v1 plan*.
 
 ---
 
