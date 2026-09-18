@@ -95,6 +95,9 @@ private enum PlayerLayout {
     static let transportGlyphSize: CGFloat = 20
     static let playGlyphSize: CGFloat = 26
     static let modeGlyphSize: CGFloat = 13
+    /// Shuffle and repeat when off, and the volume button at rest: the same
+    /// quiet tint, so the three secondary controls read as one family.
+    static let modeRestingOpacity: Double = 0.55
     /// Transport hit targets. The row's height is this, not the glyphs'.
     static let transportButtonWidth: CGFloat = 40
     static let transportButtonHeight: CGFloat = 32
@@ -481,7 +484,7 @@ private struct ModeControl: View {
         Button(action: toggle) {
             Image(systemName: symbol)
                 .font(.system(size: PlayerLayout.modeGlyphSize, weight: .semibold))
-                .foregroundStyle(isOn ? (accent ?? .mediaAccent) : .white.opacity(0.55))
+                .foregroundStyle(isOn ? (accent ?? .mediaAccent) : .white.opacity(PlayerLayout.modeRestingOpacity))
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
@@ -526,9 +529,9 @@ private struct MediaFavoriteControl: View {
 }
 
 /// The volume button at the controls row's trailing edge, opposite the
-/// heart. Sized like the shuffle and repeat buttons (`modeGlyphSize` in the
-/// shared 28pt frame), not like the heart: at the heart's size it read too
-/// big (user-tuned 2026-09-17). The glyph, `slider.horizontal.3`, has no
+/// heart. Sized and tinted like the shuffle and repeat buttons at rest
+/// (`modeGlyphSize` in the shared 28pt frame, `modeRestingOpacity`), not
+/// like the heart, which read too big (user-tuned 2026-09-17). The glyph, `slider.horizontal.3`, has no
 /// level to show, so the level lives in the slider it opens and in the
 /// VoiceOver value, not in the glyph.
 private struct MediaVolumeButton: View {
@@ -539,7 +542,7 @@ private struct MediaVolumeButton: View {
         Button(action: open) {
             Image(systemName: "slider.horizontal.3")
                 .font(.system(size: PlayerLayout.modeGlyphSize, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(.white.opacity(PlayerLayout.modeRestingOpacity))
                 .frame(width: PlayerLayout.edgeControlSide, height: PlayerLayout.edgeControlSide)
                 .contentShape(Rectangle())
         }

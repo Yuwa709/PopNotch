@@ -281,7 +281,8 @@ A plan was proposed, then an interview challenged it question by question. The d
 1. **Purpose and success.** v1 replaces FineTune for its owner, who uses only its volume sliders. **v1 succeeds if FineTune is uninstalled after the week of daily use.** Routing and EQ stay out on usage grounds, not only on cost.
 2. **Where the controls live.**
    - **A mixer page in the notch.** A navigated screen composed by the coordinator, the way the stats page is. It is needed because the controls must reach any app that plays audio, not just the current player: Discord never appears on the player screen, because it publishes no now-playing session (PopNotch's logs across a full call showed only Firefox and Chrome sessions).
-   - **A speaker button on the player.** At the trailing edge of the controls row, mirroring the heart. Clicking it swaps the transport cluster for a full-width slider until the pointer leaves, and under Reduce Motion the swap is instant (hard rule 8). The player layout is otherwise unchanged. This button is the shortcut for the most frequent moment: music too loud against Discord, several times a day.
+   - **A volume button on the player.** At the trailing edge of the controls row, opposite the heart. It is a sliders glyph (`slider.horizontal.3`), sized and tinted like the shuffle and repeat buttons rather than the heart. It shows no level; the slider it opens does. Clicking it swaps the transport cluster for a full-width slider until the pointer leaves, and under Reduce Motion the swap is instant (hard rule 8). The player layout is otherwise unchanged. This button is the shortcut for the most frequent moment: music too loud against Discord, several times a day.
+     - **Revised after building (2026-09-17):** the plan first called for a speaker glyph mirroring the heart. At the heart's size it read too big, so it now matches the mode buttons.
 3. **Two mechanisms, one per kind of app.**
    - **Spotify and Music use their own AppleScript `sound volume`,** which both scripting dictionaries declare read-write, 0 to 100. No tap and no new permission (the existing Automation grant covers it), so it is **on by default**. The volume lives in the app, so it survives PopNotch quitting or crashing, and it's never re-rendered.
    - **Everything else uses process taps,** **opt-in** behind a Settings toggle that is off by default. The audio-recording prompt appears when the toggle is turned on, because the prompt blocks until it is answered.
@@ -309,7 +310,7 @@ A plan was proposed, then an interview challenged it question by question. The d
   - apps playing now, plus apps played this session that are still running
   - apps in the never-tap set, shown greyed with the reason
   - audio that can't be traced to an app, not shown
-- **The player's speaker button is hidden** when the current player is a system-source app and taps are off.
+- **The player's volume button is hidden** when the current player is a system-source app and taps are off.
 - **Settings schema v9:** `appVolume { tapsEnabled, volumes[ownerKey] }`. Spotify's and Music's volumes are stored by the apps themselves, not here.
 
 ### Carried from the plan, not re-decided
@@ -366,7 +367,7 @@ One session per phase (hard rule 7). Each ends with a clean build, green tests, 
 |---|---|---|
 | **0. Measure** | The table above | The soak finishing; a second participant; GarageBand |
 | **1. Schema** | Settings v9 and its migration test; fix the visualiser test that opens a real tap | — |
-| **2. Spotify and Music volume** | AppleScript volume and the player's speaker button. **Shippable on its own:** it covers the most frequent moment with no new permission and no tap | Phase 0's Spotify Connect check only (answered 2026-09-17: no effect during Connect playback; see *Phase 0*) |
+| **2. Spotify and Music volume** | AppleScript volume and the player's volume button. **Shippable on its own:** it covers the most frequent moment with no new permission and no tap | Phase 0's Spotify Connect check only (answered 2026-09-17: no effect during Connect playback; see *Phase 0*) |
 | **3. Enumerate and name** | Read-only process source and resolver; rows logged, no taps | — |
 | **4. Mixer page** | The screen, its door and its row states, behind the Settings toggle | 3 |
 | **5. Tap engine** | Taps, aggregates, the IOProc, device changes, quit teardown, the watchdog | **Phase 0's F, E and CPU results** |
