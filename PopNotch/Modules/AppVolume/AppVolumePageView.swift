@@ -9,7 +9,7 @@ import SwiftUI
 /// Those two use the player's own AppleScript `sound volume` (decision 3),
 /// which needs no tap engine, and their rows share state with the player
 /// screen's slider through `ScriptedPlayerVolumes` — moving one moves the
-/// other. Every other row sits at 100% and ignores drags until the tap
+/// other. Every other row's slider is dimmed and disabled until the tap
 /// engine (Phase 5). Never-tap apps show greyed with the reason instead of
 /// a working slider (decision 9).
 ///
@@ -88,6 +88,10 @@ private struct MixerRowView: View {
     let row: MixerRow
     let players: ScriptedPlayerVolumes?
 
+    /// Close to a never-tap row's whole-row 0.4, so every slider that does
+    /// nothing reads the same.
+    static let inertSliderOpacity: Double = 0.45
+
     /// The player that owns this row's volume, when it is Spotify or Music
     /// and the media module is on. Nil means the tap-engine path, inert
     /// until Phase 5.
@@ -113,11 +117,14 @@ private struct MixerRowView: View {
             if let scriptedPlayer {
                 ScriptedVolumeSlider(bundleID: row.owner.key, players: scriptedPlayer)
             } else {
-                // Inert on purpose until Phase 5: a constant binding draws
-                // the thumb at full volume and ignores drags.
+                // Inert until Phase 5, and drawn that way: disabled and
+                // dimmed, so it does not look like the working Spotify and
+                // Music sliders beside it. A never-tap row is already
+                // dimmed whole, so its slider takes no second dimming.
                 Slider(value: .constant(1.0))
                     .controlSize(.small)
-                    .disabled(row.neverTapReason != nil)
+                    .disabled(true)
+                    .opacity(row.neverTapReason == nil ? Self.inertSliderOpacity : 1)
                     .accessibilityHidden(true)
             }
         }
