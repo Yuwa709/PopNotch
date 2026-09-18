@@ -32,7 +32,7 @@ The current mechanism is **Core Audio process taps**: `AudioHardwareCreateProces
 
 That changes the cost estimate substantially and is the reason this is *deferred* rather than *cut*.
 
-**Unresolved consequence:** PopNotch's deployment target is **macOS 14.0** (verified in `project.pbxproj`, 2026-08-29). Process taps need **14.2**. Building this means either gating the whole feature behind an availability check or raising the floor to 14.2 — a decision, and one that only the user can act on since it is a build setting (hard rule 1).
+**Deployment target: resolved.** PopNotch's deployment target is **macOS 14.2**, which is what process taps need. It was raised from 14.0 on 2026-08-29 in `6bc8952`, for the audio visualiser, which uses the same taps. Verified in `project.pbxproj` on 2026-09-17: all six build configurations say 14.2. No availability gate is needed.
 
 ---
 
@@ -81,7 +81,7 @@ Revisit **after** PopNotch has shipped and been used daily, per the roadmap's ow
 Recorded now because these are the parts that are discovered late and expensively.
 
 - **DAWs, VoIP, and low-level routing apps break under process taps.** They already manage their own audio path, and interposing on it causes glitching, dropouts, or silence. **Logic Pro is the example** — and it is precisely the app named in the original motivating use case ("turn Spotify down while Logic Pro is up"), so the feature's headline scenario is also its worst failure mode. A **per-app ignore/bypass list is not a polish item; it is a v1 requirement**, and it should ship with sensible defaults already populated rather than waiting for users to discover the problem. **Still unverified:** Logic Pro was not installed on the spike machine, so this was neither confirmed nor refuted.
-- **The tapped process may not be the app.** Some apps play audio through helper processes, so the PID producing sound does not match the application the user recognises. Naive enumeration will show a helper's name, or attribute audio to the wrong app, or miss it entirely. Mapping helper processes back to their parent application is real work. **Confirmed for both browsers**, and for Safari the mapping has no public-API answer: see *Spike results*, *A*.
+- **The tapped process may not be the app.** Some apps play audio through helper processes, so the PID producing sound does not match the application the user recognises. Naive enumeration will show a helper's name, or attribute audio to the wrong app, or miss it entirely. Mapping helper processes back to their parent application is real work. **Confirmed for both browsers.** Chrome and Electron apps map back with public information; Safari only through a private API. See *Spike results*, *Mapping an audio process to its owning app*.
 - **Only show apps that actually produce audio.** A list built from "running applications" will include Terminal, Finder, and everything else the user has open. The list must be driven by what is actually producing audio, or the UI is a junk drawer.
 
 ---
@@ -116,7 +116,7 @@ Recorded now because these are the parts that are discovered late and expensivel
 | Music | No subscription on the test machine | **Unmeasured** |
 
 - **Enumeration has to follow what is actually playing**, `kAudioProcessPropertyIsRunningOutput`, not the app list. Tapping the app a user recognises gets nothing for either browser.
-- **Chrome maps back to its app; Safari does not.** Chrome's helper can be traced by parent PID and bundle ID prefix. `com.apple.WebKit.GPU` has launchd as its parent and a bundle ID naming WebKit, not Safari, and no public API was found that maps it back. Expect every WebKit-based app to present the same way.
+- **Chrome maps back to its app with public information; Safari does not.** `com.apple.WebKit.GPU` has launchd as its parent and a bundle ID naming WebKit, not Safari. Every WebKit-based app will present the same way. See *Mapping an audio process to its owning app* below.
 - **Logic Pro remains the open question.** The DAW trap in *Known traps* is neither confirmed nor refuted.
 
 ### B. Mute: passes, with a negative control
@@ -163,11 +163,56 @@ D needs **AirPods (Bluetooth) or a USB DAC with its own clock**, and it should b
 
 **Also not run:** E (latency), the SIGKILL half of F, and G (conflict with the visualiser's global tap).
 
+### Mapping an audio process to its owning app (2026-09-17)
+
+**Method.** A read-only probe: process, bundle, code-signing and Core Audio property reads only, with no taps and no audio. It covered every Core Audio process object on the machine and 152 running XPC services.
+
+**Gaps.** Safari and Chrome weren't running and weren't launched, since restoring old tabs could have played audio. Their live parent-PID facts come from *A* (2026-09-16). Discord stood in for Chrome's live checks: it has the same Chromium architecture, including a live `audio.mojom.AudioService` helper.
+
+#### What each signal says
+
+| Signal | Safari: `com.apple.WebKit.GPU` | Chrome: audio-service helper | Spotify |
+|---|---|---|---|
+| **Parent PID** | launchd ✗ | Chrome ✓ (Discord's identical helper: Discord) | launchd, but it *is* the app ✓ |
+| **Executable path** | `/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU`: inside WebKit, **not Safari.app** ✗ | `…/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/<ver>/Helpers/Google Chrome Helper.app/…`: inside Chrome.app ✓ | `/Applications/Spotify.app/Contents/MacOS/Spotify` ✓ |
+| **Signing ID and team** | Apple platform binary, **no team ID**. So is Safari, and so is every Apple app ✗ | `com.google.Chrome.helper`, team `EQHXZ8M8AV`, the same as Chrome ✓ | `com.spotify.client`, team `2FNC3A47ZF` ✓ |
+| **`NSRunningApplication`** | Not observed | Never the parent app: nil, or the helper's own bundle ✗ | ✓ |
+| **Responsible process** (private) | **Safari, expected but not observed**; see below | The parent app (observed on Discord) ✓ | Itself ✓ |
+| **Core Audio bundle ID** | `com.apple.WebKit.GPU` ✗ | `com.google.Chrome.helper`: a prefix guess at best | `com.spotify.client` ✓ |
+
+#### What resolves each app
+
+- **Spotify resolves by its Core Audio bundle ID alone.** It plays from its own process.
+- **Chrome and Electron apps resolve with public information.** The parent PID names the app, confirmed by the helper's path sitting inside the parent's bundle and a matching team ID. Observed on Discord and on Claude; Chrome from *A*.
+- **Safari resolves only via the private responsible-process API.** Path, parent, signing and bundle ID all say "WebKit" or "Apple". The same process identity appears for Mail or any app with a web view.
+  - **The API:** macOS tracks a *responsible* process for permission attribution. It can be read only through `responsibility_get_pid_responsible_for_pid`, which is exported but has no header in the SDK, or through `launchctl procinfo`, which needs root. For WebKit this is **inferred, not observed**, because no WebKit process was running.
+  - **The inference:** 131 of 149 running system-framework XPC services have launchd as their parent but report their client as responsible. For example, `CredentialProviderExtensionHelper` reports Discord. `com.apple.WebKit.GPU` is the same kind of service: `ServiceType` Application, with `_MultipleInstances` so each client gets its own instance.
+  - **Coalition IDs:** these agreed with the responsible process in every case checked, but they come from an undocumented `proc_pidinfo` query, so they are private too.
+
+#### Signals that don't help
+
+- **`NSRunningApplication`** has no parent or responsible property. For helpers it returns nil or the helper itself; two identical Discord helpers returned one of each.
+- **An audit token** carries no responsible pid, and there's no public way to get another process's token.
+- **Core Audio** exposes only PID, bundle ID, devices and three is-running flags, plus a fixed owner and creator (`com.apple.audio.CoreAudio`). The bundle ID is always the process's own, and for daemons it can be unexpected: `audioaccessoryd` reports `com.apple.cloudpaird`, `callservicesd` reports `com.apple.TelephonyUtilities`, and some report none.
+
+#### An app nobody anticipated
+
+| How it plays audio | What resolves it |
+|---|---|
+| From its own process | Bundle ID. Public, reliable |
+| From a helper inside its bundle (Chromium, Electron) | Parent PID, path containment, team ID. Public |
+| From an XPC service inside its own bundle | The parent is launchd, but path containment and team ID still work (seen with `DockHelper`) |
+| From a system-framework XPC service (WebKit, possibly others) | Only the private responsible pid. Every public signal says "Apple" |
+| From a separately installed agent or daemon | The parent is launchd and it is responsible for itself. Only the team ID links it, and that names the vendor, not the app |
+| Through a system daemon (`avconferenced` for calls, `systemsoundserverd`, `callservicesd`) | Nothing. Even the responsible pid stops at the daemon, and root-owned daemons won't show a user process their parent PID |
+
+**Consequence for a build.** A public-only mapping covers apps that play from their own process and helpers inside an app's bundle. Audio from WebKit can only be labelled generically, such as "web content", unless the private API is adopted. That is a decision to record, not a default: the API is undocumented and can change in any macOS update. Audio played through system daemons can't be attributed to an app by any method.
+
 ### What this settles
 
 - **The driver correction stands, now measured.** A regular app with no entitlements can mute one process's audio and re-render it, with only one audio-recording prompt.
 - **The pieces v1 needs work:** muting at the source, re-rendering, and a gain step. v1 is per-app volume on the device the app already uses. Cross-device routing stays out of scope, and its drift behaviour is still unknown.
-- **Still open before building:** Logic Pro's behaviour (the headline case), mapping WebKit helpers back to their app, SIGKILL recovery, and whether PopNotch's own global visualiser tap double-counts a re-rendered app.
+- **Still open before building:** Logic Pro's behaviour (the headline case); whether to adopt the private responsible-process API for WebKit audio or label it generically; SIGKILL recovery; and whether PopNotch's own global visualiser tap double-counts a re-rendered app.
 
 ---
 
