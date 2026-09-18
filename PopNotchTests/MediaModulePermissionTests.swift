@@ -28,6 +28,23 @@ final class StubMediaSource: MediaSource {
     func setShuffling(_ on: Bool) { shuffleSetTo = on }
     func setRepeating(_ on: Bool) { repeatSetTo = on }
 
+    /// Player volume. Off by default, like the system source; a test opts
+    /// in. `nextRead` is what a `refreshVolume()` finds, nil for a failed
+    /// read; every write is recorded, in order, with no AppleScript.
+    var supportsVolume = false
+    var volume: Int?
+    var nextRead: Int?
+    private(set) var volumeReads = 0
+    private(set) var volumeWrites: [Int] = []
+    func refreshVolume() {
+        volumeReads += 1
+        if let nextRead { volume = nextRead }
+    }
+    func setVolume(_ value: Int) {
+        volumeWrites.append(value)
+        volume = value
+    }
+
     func startObserving() {}
     func stopObserving() {}
     func refresh() {}

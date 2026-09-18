@@ -213,6 +213,46 @@ final class MusicAdapter: MediaSource {
         onUpdate?(snapshot)
     }
 
+    // MARK: - Volume
+
+    /// Music's own application-level `sound volume`, the value its in-app
+    /// slider shows. Like Spotify, no notification says when it changes.
+    private(set) var volume: Int?
+    var supportsVolume: Bool { true }
+    private let scriptedVolume = ScriptedVolume(application: "Music")
+
+    /// A failure logs and keeps the last value read. It deliberately does
+    /// not set `permissionDenied`: a read on the live-sync cadence must not
+    /// be able to change what the main query concluded.
+    func refreshVolume() {
+        // Never Apple-Event a dead app: "tell application" would launch it.
+        guard isPlayerRunning else { return }
+        switch scriptedVolume.read() {
+        case .success(let value):
+            if value != volume {
+                Self.logger.notice("Volume read: \(value, privacy: .public)")
+            }
+            volume = value
+        case .failure(let failure):
+            Self.logger.error(
+                "Volume read failed (\(failure.code, privacy: .public)); keeping last known value")
+        }
+    }
+
+    /// A user-driven write, so a denial is recorded the way `send` records
+    /// one. The module logs the value a drag settles on at `.notice`.
+    func setVolume(_ value: Int) {
+        guard isPlayerRunning else { return }
+        switch scriptedVolume.write(value) {
+        case .success(let written):
+            volume = written
+            Self.logger.debug("Volume write: \(written, privacy: .public)")
+        case .failure(let failure):
+            if failure.isPermissionDenied { permissionDenied = true }
+            Self.logger.error("Volume write failed (\(failure.code, privacy: .public))")
+        }
+    }
+
     // MARK: - Commands
 
     func seek(to seconds: TimeInterval) {

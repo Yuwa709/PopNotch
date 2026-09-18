@@ -291,6 +291,49 @@ final class SpotifyAdapter: MediaSource {
         }
     }
 
+    // MARK: - Volume
+
+    /// Spotify's own `sound volume`, the value its in-app slider shows.
+    /// Spotify posts no notification when it changes, so it is only as
+    /// fresh as the last `refreshVolume()`.
+    private(set) var volume: Int?
+    var supportsVolume: Bool { true }
+    private let scriptedVolume = ScriptedVolume(application: "Spotify")
+    /// Spotify reads a written value back one lower; see `VolumeReadBack`.
+    private var readBack = VolumeReadBack()
+
+    /// A failure logs and keeps the last value read, like the modes read.
+    func refreshVolume() {
+        // Never Apple-Event a dead app: "tell application" would launch it.
+        guard isPlayerRunning else { return }
+        switch scriptedVolume.read() {
+        case .success(let raw):
+            let value = readBack.adjust(raw)
+            if value != volume {
+                Self.logger.notice(
+                    "Volume read: \(value, privacy: .public)\(value != raw ? " (raw \(raw), read back one below the write)" : "", privacy: .public)")
+            }
+            volume = value
+        case .failure(let failure):
+            Self.logger.error(
+                "Volume read failed (\(failure.code, privacy: .public)); keeping last known value")
+        }
+    }
+
+    /// Chatter, not a state transition: the module logs the value a drag
+    /// settles on at `.notice`, not every intermediate write.
+    func setVolume(_ value: Int) {
+        guard isPlayerRunning else { return }
+        switch scriptedVolume.write(value) {
+        case .success(let written):
+            volume = written
+            readBack.recordWrite(written)
+            Self.logger.debug("Volume write: \(written, privacy: .public)")
+        case .failure(let failure):
+            Self.logger.error("Volume write failed (\(failure.code, privacy: .public))")
+        }
+    }
+
     func refresh() {
         // Never Apple-Event a dead app: "tell application" would launch it.
         guard isPlayerRunning else {

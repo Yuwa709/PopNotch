@@ -117,6 +117,26 @@ protocol MediaSource: AnyObject {
     /// control.
     func setShuffling(_ on: Bool)
     func setRepeating(_ on: Bool)
+
+    /// Whether this player exposes its own output volume. Spotify and Music
+    /// do (`sound volume`); the system now-playing source does not, so the
+    /// volume control is absent for it rather than dimmed.
+    var supportsVolume: Bool { get }
+
+    /// The player's own volume, 0...100, as last read or written. `nil`
+    /// means never read, or this source cannot answer. Refreshed by
+    /// `refreshVolume()` rather than on access, like the playback modes:
+    /// reading it costs an Apple Event and this is read from view code.
+    var volume: Int? { get }
+
+    /// Reads the volume now. One Apple Event, ~17ms on the main actor, so
+    /// never on a tight cadence.
+    func refreshVolume()
+
+    /// Writes the volume, clamped to 0...100. A no-op unless
+    /// `supportsVolume`; callers check first so the UI never offers a dead
+    /// control.
+    func setVolume(_ value: Int)
 }
 
 /// Defaults for sources whose player exposes neither concept, so an adapter
@@ -130,6 +150,10 @@ extension MediaSource {
     var repeating: Bool? { nil }
     func setShuffling(_ on: Bool) {}
     func setRepeating(_ on: Bool) {}
+    var supportsVolume: Bool { false }
+    var volume: Int? { nil }
+    func refreshVolume() {}
+    func setVolume(_ value: Int) {}
 }
 
 /// Runs an AppleScript source and reports the result or the error code.

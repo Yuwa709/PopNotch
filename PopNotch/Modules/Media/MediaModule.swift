@@ -82,6 +82,11 @@ final class MediaModule: NotchModule {
     /// makes the buttons redraw.
     private(set) var shuffling: Bool?
     private(set) var repeating: Bool?
+    /// The current player's own volume, and whether it has one, mirrored
+    /// for the same reason. `volume` is also where a drag writes first, so
+    /// the slider redraws under the pointer before the Apple Event lands.
+    private(set) var volume: Int?
+    private(set) var volumeSupported = false
     /// Official artist metadata: avatar, follower count, genres.
     private(set) var artistInfo: SpotifyArtistInfo?
     private(set) var artistImageData: Data?
@@ -130,6 +135,26 @@ final class MediaModule: NotchModule {
     /// Whether the clock is running. Exposed so "nothing polls while the panel
     /// is closed" is a test rather than a comment.
     var isLiveSyncing: Bool { liveSyncTimer != nil }
+
+    /// How long after the panel opens the volume is read: past the expand
+    /// animation (0.21s plus a 0.13s settle, `NotchPanel`), because the read
+    /// is a synchronous Apple Event that would otherwise drop frames from it.
+    static let volumeReadDelay: Duration = .milliseconds(400)
+
+    /// At most one volume write per this interval while dragging. A write
+    /// is ~17ms of main-actor IPC, so this caps a drag at roughly 8% of the
+    /// main thread, and the player's volume audibly follows five times a
+    /// second. The release always writes the final value regardless.
+    static let volumeSendInterval: TimeInterval = 0.2
+
+    @ObservationIgnored private var volumeReadTask: Task<Void, Never>?
+    @ObservationIgnored private var volumeThrottle = VolumeSendThrottle(interval: MediaModule.volumeSendInterval)
+    @ObservationIgnored private var pendingVolume: Int?
+    @ObservationIgnored private var trailingVolumeSend: Task<Void, Never>?
+    /// True from the first drag event to the release. While set, reads and
+    /// publishes leave `volume` alone, or a read landing mid-drag would
+    /// snap the slider back to a value from before the latest write.
+    @ObservationIgnored private(set) var isEditingVolume = false
 
     @ObservationIgnored private var lastTrackKey: String?
     @ObservationIgnored private var hadPresence = false
@@ -340,6 +365,8 @@ final class MediaModule: NotchModule {
             likedCurrent = nil
             shuffling = nil
             repeating = nil
+            volumeSupported = false
+            volume = nil
             return
         }
         // Above the account guard, deliberately: the Web API owns Up Next
@@ -348,6 +375,9 @@ final class MediaModule: NotchModule {
         // would never mirror for a connected account.
         shuffling = active.shuffling
         repeating = active.repeating
+        // The volume likewise, for the same reason.
+        volumeSupported = active.supportsVolume
+        if !isEditingVolume { volume = active.volume }
         if active is SpotifyAdapter {
             guard !accountConnected else { return } // Web API path owns these
             setUpNext(nil)
@@ -388,6 +418,76 @@ final class MediaModule: NotchModule {
         guard let on = repeating else { return }
         activeSource?.setRepeating(!on)
         repeating = !on
+    }
+
+    // MARK: - Player volume
+
+    /// Whether the player's own volume control applies to whoever owns the
+    /// notch: Spotify and Music, never the system source. Absent rather than
+    /// dimmed, like the playback modes. Deliberately not waiting on a read:
+    /// the button stays put while the first read is still in flight.
+    var showsVolumeControl: Bool { volumeSupported }
+
+    /// Called as the slider opens. Reads now if nothing has been read yet —
+    /// a click-driven Apple Event, not one inside an animation. False when
+    /// there is still no value to show, so the view keeps the transport.
+    func prepareVolumeSlider() -> Bool {
+        if volume == nil { readVolume() }
+        return volume != nil
+    }
+
+    func beginVolumeEdit() {
+        isEditingVolume = true
+    }
+
+    /// One drag step. The mirror moves immediately; the write to the player
+    /// is thinned to one per `volumeSendInterval`, with the latest value
+    /// sent when the wait runs out.
+    func setVolume(_ value: Int) {
+        let target = PlayerVolume.clamp(value)
+        volume = target
+        pendingVolume = target
+        let wait = volumeThrottle.wait(at: ProcessInfo.processInfo.systemUptime)
+        if wait == 0 {
+            flushVolume()
+        } else if trailingVolumeSend == nil {
+            // One-shot, never a poll: it exists only between two drag steps.
+            trailingVolumeSend = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                guard !Task.isCancelled, let self else { return }
+                self.trailingVolumeSend = nil
+                self.flushVolume()
+            }
+        }
+    }
+
+    /// The release: the final value goes out now, unthrottled.
+    func endVolumeEdit() {
+        trailingVolumeSend?.cancel()
+        trailingVolumeSend = nil
+        flushVolume()
+        isEditingVolume = false
+        if let volume, let source = activeSource?.sourceID {
+            Self.logger.notice("Volume set to \(volume, privacy: .public) on \(source, privacy: .public)")
+        }
+    }
+
+    private func flushVolume() {
+        guard let target = pendingVolume, let active = activeSource, active.supportsVolume else {
+            pendingVolume = nil
+            return
+        }
+        pendingVolume = nil
+        active.setVolume(target)
+        volumeThrottle.recordSend(at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// One Apple Event against the current player, mirrored. Skipped while a
+    /// drag owns the value.
+    private func readVolume() {
+        guard !isEditingVolume, let active = activeSource, active.supportsVolume else { return }
+        active.refreshVolume()
+        volume = active.volume
     }
 
     /// The Up Next slot is removed from the layout entirely when there is
@@ -534,11 +634,22 @@ final class MediaModule: NotchModule {
     /// here, because `AppleScriptRunner` is synchronous and an Apple Event
     /// per hover would land inside the expand animation. Push observation
     /// keeps the snapshot current in between.
+    ///
+    /// The one read it does schedule is the player's volume, which no
+    /// notification carries, and it waits out the animation first
+    /// (`volumeReadDelay`). One-shot, cancelled if the panel closes sooner.
     func didBecomeVisible() {
         isVisible = true
         liveSyncWanted = true
         updateLiveSync()
         updateSpectrumVisibility()
+        volumeReadTask?.cancel()
+        volumeReadTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.volumeReadDelay)
+            guard !Task.isCancelled, let self, self.isVisible else { return }
+            self.volumeReadTask = nil
+            self.readVolume()
+        }
     }
 
     /// One pull from every player, plus the account extras.
@@ -577,14 +688,21 @@ final class MediaModule: NotchModule {
         }
     }
 
-    /// One beat. Two skips, both cheap and both before any Apple Event:
-    /// a source that is not Spotify has nothing this reads, and a paused
-    /// player has a position that is not moving and modes that rarely
-    /// change — they are read on the next play instead.
+    /// One beat. A paused player is skipped before any Apple Event: its
+    /// position is not moving and its modes rarely change, so they are read
+    /// on the next play instead, and its volume was read when the panel
+    /// opened.
+    ///
+    /// Spotify gets its three-property live read. Spotify and Music both get
+    /// a volume read, one more property (~17ms), because neither says when
+    /// its volume changes — from its own slider, or from a phone. The system
+    /// source has neither, so it costs nothing here.
     private func liveSyncTick() {
-        guard let spotify = activeSource as? SpotifyAdapter else { return }
         guard nowPlaying?.isPlaying == true else { return }
-        spotify.refreshLive()
+        if let spotify = activeSource as? SpotifyAdapter {
+            spotify.refreshLive()
+        }
+        readVolume()
     }
 
     // MARK: - Spectrum
@@ -764,5 +882,12 @@ final class MediaModule: NotchModule {
         liveSyncWanted = false
         updateLiveSync()
         updateSpectrumVisibility()
+        volumeReadTask?.cancel()
+        volumeReadTask = nil
+        // A drag cannot outlive the panel, but a write still waiting on the
+        // throttle can: send it rather than drop the value the user chose.
+        if isEditingVolume || trailingVolumeSend != nil {
+            endVolumeEdit()
+        }
     }
 }

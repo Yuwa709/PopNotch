@@ -106,6 +106,23 @@ private enum PlayerLayout {
     /// than as two more of it. The whole cluster is 228pt, centred (was
     /// spread across the full 368pt).
     static let modeSpacing: CGFloat = 20
+
+    /// The heart at the controls row's leading edge and the volume button at
+    /// its trailing edge share these, so the two mirror each other exactly.
+    static let edgeGlyphSize: CGFloat = 15
+    static let edgeControlSide: CGFloat = 28
+
+    /// The swap between the transport cluster and the volume slider, a
+    /// cross-fade. Instant under Reduce Motion (hard rule 8).
+    static let volumeSwapDuration: Double = 0.16
+    /// The volume slider's track thickness, and the speaker glyphs at its
+    /// two ends. The slider lives inside `transportButtonHeight`, so none of
+    /// these can change the panel's size.
+    static let volumeTrackHeight: CGFloat = 5
+    static let volumeGlyphSize: CGFloat = 12
+    static let volumeGlyphSpacing: CGFloat = 10
+    /// VoiceOver's increment and decrement, in volume points.
+    static let volumeAccessibilityStep = 5
 }
 
 /// Unused while the cross-screen morph is impossible (see
@@ -275,7 +292,7 @@ struct MediaExpandedView: View {
                     }
                 }
                 MediaLyricsView(module: module, namespace: lyricsNamespace)
-                controls(isPlaying: playing.isPlaying)
+                MediaControlsRow(module: module, isPlaying: playing.isPlaying)
             }
             .frame(width: 368)
             .foregroundStyle(.white)
@@ -301,45 +318,116 @@ struct MediaExpandedView: View {
         .animation(.easeInOut(duration: LyricsMotion.zoomTransitionDuration),
                   value: module.showFullLyrics)
     }
+}
 
-    private func controls(isPlaying: Bool) -> some View {
+/// The controls row: the transport cluster, with the heart at its leading
+/// edge and the volume button at its trailing edge. Clicking the volume
+/// button swaps all of it for a full-width volume slider until the pointer
+/// leaves the row.
+///
+/// Its own view because the swap is view state. The row is pinned at the
+/// transport's height, and the slider fits inside it, so opening the slider
+/// never changes the panel's size.
+private struct MediaControlsRow: View {
+    let module: MediaModule
+    let isPlaying: Bool
+
+    @State private var showsSlider = false
+    @State private var pointerInside = false
+    @State private var dragging = false
+
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    var body: some View {
         ZStack {
-            // One centred cluster: the transport tight in the middle, the
-            // modes flanking it a step further out. Symmetric about
-            // play/pause, so play stays dead centre whether or not the
-            // source offers shuffle and repeat. Was edge-to-edge, a holdover
-            // from the old full-width layout.
-            HStack(spacing: PlayerLayout.modeSpacing) {
-                if module.showsPlaybackModes {
-                    ModeControl(symbol: "shuffle",
-                                isOn: module.isShuffling,
-                                accent: module.artworkAccent) { module.toggleShuffle() }
+            // `showsVolumeControl` re-checked here too: if the notch passes
+            // to the system source with the slider open, the slider goes.
+            if showsSlider && module.showsVolumeControl {
+                MediaVolumeSlider(module: module) { isDragging in
+                    dragging = isDragging
+                    // Released after the pointer already left the row: the
+                    // leave was deferred for the drag, so honour it now.
+                    if !isDragging && !pointerInside { setSlider(false) }
                 }
-                HStack(spacing: PlayerLayout.transportSpacing) {
-                    transportButton("backward.fill", size: PlayerLayout.transportGlyphSize) {
-                        module.send(.previousTrack)
-                    }
-                    transportButton(isPlaying ? "pause.fill" : "play.fill",
-                                    size: PlayerLayout.playGlyphSize) {
-                        module.send(.togglePlayPause)
-                    }
-                    transportButton("forward.fill", size: PlayerLayout.transportGlyphSize) {
-                        module.send(.nextTrack)
+                .transition(.opacity)
+            } else {
+                transportCluster
+                    .transition(.opacity)
+                // The heart and the volume button mirror each other at the
+                // two edges. Both sit outside the cluster because both are
+                // conditional; inside, either appearing would shift the
+                // transport sideways.
+                HStack {
+                    MediaFavoriteControl(module: module)
+                    Spacer()
+                    if module.showsVolumeControl {
+                        MediaVolumeButton(volume: module.volume) {
+                            if module.prepareVolumeSlider() { setSlider(true) }
+                        }
                     }
                 }
-                if module.showsPlaybackModes {
-                    ModeControl(symbol: "repeat",
-                                isOn: module.isRepeating,
-                                accent: module.artworkAccent) { module.toggleRepeat() }
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: PlayerLayout.transportButtonHeight)
+        // The same hover tracking the artwork's parallax tilt uses, the one
+        // proven to fire in this panel, which is never key.
+        .onContinuousHover { phase in
+            switch phase {
+            case .active:
+                pointerInside = true
+            case .ended:
+                pointerInside = false
+                // A drag that strays off the row keeps the slider until the
+                // release; see above.
+                if !dragging { setSlider(false) }
+            }
+        }
+    }
+
+    /// Instant under Reduce Motion (hard rule 8), a short cross-fade otherwise.
+    private func setSlider(_ on: Bool) {
+        guard showsSlider != on else { return }
+        if reduceMotion {
+            showsSlider = on
+        } else {
+            withAnimation(.easeInOut(duration: PlayerLayout.volumeSwapDuration)) {
+                showsSlider = on
+            }
+        }
+    }
+
+    private var transportCluster: some View {
+        // One centred cluster: the transport tight in the middle, the
+        // modes flanking it a step further out. Symmetric about
+        // play/pause, so play stays dead centre whether or not the
+        // source offers shuffle and repeat. Was edge-to-edge, a holdover
+        // from the old full-width layout.
+        HStack(spacing: PlayerLayout.modeSpacing) {
+            if module.showsPlaybackModes {
+                ModeControl(symbol: "shuffle",
+                            isOn: module.isShuffling,
+                            accent: module.artworkAccent) { module.toggleShuffle() }
+            }
+            HStack(spacing: PlayerLayout.transportSpacing) {
+                transportButton("backward.fill", size: PlayerLayout.transportGlyphSize) {
+                    module.send(.previousTrack)
+                }
+                transportButton(isPlaying ? "pause.fill" : "play.fill",
+                                size: PlayerLayout.playGlyphSize) {
+                    module.send(.togglePlayPause)
+                }
+                transportButton("forward.fill", size: PlayerLayout.transportGlyphSize) {
+                    module.send(.nextTrack)
                 }
             }
-            // Favourite stays at the leading edge, under the artwork: it acts
-            // on the track, not on playback. Outside the cluster because it
-            // is conditional — inside, it would shift the transport sideways
-            // whenever a track's favourite state became unknown.
-            HStack {
-                MediaFavoriteControl(module: module)
-                Spacer()
+            if module.showsPlaybackModes {
+                ModeControl(symbol: "repeat",
+                            isOn: module.isRepeating,
+                            accent: module.artworkAccent) { module.toggleRepeat() }
             }
         }
     }
@@ -429,10 +517,109 @@ private struct MediaFavoriteControl: View {
 
     private var heart: some View {
         Image(systemName: isOn ? "heart.fill" : "heart")
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: PlayerLayout.edgeGlyphSize, weight: .semibold))
             .foregroundStyle(tint)
-            .frame(width: 28, height: 28)
+            .frame(width: PlayerLayout.edgeControlSide, height: PlayerLayout.edgeControlSide)
             .contentShape(Rectangle())
+    }
+}
+
+/// The speaker at the controls row's trailing edge, mirroring the heart at
+/// the leading edge: the same frame, weight and resting tint, from the same
+/// constants. The glyph's waves fill with the level, so it reads as a
+/// volume before it is clicked.
+private struct MediaVolumeButton: View {
+    let volume: Int?
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            Image(systemName: volume == 0 ? "speaker.slash" : "speaker.wave.3",
+                  variableValue: Double(volume ?? 100) / 100)
+                .font(.system(size: PlayerLayout.edgeGlyphSize, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(width: PlayerLayout.edgeControlSide, height: PlayerLayout.edgeControlSide)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Volume")
+        .accessibilityValue(volume.map { "\($0) percent" } ?? "")
+    }
+}
+
+/// The full-width volume slider that stands in for the transport cluster.
+///
+/// Drawn like the rest of the player rather than as a system `Slider`: a
+/// thin track filled with the artwork accent, between a quiet and a loud
+/// speaker glyph. The row's full height is the hit area and a click anywhere
+/// on the track jumps there, the scrub bar's model and its geometry. No
+/// knob, for the same reason the scrub bar has no playhead dot (tried,
+/// user-rejected).
+private struct MediaVolumeSlider: View {
+    let module: MediaModule
+    let onDraggingChanged: (Bool) -> Void
+
+    @State private var dragging = false
+
+    private var accent: Color { module.artworkAccent ?? .mediaAccent }
+    private var fraction: CGFloat { CGFloat(module.volume ?? 0) / 100 }
+
+    var body: some View {
+        HStack(spacing: PlayerLayout.volumeGlyphSpacing) {
+            endGlyph("speaker.fill")
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.18))
+                    Capsule().fill(accent).frame(width: geo.size.width * fraction)
+                }
+                .frame(height: PlayerLayout.volumeTrackHeight)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(drag(width: geo.size.width))
+            }
+            endGlyph("speaker.wave.3.fill")
+        }
+        .frame(height: PlayerLayout.transportButtonHeight)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Volume")
+        .accessibilityValue("\(module.volume ?? 0) percent")
+        .accessibilityAdjustableAction { direction in
+            let step: Int
+            switch direction {
+            case .increment: step = PlayerLayout.volumeAccessibilityStep
+            case .decrement: step = -PlayerLayout.volumeAccessibilityStep
+            @unknown default: return
+            }
+            module.beginVolumeEdit()
+            module.setVolume((module.volume ?? 0) + step)
+            module.endVolumeEdit()
+        }
+    }
+
+    private func drag(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if !dragging {
+                    dragging = true
+                    module.beginVolumeEdit()
+                    onDraggingChanged(true)
+                }
+                module.setVolume(PlayerVolume.value(atFraction:
+                    ScrubGeometry.fraction(atX: value.location.x, width: width)))
+            }
+            .onEnded { value in
+                module.setVolume(PlayerVolume.value(atFraction:
+                    ScrubGeometry.fraction(atX: value.location.x, width: width)))
+                module.endVolumeEdit()
+                dragging = false
+                onDraggingChanged(false)
+            }
+    }
+
+    private func endGlyph(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: PlayerLayout.volumeGlyphSize, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.55))
     }
 }
 

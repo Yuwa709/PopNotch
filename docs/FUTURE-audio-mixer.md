@@ -340,10 +340,21 @@ In the spike, not the app. It needs audio, a second participant for the call tes
 | **A Discord call on the laptop speakers,** second participant listening, slider moving | Call-time adjustment (decision 6) |
 | **GarageBand running** while another app is tapped on the same device | Whether taps pause while a DAW runs (decision 9) |
 | **Firefox's emitting process,** the owner's main browser, untested in the spike | Its resolution path |
-| **Spotify Connect:** what AppleScript `sound volume` does during remote playback; **read-back** of volume changed outside PopNotch | Whether the slider disables during remote playback; when to re-read |
+| **Spotify Connect:** what AppleScript `sound volume` does during remote playback. **Answered; see below** | Whether the slider disables during remote playback |
+| **Read-back** of a volume changed outside PopNotch (Spotify's own slider, a phone) | When to re-read |
 | **Level blip when a tap engages or disengages** | The ramp design |
 | **Whether the is-running-output and devices listeners fire;** tap behaviour when its target exits; in-place tap description update | The event handling |
 | **Frequency response** through the 48 kHz tap into a 44.1 kHz device, at 1, 10 and 16 kHz | Whether the resampling is audible |
+
+**Answered so far:**
+
+- **Spotify Connect (2026-09-17).** With playback on a Connect device, moving the slider **does nothing**: no effect on the remote device, and none locally. Observed by the owner on hardware, with the Phase 2 build. So Spotify's AppleScript `sound volume` doesn't reach a Connect device.
+  - **Nothing distinguishes Connect playback before an interaction, so the button stays visible** (decided 2026-09-17). The evidence:
+    - **The dictionary has no vocabulary for it.** Spotify 1.3.0.277 exposes eight application properties (`current track`, `sound volume`, `player state`, `player position`, `shuffling`, `shuffling enabled`, `repeating`, `repeating enabled`), and none refers to a device or output. `player state` has only stopped, playing and paused.
+    - **Position and state look the same as local playback.** The owner watched the player's scrub bar keep moving during Connect playback. It re-anchors from Spotify's `player position` every 2 s, and only advances while the snapshot says playing, so `player state` read as playing too.
+    - **The one difference is in `sound volume` itself, and it only shows after a write.** In the logs, across roughly when the owner switched to Connect and back (times not noted), reads returned 100, and a write of 7 was followed by a read of 100. Locally, writes stick. But a read of 100 before any write proves nothing: the first local read that session was also 100.
+  - **Rejected:** Spotify's Web API reports the active device, but it is capped at 25 users and the project stepped away from it deliberately. A hiding rule built on it would work for almost nobody.
+- **Spotify reads a written volume back one lower (2026-09-17).** A write of N reads back as N−1, and keeps reading N−1 on every later read: set 52, 65 and 70 read back 51, 64 and 69. Corrected in Phase 2: after a write of N, reads of N−1 or N show as N until any other value is read.
 
 **D is already done,** on AirPods (see *D* above). Cross-device routing is out of v1 anyway.
 
@@ -355,7 +366,7 @@ One session per phase (hard rule 7). Each ends with a clean build, green tests, 
 |---|---|---|
 | **0. Measure** | The table above | The soak finishing; a second participant; GarageBand |
 | **1. Schema** | Settings v9 and its migration test; fix the visualiser test that opens a real tap | — |
-| **2. Spotify and Music volume** | AppleScript volume and the player's speaker button. **Shippable on its own:** it covers the most frequent moment with no new permission and no tap | Phase 0's Spotify Connect check only |
+| **2. Spotify and Music volume** | AppleScript volume and the player's speaker button. **Shippable on its own:** it covers the most frequent moment with no new permission and no tap | Phase 0's Spotify Connect check only (answered 2026-09-17: no effect during Connect playback; see *Phase 0*) |
 | **3. Enumerate and name** | Read-only process source and resolver; rows logged, no taps | — |
 | **4. Mixer page** | The screen, its door and its row states, behind the Settings toggle | 3 |
 | **5. Tap engine** | Taps, aggregates, the IOProc, device changes, quit teardown, the watchdog | **Phase 0's F, E and CPU results** |
