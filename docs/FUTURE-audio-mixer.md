@@ -1,6 +1,14 @@
 # Per-app audio mixer
 
-**Status: v1 in progress (2026-09-18). Phases 2 and 3 are committed.** Phase 2 is the Spotify and Music volume slider on the player screen (`c532afb`, with the button's final look in `3dfc3c7` and `a10f088`). Phase 3 is process enumeration and naming with the corrected change trigger (`606af7d`); it has no UI, only logs its rows, and runs in Debug builds only. Phase 1 and Phases 4 to 7 are not started, and Phase 0 is partly answered. v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
+**Status: v1 in progress (2026-09-18). Phases 2, 3 and 4 are committed, and Phase 0 has run.**
+
+- **Phase 2** is the Spotify and Music volume slider on the player screen (`c532afb`, restyled in `3dfc3c7`, `a10f088` and `72d060e`).
+- **Phase 3** is process enumeration and naming with the corrected change trigger (`606af7d`).
+- **Phase 4** is the mixer page (`72d060e`, `ba43611`). It sits behind an App Volume toggle, off by default, which replaced Phase 3's Debug-only gate. Its Spotify and Music rows work; every other row is inert until Phase 5.
+- **Phase 0:** F, the gate, passed, but the CPU budget is exceeded, and several items are open (see *Phase 0*).
+- **Not started:** Phase 1 and Phases 5 to 7.
+
+v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
 
 Recorded 2026-08-29 so the research is not re-done from scratch, and so the correction below does not get lost.
 
@@ -253,7 +261,8 @@ The reroute was meant to cross into an **independent** clock. It didn't, because
 
 - **The driver correction stands, now measured.** A regular app with no entitlements can mute one process's audio and re-render it, with only one audio-recording prompt.
 - **The pieces v1 needs work:** muting at the source, re-rendering, and a gain step. v1 is per-app volume on the device the app already uses. Cross-device routing stays out of scope. Its drift handling has been measured for one crossing: 0 glitches over 30 minutes at 6.3 ppm, within the limits listed in *D*.
-- **Still open before building:** Logic Pro's behaviour (the headline case); SIGKILL recovery, which is v1's gate; and whether PopNotch's own global visualiser tap double-counts a re-rendered app. All three are in *v1 plan*, *Phase 0*. The WebKit question is decided: no private API, and WebKit audio is labelled generically.
+- **Answered since, in *v1 plan*, *Phase 0*:** SIGKILL recovery, v1's gate, passed. The visualiser's global tap does double-count a re-rendered app, and excluding PopNotch's own process fixes it.
+- **Still open:** Logic Pro's behaviour (the headline case). No DAW was tested, so it is recorded as unverified. The WebKit question is decided: no private API, and WebKit audio is labelled generically.
 
 ---
 
@@ -297,17 +306,18 @@ A plan was proposed, then an interview challenged it question by question. The d
 7. **Crash safety is a hard exit.** If *Phase 0* shows a SIGKILL leaves tapped apps muted, **v1 stops.** No recovery machinery: no public taps recorded on disk, no relaunch agent.
 8. **Budget.** Idle is unchanged. Active is **at most 2 points of one core per tapped app**, PopNotch and coreaudiod combined, measured by CPU time with 1 and 3 tapped apps.
    - **Over budget means v1 doesn't ship until the cost is fixed.** The first fix to try is one shared aggregate per output device.
+   - **Measured over budget (2026-09-18):** about 2.2 points per tapped app, linear in the number of apps. Whether a shared aggregate helps is unmeasured. See *Phase 0*.
    - Recorded in `CLAUDE.md`, *Performance budget*.
 9. **A fixed never-tap set replaces the editable bypass list.** The set covers DAWs, routing and mixer tools, PopNotch itself, and system daemons that can't be traced to an app. It has no editor and no settings fields. Each bundle ID is verified against a real install before it ships, never guessed. Why not an editable list:
    - **An app at 100% is never tapped,** so dragging a misbehaving app back to 100% already removes its tap.
    - **The headline case, "Spotify down while Logic is up", taps nothing,** because Spotify uses AppleScript.
-   - **The remaining DAW risk can't be solved by a list:** a tap on *another* app disturbing a DAW on the same output device. *Phase 0* tests it with GarageBand, and the result decides whether all taps pause while a DAW is running.
+   - **The remaining DAW risk can't be solved by a list:** a tap on *another* app disturbing a DAW on the same output device. *Phase 0* tests it with GarageBand, and the result decides whether all taps pause while a DAW is running. **Not run (2026-09-18):** GarageBand won't be installed, so this stays unverified and undecided.
 
 ### Accepted defaults
 
-- **Mute behaviour: `.mutedWhenTapped`.** It fails open: if PopNotch's audio thread stops or the process dies, the app returns to full volume rather than silence. This is the behaviour the SIGKILL test in *Phase 0* measures.
+- **Mute behaviour: `.mutedWhenTapped`.** It fails open: if PopNotch's audio thread stops or the process dies, the app returns to full volume rather than silence. This is the behaviour the SIGKILL test in *Phase 0* measures. **It passed (2026-09-18):** audio was back within 0.2 s of the kill.
 - **One private aggregate per tapped app,** so one app's helper restarting can't glitch another. One aggregate per output device only if the budget is exceeded.
-- **The visualiser's global tap excludes PopNotch's own process,** so a re-rendered app isn't counted twice. *Phase 0* test G confirms both the problem and this fix.
+- **The visualiser's global tap excludes PopNotch's own process,** so a re-rendered app isn't counted twice. *Phase 0* test G confirms both the problem and this fix. **Both confirmed (2026-09-18).**
 - **What the mixer page lists:**
   - apps playing now, plus apps played this session that are still running
   - apps in the never-tap set, shown greyed with the reason
@@ -332,22 +342,22 @@ The mechanics the plan proposed and the interview did not revisit. They are reco
 
 ### Phase 0: measure before building
 
-In the spike, not the app. It needs audio, a second participant for the call test, and a GarageBand install.
+In the spike, not the app. It needs audio, a second participant for the call test, and a GarageBand install. **Run on 2026-09-18:** F passed and v1 proceeds, but the CPU budget is exceeded. The call test and the read-back test are pending, E needs a re-run, whether the engage blip is audible is open, and the DAW test won't run (see *Still open after this run*, below).
 
 | Measurement | Decides |
 |---|---|
-| **F:** SIGKILL recovery with `.mutedWhenTapped` | **Whether v1 exists** (decision 7) |
-| **G:** the visualiser's global tap alongside a re-rendered app, with and without excluding PopNotch's own process | The visualiser default |
-| **E:** re-render latency, from the tap callback to audible output | Lip-sync risk for browser video |
-| **CPU time** with 1 and 3 tapped apps, PopNotch and coreaudiod | The budget (decision 8) |
-| **A Discord call on the laptop speakers,** second participant listening, slider moving | Call-time adjustment (decision 6) |
-| **GarageBand running** while another app is tapped on the same device | Whether taps pause while a DAW runs (decision 9) |
-| **Firefox's emitting process,** the owner's main browser, untested in the spike | Its resolution path |
+| **F:** SIGKILL recovery with `.mutedWhenTapped`. **Passed; see below** | **Whether v1 exists** (decision 7) |
+| **G:** the visualiser's global tap alongside a re-rendered app, with and without excluding PopNotch's own process. **Answered; see below** | The visualiser default |
+| **E:** re-render latency, from the tap callback to audible output. **Provisional; needs a re-run** | Lip-sync risk for browser video |
+| **CPU time** with 1 and 3 tapped apps, PopNotch and coreaudiod. **Over budget; see below** | The budget (decision 8) |
+| **A Discord call on the laptop speakers,** second participant listening, slider moving. **Pending** | Call-time adjustment (decision 6) |
+| **GarageBand running** while another app is tapped on the same device. **Not run; unverified** | Whether taps pause while a DAW runs (decision 9) |
+| **Firefox's emitting process,** the owner's main browser, untested in the spike. **Answered; see below** | Its resolution path |
 | **Spotify Connect:** what AppleScript `sound volume` does during remote playback. **Answered; see below** | Whether the slider disables during remote playback |
-| **Read-back** of a volume changed outside PopNotch (Spotify's own slider, a phone) | When to re-read |
-| **Level blip when a tap engages or disengages** | The ramp design |
-| **Whether the is-running-output and devices listeners fire** (**answered; see below**); tap behaviour when its target exits; in-place tap description update | The event handling |
-| **Frequency response** through the 48 kHz tap into a 44.1 kHz device, at 1, 10 and 16 kHz | Whether the resampling is audible |
+| **Read-back** of a volume changed outside PopNotch (Spotify's own slider, a phone). **Pending** | When to re-read |
+| **Level blip when a tap engages or disengages.** **Answered for disengage; engage open** | The ramp design |
+| **Whether the is-running-output and devices listeners fire;** tap behaviour when its target exits; in-place tap description update. **All three answered; see below** | The event handling |
+| **Frequency response** through the 48 kHz tap into a 44.1 kHz device, at 1, 10 and 16 kHz. **Answered; see below** | Whether the resampling is audible |
 
 **Answered so far:**
 
@@ -367,6 +377,44 @@ In the spike, not the app. It needs audio, a second participant for the call tes
   - **PopNotch's own process got no notification of any kind** while its visualiser tap ran: 4 flag changes, 0 callbacks. It is always excluded from the rows, so this doesn't affect them. Its tap runs through a private aggregate device, and the guess is that such I/O isn't announced, which may also explain Discord's renderer. Unverified.
   - **Chrome's audio helper keeps its output open after a pause, so a Chrome row lags a pause.** It stayed on through a pause and a resume, and stopped 64 s after it started, some time after the final pause. So the lag is up to about a minute; its exact length after a pause wasn't timed. The flag is accurate: the helper really is still running I/O.
   - **Evidence:** the probe and its three logs are in `~/PopNotch-spikes/tapspike/evidence/2026-09-18/`.
+- **The Phase 0 run (2026-09-18).** In the spike, with FineTune quit. A spike tone process stood in for an app; the built-in microphone was the acoustic probe, on a 19 kHz tone so the owner's music didn't interfere (the microphone's 19 kHz floor stayed between −102 and −111 dB with music playing). Evidence is in `~/PopNotch-spikes/tapspike/evidence/2026-09-18/`.
+  - **F, the gate: passed. v1 proceeds.** A `.mutedWhenTapped` tap was muting the tone and re-rendering it, and its process was killed with SIGKILL. The tone was back at its pre-tap level at the microphone (about −58 dB) in the first 0.2 s window after the kill, and the tapped process kept playing.
+    - **Not checked:** whether coreaudiod freed the dead process's tap and aggregate. Private taps never appear in the system tap list, even live ones (seen in the target-exit test below), so an empty list after the kill proves nothing.
+  - **G: the visualiser does count a re-rendered app twice, and excluding the re-rendering process fixes it.** A global tap read the 19 kHz tone at −12.3 dB with no re-render, −16.9 dB with a muted tap re-rendering it at unity gain, and −12.3 dB again with the re-rendering process excluded.
+    - **Why:** a global tap sees both the muted app's original stream and the re-render, and at 19 kHz the two copies partly cancelled. At other frequencies a delayed sum of two copies ranges from nearly +6 dB to a null (arithmetic, not measured).
+    - **For PopNotch:** in the spike the re-render and the global tap ran in separate processes. In PopNotch they are one process, so excluding PopNotch's own process is the same exclusion. This confirms the accepted default.
+  - **CPU: about 2.2 points of one core per tapped app, over the 2-point budget.** Tones stood in for apps already playing, measured with and without a muted tap re-rendering each one to the same speakers, as v1 does. CPU time over one 60 s window per cell:
+
+    | Tones | Taps | coreaudiod | Tap processes |
+    |---|---|---|---|
+    | 1 | no | 6.64 s | — |
+    | 1 | yes | 7.79 s | 0.19 s |
+    | 3 | no | 7.83 s | — |
+    | 3 | yes | 11.37 s | 0.54 s |
+
+    - **Per tapped app,** coreaudiod's increase plus the tap processes: 1.34 s in 60 s with one app (2.2 points) and 4.08 s with three (2.3 points each). Linear in the number of apps, and coreaudiod is most of it.
+    - **So decision 8 applies:** v1 doesn't ship until the cost is fixed.
+    - **Limits:** one run per cell, so run-to-run noise isn't known. The owner's music may have been playing. The spike's IOProc also meters every buffer, so its share is an upper bound for PopNotch's gain-only one. And the runs don't separate a tap's cost from its aggregate's, so whether one shared aggregate per device (decision 8's first fix) helps is unmeasured.
+    - **A first attempt was discarded:** BSD `seq 1 0` counts down, so its zero-tap baseline actually ran two taps.
+  - **E: provisional, about 100 ms. Needs a re-run.** The tone played 10 ms bursts at 2.5 kHz once a second, re-rendered at unity gain. The tap logged the IOProc entry time of each burst, and the microphone logged each arrival's capture time less its input latency.
+    - **Result:** 19 of the tap's 27 bursts paired with a microphone event within 200 ms. 9 of those 19 fell between 96 and 114 ms, 6 within 5 ms of the 100 ms median (mean 100.7 ms).
+    - **Why provisional:** the room wasn't quiet. The other pairs, at 0–13 ms and 195–198 ms, were noise tripping the microphone's adaptive detector, and choosing the 100 ms cluster is a judgement. It also measures only the IOProc to the speaker, not the app to the tap before it.
+    - **So the lip-sync question isn't answered.** Re-run in a quiet room before Phase 5 relies on it.
+  - **Level blip: nothing at disengage; possibly a short gap at engage.** A muted tap re-rendered the 19 kHz tone at unity gain on the same speakers, so the level at the microphone shouldn't move. It was read in 50 ms windows.
+    - **Disengage:** every window within 0.7 dB.
+    - **Engage:** one window 1.6 dB low. That fits up to about 15 ms of missing audio, or the two paths briefly overlapping out of phase. Whether it's audible on music isn't established, so whether engage needs a crossfade stays open.
+  - **Frequency response: flat.** Tones at −70 dBFS read −70.0 dB in the tapped stream at 1, 10 and 16 kHz after resampling into a 44.1 kHz aggregate (the EarPods), and at 1 and 16 kHz into a 48 kHz one (the dock). The 3.4 dB loss in *C* is specific to 19 kHz, near 44.1 kHz's 22.05 kHz Nyquist limit. Measured on the tapped stream, not acoustically.
+  - **A tap whose target exits keeps running, silently.** Killing the tapped process turned the tap's stream to all zeros within 0.5 s. Callbacks continued at full rate for the remaining 22 s, and teardown returned no error. So the engine can tear down on the process-list change, with nothing breaking in between.
+  - **An in-place description update changes the mute, but only adds processes.** The live tap's `kAudioTapPropertyDescription` was read, changed and set back with the same UUID. Every set returned no error; the readbacks differed.
+    - **Mute, `.muted` to `.unmuted`:** read back as unmuted, and the app was audible at the microphone within 0.1 s. The tapped stream hiccupped once at the change: 8 glitch samples, and callback counts of 97 then 90 against a steady 94.
+    - **Process list, `[old]` to `[new]`:** read back as `[new, old]`, and the stream then carried both tones. So a process can be added in place. Removing one this way doesn't work; other ways of removing one weren't tried.
+  - **Firefox plays from its own process,** `org.mozilla.firefox`, resolved as "the app itself". Taken from PopNotch's Phase 3 log of the owner's real Firefox playback (2026-09-18, 00:09 and 11:57), not a spike run. No helper mapping is needed.
+  - **Still open after this run:**
+    - **E, re-render latency.** Provisional at about 100 ms; needs a re-run in a quiet room (see *E* above).
+    - **Whether the engage blip is audible** on music, which decides whether engage needs a crossfade (see *Level blip* above).
+    - **The Discord call echo test.** Pending: no second participant was available.
+    - **Read-back of a volume changed outside PopNotch.** Pending: it needs the owner to move Spotify's own slider while a probe watches.
+    - **DAW behaviour under taps: unverified.** GarageBand won't be installed (the owner's decision, 2026-09-18). The never-tap set stops a DAW from being tapped, but the risk decision 9 names, a tap on another app disturbing a DAW on the same device, is untested. Whether taps pause while a DAW runs stays undecided.
 
 **D is already done,** on AirPods (see *D* above). Cross-device routing is out of v1 anyway.
 
