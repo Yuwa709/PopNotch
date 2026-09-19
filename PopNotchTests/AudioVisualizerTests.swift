@@ -333,33 +333,63 @@ final class AudioVisualizerPublishRateTests: XCTestCase {
     }
 }
 
+/// Stands in for the system-audio tap: counts what the service asks of it and
+/// makes no Core Audio call. It always starts, so a start that should not
+/// have happened shows up as `isRunning`.
+final class FakeAudioCapture: AudioCaptureEngine {
+    private(set) var starts = 0
+    private(set) var stops = 0
+
+    func start() -> AudioCaptureStartResult {
+        starts += 1
+        return .success
+    }
+
+    func stop() {
+        stops += 1
+    }
+}
+
 /// Off by default, and never running when nobody is looking.
 @MainActor
 final class AudioVisualizerLifecycleTests: XCTestCase {
 
+    /// Every engine the service under test has made, oldest first.
+    private var engines: [FakeAudioCapture] = []
+
+    /// A service whose engines are fakes, so no test here can open a real
+    /// system-audio tap, whatever conditions it sets.
+    private func makeService() -> AudioVisualizerService {
+        AudioVisualizerService(makeCapture: { _ in
+            let engine = FakeAudioCapture()
+            self.engines.append(engine)
+            return engine
+        })
+    }
+
     func testOffByDefaultAndNotRunning() {
-        let service = AudioVisualizerService()
+        let service = makeService()
         XCTAssertFalse(service.isEnabled, "capture must never start unasked")
         XCTAssertFalse(service.isRunning)
         XCTAssertNil(service.lastError)
     }
 
     func testBandsStartSilent() {
-        let service = AudioVisualizerService()
+        let service = makeService()
         XCTAssertEqual(service.bands.count, AudioVisualizerService.bandCount)
         XCTAssertTrue(service.bands.allSatisfy { $0 == 0 })
     }
 
     func testEnablingWithoutAVisibleSpectrumDoesNotRun() {
         // Both conditions are required: enabled AND on screen.
-        let service = AudioVisualizerService()
+        let service = makeService()
         service.setEnabled(true)
         XCTAssertTrue(service.isEnabled)
         XCTAssertFalse(service.isRunning, "a spectrum nobody can see must not capture audio")
     }
 
     func testDisablingClearsRunningState() {
-        let service = AudioVisualizerService()
+        let service = makeService()
         service.setEnabled(true)
         service.setEnabled(false)
         XCTAssertFalse(service.isEnabled)
@@ -367,7 +397,7 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
     }
 
     func testSpectrumHiddenWhileEnabledStopsCapture() {
-        let service = AudioVisualizerService()
+        let service = makeService()
         service.setEnabled(true)
         service.setSpectrumVisible(true)
         service.setSpectrumVisible(false)
@@ -380,11 +410,11 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
     // this the bars would dance to a YouTube tab or a notification chime
     // while the notch showed a paused track.
     //
-    // These deliberately never set all three conditions true at once: doing
-    // so would open a real system-audio tap inside the test process.
+    // Every service here captures through fakes (`makeService`), so a test
+    // may set all three conditions at once.
 
     func testEnabledAndVisibleButNotPlayingDoesNotCapture() {
-        let service = AudioVisualizerService()
+        let service = makeService()
         service.setEnabled(true)
         service.setSpectrumVisible(true)
         XCTAssertFalse(service.isRunning,
@@ -394,32 +424,37 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
     func testPlayingAloneDoesNotCapture() {
         // Playback is necessary, not sufficient: the spectrum must be on screen and
         // the feature enabled.
-        let service = AudioVisualizerService()
+        let service = makeService()
         service.setPlaying(true)
         XCTAssertFalse(service.isRunning)
         XCTAssertFalse(service.isEnabled)
     }
 
     func testPlayingWithoutBeingEnabledDoesNotCapture() {
-        let service = AudioVisualizerService()
+        let service = makeService()
         service.setSpectrumVisible(true)
         service.setPlaying(true)
         XCTAssertFalse(service.isRunning, "an off feature must never open a tap")
     }
 
     func testPauseAfterPlayingLeavesNothingRunning() {
-        let service = AudioVisualizerService()
+        let service = makeService()
         service.setEnabled(true)
         service.setSpectrumVisible(true)
         service.setPlaying(true)
+        XCTAssertTrue(service.isRunning, "precondition: all three conditions start capture")
+        XCTAssertEqual(engines.map(\.starts), [1], "one engine, started once")
+
         service.setPlaying(false)
         XCTAssertFalse(service.isRunning)
+        XCTAssertEqual(engines.count, 1, "pausing must not make another engine")
+        XCTAssertEqual(engines.map(\.stops), [1], "the engine that ran is stopped, once")
     }
 
     func testBandsRestAtSilentBaselineWhenNotPlaying() {
         // The view keeps drawing while enabled and healthy, so the zeroed
         // bands are what makes the bars rest rather than react.
-        let service = AudioVisualizerService()
+        let service = makeService()
         service.setEnabled(true)
         service.setSpectrumVisible(true)
         service.setPlaying(false)

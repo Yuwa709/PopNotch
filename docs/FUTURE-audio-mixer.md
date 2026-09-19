@@ -1,12 +1,13 @@
 # Per-app audio mixer
 
-**Status: v1 in progress (2026-09-18). Phases 2, 3 and 4 are committed, and Phase 0 has run.**
+**Status: v1 in progress (2026-09-18). Phases 2, 3 and 4 are committed, Phase 1 is built, and Phase 0 has run.**
 
+- **Phase 1** is settings schema v9, plus a fake-engine seam so the visualiser's lifecycle tests never open a real tap (2026-09-18). See *Accepted defaults* and *Carried from the plan*.
 - **Phase 2** is the Spotify and Music volume slider on the player screen (`c532afb`, restyled in `3dfc3c7`, `a10f088` and `72d060e`).
 - **Phase 3** is process enumeration and naming with the corrected change trigger (`606af7d`).
 - **Phase 4** is the mixer page (`72d060e`, `ba43611`). It sits behind an App Volume toggle, off by default, which replaced Phase 3's Debug-only gate. Its Spotify and Music rows work; every other row is inert until Phase 5.
 - **Phase 0:** F, the gate, passed, but the CPU budget is exceeded, and several items are open (see *Phase 0*).
-- **Not started:** Phase 1 and Phases 5 to 7.
+- **Not started:** Phases 5 to 7.
 
 v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
 
@@ -324,6 +325,8 @@ A plan was proposed, then an interview challenged it question by question. The d
   - audio that can't be traced to an app, not shown
 - **The player's volume button is hidden** when the current player is a system-source app and taps are off.
 - **Settings schema v9:** `appVolume { tapsEnabled, volumes[ownerKey] }`. Spotify's and Music's volumes are stored by the apps themselves, not here.
+  - **Built in Phase 1 (2026-09-18).** Both fields are optional, and nil is the default: taps off, no saved volumes. `volumes` holds integer slider positions on `PlayerVolume`'s 0 to 100 scale, keyed by `AudioOwner.key`.
+  - **Decoding is lenient at every level.** A malformed `appVolume` costs only itself, a malformed field decodes as nil, and a malformed volume loses only its own entry. No throw reaches `SettingsStore`'s catch, which would reset every setting.
 
 ### Carried from the plan, not re-decided
 
@@ -338,7 +341,7 @@ The mechanics the plan proposed and the interview did not revisit. They are reco
 - **A zero-input watchdog catches revoked permission.** Sustained all-zero input while the app reports output triggers one rebuild. If `AudioDeviceStart` then fails, the app falls back to direct playback and the page shows "permission needed".
 - **Settings:** 100% is stored as absence. Slider positions are stored, not gains, so the taper can be retuned without a migration. Slider drags write settings only on release.
 - **Clean quit tears down in reverse order,** synchronously on the engine queue, from `applicationWillTerminate`. SIGTERM already routes there.
-- **Tests never open a real tap.** The engine and the process source sit behind protocols with fakes. The resolver and reconciler are pure functions, tested with fixtures taken from the spike. One existing visualiser test, `testPauseAfterPlayingLeavesNothingRunning`, does open a real tap; it gets fixed in Phase 1.
+- **Tests never open a real tap.** The engine and the process source sit behind protocols with fakes. The resolver and reconciler are pure functions, tested with fixtures taken from the spike. **Fixed in Phase 1:** `testPauseAfterPlayingLeavesNothingRunning` used to open a real tap. The visualiser now makes its capture engine through an injected factory (`AudioCaptureEngine`), and every test that builds a visualiser passes a fake.
 
 ### Phase 0: measure before building
 

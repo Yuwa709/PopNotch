@@ -24,7 +24,8 @@ struct AppSettings: Codable, Equatable {
     /// v6: added preferMusicOverVideo.
     /// v7: added spotifyAccountConnected.
     /// v8: added capybaraThemeEnabled.
-    static let currentSchemaVersion = 8
+    /// v9: added appVolume.
+    static let currentSchemaVersion = 9
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -98,12 +99,40 @@ struct AppSettings: Codable, Equatable {
     /// a theme nobody chose must not switch itself on across an upgrade.
     var capybaraThemeEnabled: Bool = false
 
+    /// The mixer's per-app volume (`docs/FUTURE-audio-mixer.md`). Absent in
+    /// v8 and earlier, which decodes as an empty `AppVolume`: taps off, every
+    /// app at 100%.
+    ///
+    /// Not optional itself, unlike its fields: as an optional,
+    /// `settings.appVolume?.tapsEnabled = true` would compile and do nothing
+    /// on every install upgraded from v8.
+    var appVolume = AppVolume()
+
+    /// The tap engine's settings. Spotify's and Music's volumes are never
+    /// here: they live in the apps themselves, set through AppleScript.
+    ///
+    /// **Every field is optional, and nil is the shipped default.** JSON
+    /// written before a field existed decodes it as nil rather than
+    /// throwing, so adding a field later can't cost the fields beside it.
+    struct AppVolume: Equatable {
+        /// Whether apps other than Spotify and Music may be tapped. nil means
+        /// never set, and reads as off: taps need the audio-recording
+        /// permission, and a capture permission is opt-in.
+        var tapsEnabled: Bool?
+
+        /// Saved slider positions, keyed by `AudioOwner.key`, on
+        /// `PlayerVolume`'s 0...100 scale. 100% is stored as absence, so an
+        /// app never turned down has no entry. Positions, not gains, so the
+        /// taper can be retuned without a migration.
+        var volumes: [String: Int]?
+    }
+
     // MARK: - Decoding
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, moduleEnablement, hoverEnterDelay, visualizerEnabled
         case showMenuBarIcon, preferMusicOverVideo, spotifyAccountConnected
-        case capybaraThemeEnabled
+        case capybaraThemeEnabled, appVolume
     }
 
     init() {}
@@ -138,6 +167,10 @@ struct AppSettings: Codable, Equatable {
         // Absent in v7 and earlier; off is the shipped default.
         capybaraThemeEnabled = (try? container.decode(Bool.self, forKey: .capybaraThemeEnabled))
             ?? false
+        // Absent in v8 and earlier; empty is the shipped default. `try?`
+        // also catches a value that is not an object at all.
+        appVolume = (try? container.decode(AppVolume.self, forKey: .appVolume))
+            ?? AppVolume()
     }
 
     // MARK: - Migration
@@ -193,11 +226,42 @@ struct AppSettings: Codable, Equatable {
             // v8 added capybaraThemeEnabled; the lenient decoder fills false
             // for v7 JSON, which is the off-by-default state. Nothing moves.
             fallthrough
+        case 8:
+            // v9 added appVolume; the lenient decoder fills an empty one for
+            // v8 JSON: taps off, no saved volumes. Nothing moves.
+            fallthrough
         default:
             break
         }
 
         result.schemaVersion = currentSchemaVersion
         return result
+    }
+}
+
+// In an extension so `AppVolume` keeps its memberwise initializer.
+extension AppSettings.AppVolume: Codable {
+
+    private enum CodingKeys: String, CodingKey {
+        case tapsEnabled, volumes
+    }
+
+    /// Lenient the way `AppSettings` is, one level down: a missing or
+    /// malformed field decodes as nil, and a malformed volume loses only its
+    /// own entry, never another app's.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tapsEnabled = try? container.decodeIfPresent(Bool.self, forKey: .tapsEnabled)
+        volumes = (try? container.decodeIfPresent([String: LenientVolume].self, forKey: .volumes))?
+            .compactMapValues(\.value)
+    }
+
+    /// One saved volume, or nil when the stored value is not an integer.
+    private struct LenientVolume: Decodable {
+        let value: Int?
+
+        init(from decoder: Decoder) throws {
+            value = try? decoder.singleValueContainer().decode(Int.self)
+        }
     }
 }

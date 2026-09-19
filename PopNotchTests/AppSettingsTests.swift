@@ -326,7 +326,7 @@ final class AppSettingsTests: XCTestCase {
         let settings = SettingsStore(defaults: defaults).settings
 
         XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
-        XCTAssertEqual(settings.schemaVersion, 8)
+        XCTAssertGreaterThanOrEqual(settings.schemaVersion, 8, "v7 lands at v8 or beyond")
         // Every v7 preference survives untouched.
         XCTAssertEqual(settings.moduleEnablement["media"], true)
         XCTAssertEqual(settings.moduleEnablement["clipboard"], false)
@@ -343,5 +343,77 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(AppSettings().capybaraThemeEnabled)
         store().update { $0.capybaraThemeEnabled = true }
         XCTAssertTrue(store().settings.capybaraThemeEnabled, "must survive a reload")
+    }
+
+    // MARK: - v9: app volume
+
+    /// CLAUDE.md's rule: real v8 JSON loads with nothing dropped. Every v8
+    /// field holds a non-default value, so one that silently fell back to its
+    /// default would fail here instead of passing unnoticed.
+    func testV8JSONMigratesToV9WithNothingDropped() {
+        write("""
+        {"schemaVersion": 8,
+         "moduleEnablement": {"media": true, "clipboard": false, "app-volume": true},
+         "hoverEnterDelay": 0.42,
+         "visualizerEnabled": true,
+         "showMenuBarIcon": false,
+         "preferMusicOverVideo": false,
+         "spotifyAccountConnected": true,
+         "capybaraThemeEnabled": true}
+        """)
+        let settings = store().settings
+
+        XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertGreaterThanOrEqual(settings.schemaVersion, 9, "v8 lands at v9 or beyond")
+        // Every v8 preference survives untouched.
+        XCTAssertEqual(settings.moduleEnablement, ["media": true, "clipboard": false, "app-volume": true])
+        XCTAssertEqual(settings.hoverEnterDelay, 0.42, accuracy: 0.0001)
+        XCTAssertTrue(settings.visualizerEnabled)
+        XCTAssertFalse(settings.showMenuBarIcon)
+        XCTAssertFalse(settings.preferMusicOverVideo)
+        XCTAssertEqual(settings.spotifyAccountConnected, true)
+        XCTAssertTrue(settings.capybaraThemeEnabled)
+        // And the new struct arrives empty.
+        XCTAssertNil(settings.appVolume.tapsEnabled, "taps arrive off: a capture permission is opt-in")
+        XCTAssertNil(settings.appVolume.volumes, "no app arrives turned down")
+        XCTAssertNil(defaults.data(forKey: SettingsStore.salvageKey), "nothing was unreadable")
+    }
+
+    func testAppVolumeDefaultsEmptyAndRoundTrips() {
+        XCTAssertEqual(AppSettings().appVolume, AppSettings.AppVolume())
+        let saved = ["com.hnc.Discord": 35,
+                     AudioOwnerResolver.webContentKey: 60,
+                     "path:/opt/homebrew/bin/mpv": 0]
+        store().update {
+            $0.appVolume.tapsEnabled = true
+            $0.appVolume.volumes = saved
+        }
+        let reloaded = store().settings.appVolume
+        XCTAssertEqual(reloaded.tapsEnabled, true, "must survive a reload")
+        XCTAssertEqual(reloaded.volumes, saved, "every key shape must survive a reload")
+    }
+
+    /// What the optional fields and `try?` exist to prevent: a bad
+    /// `appVolume` costs only itself, and never reaches the store's catch,
+    /// which would reset every other setting.
+    func testMalformedAppVolumeDoesNotDiscardTheOtherSettings() {
+        write(#"{"schemaVersion":9,"hoverEnterDelay":0.5,"moduleEnablement":{"stats":false},"appVolume":"loud"}"#)
+        let settings = store().settings
+        XCTAssertEqual(settings.appVolume, AppSettings.AppVolume(), "bad value falls back")
+        XCTAssertEqual(settings.hoverEnterDelay, 0.5, "the rest survives")
+        XCTAssertEqual(settings.moduleEnablement["stats"], false, "the rest survives")
+        XCTAssertNil(defaults.data(forKey: SettingsStore.salvageKey), "the catch never ran")
+    }
+
+    func testOneMalformedAppVolumeValueCostsOnlyItself() {
+        write("""
+        {"schemaVersion": 9,
+         "appVolume": {"tapsEnabled": "yes",
+                       "volumes": {"com.hnc.Discord": 35, "webkit": "quiet"}}}
+        """)
+        let appVolume = store().settings.appVolume
+        XCTAssertNil(appVolume.tapsEnabled, "a malformed flag reads as never set: off")
+        XCTAssertEqual(appVolume.volumes, ["com.hnc.Discord": 35],
+                       "a malformed entry loses itself, not the other apps' volumes")
     }
 }

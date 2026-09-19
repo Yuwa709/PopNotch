@@ -75,7 +75,8 @@ final class AudioVisualizerService {
     @ObservationIgnored private(set) var spectrumVisible = false
     /// Driven by the media module from the active source's player state.
     @ObservationIgnored private var isPlaying = false
-    @ObservationIgnored private var capture: SystemAudioTap?
+    @ObservationIgnored private var capture: (any AudioCaptureEngine)?
+    @ObservationIgnored private let makeCapture: CaptureFactory
     /// The pause settle in progress, if any. See `settle()`.
     @ObservationIgnored private var settleTask: Task<Void, Never>?
     /// Throttles the verification logging; no timer, just a clock check on
@@ -256,6 +257,16 @@ final class AudioVisualizerService {
         normalize(bandDecibels: bandDecibels(magnitudes: magnitudes, into: bandCount), gain: 0)
     }
 
+    /// Makes the engine that captures. Injected so tests can run the whole
+    /// lifecycle on a fake: no test may open a real system-audio tap.
+    typealias CaptureFactory = @MainActor (_ onBands: @escaping ([Float]) -> Void) -> any AudioCaptureEngine
+
+    /// `makeCapture` is nil in the app, which captures through the real
+    /// system-audio tap.
+    init(makeCapture: CaptureFactory? = nil) {
+        self.makeCapture = makeCapture ?? { SystemAudioTap(onBands: $0) }
+    }
+
     // MARK: - Control
 
     func setEnabled(_ on: Bool) {
@@ -316,7 +327,7 @@ final class AudioVisualizerService {
         // the wave had sunk to.
         settleTask?.cancel()
         settleTask = nil
-        let engine = SystemAudioTap { [weak self] bands in
+        let engine = makeCapture { [weak self] bands in
             Task { @MainActor in self?.publish(bands) }
         }
         switch engine.start() {
@@ -409,6 +420,21 @@ final class AudioVisualizerService {
     }
 }
 
+/// What `AudioVisualizerService` starts and stops. `SystemAudioTap` is the
+/// only real one; tests supply a fake, so none of them opens a real tap.
+///
+/// `nonisolated` for the same reason as `SystemAudioTap` below.
+nonisolated protocol AudioCaptureEngine: AnyObject {
+    func start() -> AudioCaptureStartResult
+    func stop()
+}
+
+nonisolated enum AudioCaptureStartResult {
+    case success
+    /// Why capture could not start, for the log and `lastError`.
+    case failure(String)
+}
+
 /// Captures system output audio with a Core Audio process tap feeding a
 /// private aggregate device, and reduces each buffer to bands.
 ///
@@ -419,14 +445,9 @@ final class AudioVisualizerService {
 /// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so an unannotated class here
 /// would be main-actor isolated — wrong for a type whose work happens on a
 /// Core Audio realtime thread and a background analysis queue.
-private nonisolated final class SystemAudioTap {
+private nonisolated final class SystemAudioTap: AudioCaptureEngine {
 
     private static let logger = Logger(subsystem: "com.techie.PopNotch", category: "AudioViz")
-
-    enum StartResult {
-        case success
-        case failure(String)
-    }
 
     private let onBands: ([Float]) -> Void
     private let analyzer = AudioAnalyzer()
@@ -447,7 +468,7 @@ private nonisolated final class SystemAudioTap {
         self.onBands = onBands
     }
 
-    func start() -> StartResult {
+    func start() -> AudioCaptureStartResult {
         // 1. Tap the global output. Excluding nothing: the visualiser should
         //    react to everything audible, not just one player.
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
