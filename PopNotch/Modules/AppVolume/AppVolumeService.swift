@@ -109,6 +109,12 @@ final class AppVolumeService {
     @ObservationIgnored private var sessionOwners: [String: AudioOwner] = [:]
     @ObservationIgnored private var lastLogged: String?
 
+    /// Other audio mixers running right now, by display name, sorted.
+    /// Empty almost always; when it is not, both the mixer page and the
+    /// visualiser's setting say what it means (Phase 6).
+    private(set) var conflictingMixers: [String] = []
+    @ObservationIgnored private var conflictObservers: [NSObjectProtocol] = []
+
     /// `resolve` is injectable so tests never touch real processes. The
     /// default gathers public facts and runs the resolver chain; nil means
     /// the process vanished before it could be inspected.
@@ -128,9 +134,60 @@ final class AppVolumeService {
         }
     }
 
+    /// Watches for another mixer launching or quitting.
+    ///
+    /// Deliberately **not** tied to `startWatching`: the warning it feeds is
+    /// about the visualiser as much as about this page, and the visualiser
+    /// runs whether or not App Volume is enabled. Push-only — two NSWorkspace
+    /// notifications, no timer and no poll, so hard rule 9 is satisfied by
+    /// there being nothing to suspend.
+    func startConflictWatch() {
+        guard conflictObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification,
+                     NSWorkspace.didTerminateApplicationNotification] {
+            conflictObservers.append(
+                center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.refreshConflictingMixers() }
+                })
+        }
+        refreshConflictingMixers()
+    }
+
+    private func refreshConflictingMixers() {
+        applyRunningBundleIDs(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    }
+
+    /// Split out so a test can drive it without launching anything.
+    func applyRunningBundleIDs(_ bundleIDs: [String]) {
+        let names = Set(bundleIDs.compactMap { NeverTapSet.mixerName(forBundleID: $0) }).sorted()
+        guard names != conflictingMixers else { return }
+        conflictingMixers = names
+        logger.notice("Other audio mixers running: \(names.isEmpty ? "none" : names.joined(separator: ", "), privacy: .public)")
+    }
+
+    /// What is wrong, not just that something is running. Nil when nothing
+    /// conflicting is.
+    nonisolated static func mixerConflictWarning(names: [String]) -> String? {
+        guard !names.isEmpty else { return nil }
+        let subject = names.count == 1
+            ? "\(names[0]) is running"
+            : "\(names.dropLast().joined(separator: ", ")) and \(names[names.count - 1]) are running"
+        return "\(subject). The spectrum may be inaccurate: it re-renders other apps' audio, and the visualiser counts that copy as well as the original."
+    }
+
+    /// The second half, for Settings, where there is room for it.
+    nonisolated static let mixerConflictDetail =
+        "PopNotch excludes its own re-render from the spectrum; it cannot exclude another app's. App Volume never adjusts these apps."
+
     func startWatching() {
         source.onChange = { [weak self] processes in self?.update(processes) }
         source.start()
+    }
+
+    deinit {
+        let center = NSWorkspace.shared.notificationCenter
+        for observer in conflictObservers { center.removeObserver(observer) }
     }
 
     func stopWatching() {

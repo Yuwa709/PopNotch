@@ -660,37 +660,41 @@ private struct MediaProgressBar: View {
     /// plain progress bar. See `AudioVisualizerSpectrumView`.
     private func track(fraction: Double, duration: TimeInterval) -> some View {
         GeometryReader { geo in
-            ZStack {
-                AudioVisualizerSpectrumView(service: module.visualizer,
-                                            accent: accent,
-                                            progress: fraction)
-                    // Drawing only. The taper thins the wave toward both
-                    // ends, so its shape must never decide where a click
-                    // lands.
-                    .allowsHitTesting(false)
-                // The hit area: the whole row, full height, edge to edge,
-                // whatever the wave looks like. No playhead dot (tried,
-                // user-rejected); the whole row drags, so a handle was
-                // decoration.
-                Color.clear
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                scrubFraction = ScrubGeometry.fraction(atX: value.location.x,
-                                                                       width: geo.size.width)
-                            }
-                            .onEnded { value in
-                                let f = ScrubGeometry.fraction(atX: value.location.x,
-                                                               width: geo.size.width)
-                                module.seek(to: f * duration)
-                                // The adapter publishes the jump optimistically,
-                                // so the bar holds position on release.
-                                scrubFraction = nil
-                            }
-                    )
-            }
-            .frame(width: geo.size.width, height: geo.size.height)
+            AudioVisualizerSpectrumView(service: module.visualizer,
+                                        accent: accent,
+                                        progress: fraction)
+                // Drawing only. The taper thins the wave toward both
+                // ends, so its shape must never decide where a click
+                // lands.
+                .allowsHitTesting(false)
+                .frame(width: geo.size.width, height: geo.size.height)
+                // The hit area: edge to edge, and taller than the row at both
+                // edges, whatever the wave looks like — see
+                // `ScrubGeometry.hitOverhang`. An overlay rather than a
+                // sibling in a stack: an overlay is sized by the row, so the
+                // overhang cannot feed back into the row's own height. No
+                // playhead dot (tried, user-rejected); the whole row drags, so
+                // a handle was decoration.
+                .overlay {
+                    Color.clear
+                        .frame(height: ScrubGeometry.hitHeight(rowHeight: geo.size.height))
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    scrubFraction = ScrubGeometry.fraction(atX: value.location.x,
+                                                                           width: geo.size.width)
+                                }
+                                .onEnded { value in
+                                    let f = ScrubGeometry.fraction(atX: value.location.x,
+                                                                   width: geo.size.width)
+                                    module.seek(to: f * duration)
+                                    // The adapter publishes the jump optimistically,
+                                    // so the bar holds position on release.
+                                    scrubFraction = nil
+                                }
+                        )
+                }
         }
         // Taller than the old 14pt row with its 6pt capsule, so the wave has
         // room to read as a wave. The panel grows by the difference.
@@ -705,6 +709,23 @@ private struct MediaProgressBar: View {
 /// from the edge moves exactly as far as one in the middle. Pure, so that is
 /// a test rather than a reading of the gesture.
 enum ScrubGeometry {
+
+    /// How far the grab zone reaches past the row, above and below.
+    ///
+    /// The drawn bar is as little as `SpectrumEnvelope.minHeight` of the row's
+    /// `SpectrumEnvelope.maxHeight`, and the row itself was the whole hit
+    /// target, so a miss by a few points landed on nothing. Eight points each
+    /// way stays inside the `PlayerLayout.sectionSpacing` gap below the row,
+    /// and above it reaches only the artist line, which takes no clicks. Both
+    /// states get it: a tall wave is no easier to hit at its thin ends than
+    /// the flat bar is anywhere.
+    nonisolated static let hitOverhang: CGFloat = 8
+
+    /// The grab zone's height for a row of `rowHeight`.
+    nonisolated static func hitHeight(rowHeight: CGFloat) -> CGFloat {
+        rowHeight + 2 * hitOverhang
+    }
+
     nonisolated static func fraction(atX x: CGFloat, width: CGFloat) -> Double {
         guard width > 0 else { return 0 }
         return Double(min(1, max(0, x / width)))

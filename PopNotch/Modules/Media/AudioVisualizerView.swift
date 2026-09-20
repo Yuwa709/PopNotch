@@ -73,6 +73,11 @@ struct AudioVisualizerSpectrumView: View {
         let bands = service?.bands ?? []
         let progress = progress
         let accent = accent
+        // Off means no wave is coming, so the bar carries the row on its own
+        // and is drawn thicker. `isEnabled` is `@ObservationIgnored`, but
+        // switching the visualiser off also zeroes `bands`, which is observed,
+        // so the redraw that flattens the wave is the one that thickens it.
+        let rest = SpectrumEnvelope.restHeight(visualizerOn: service?.isEnabled == true)
         return Canvas { context, size in
             // The row, inset from the canvas by the bleed above and left.
             let bleed = Self.glowBleed
@@ -81,11 +86,12 @@ struct AudioVisualizerSpectrumView: View {
             guard rect.width > 0, rect.height > 0 else { return }
             let shading = GraphicsContext.Shading.linearGradient(
                 Gradient(stops: Self.gradientStops(bands: bands, progress: progress,
-                                                   accent: accent, in: rect)),
+                                                   accent: accent, in: rect, rest: rest)),
                 startPoint: CGPoint(x: rect.minX, y: rect.midY),
                 endPoint: CGPoint(x: rect.maxX, y: rect.midY))
-            let edge = SpectrumEnvelope.upperEdge(magnitudes: bands, in: rect)
-            let outline = SpectrumEnvelope.path(SpectrumEnvelope.outline(edge: edge, in: rect))
+            let edge = SpectrumEnvelope.upperEdge(magnitudes: bands, in: rect, rest: rest)
+            let outline = SpectrumEnvelope.path(
+                SpectrumEnvelope.outline(edge: edge, in: rect, rest: rest))
 
             Self.drawBody(context, edge: edge, outline: outline, region: nil,
                           shading: shading, fadeBands: SpectrumEnvelope.fadeBands(), in: rect)
@@ -168,10 +174,12 @@ struct AudioVisualizerSpectrumView: View {
     /// colour, with the accent and the grey meeting in a hard edge at the
     /// playhead. See `SpectrumEnvelope.progressStops`.
     nonisolated private static func gradientStops(bands: [Float], progress: Double,
-                                                  accent: Color, in rect: CGRect) -> [Gradient.Stop] {
+                                                  accent: Color, in rect: CGRect,
+                                                  rest: CGFloat) -> [Gradient.Stop] {
         var stops: [Gradient.Stop] = []
         for stop in SpectrumEnvelope.progressStops(magnitudes: bands,
-                                                   playhead: CGFloat(progress), in: rect) {
+                                                   playhead: CGFloat(progress), in: rect,
+                                                   rest: rest) {
             let magnitude = Double(stop.magnitude)
             let color = stop.played
                 ? accent.opacity(playedOpacity.lowerBound
@@ -212,6 +220,20 @@ enum SpectrumEnvelope {
     /// as a progress bar with no spectrum behind it. Also the tips' height, so
     /// it sets the round caps' size.
     nonisolated static let minHeight: CGFloat = 2
+
+    /// The flat bar's height when the visualiser is **off**, so no wave is
+    /// coming. At `minHeight` the bar is a 2pt line — legible while a wave
+    /// moves around it, thin and fiddly on its own. This is the pre-wave
+    /// capsule's 6pt, so with the spectrum switched off the scrub bar reads as
+    /// the progress bar it used to be. The row keeps `maxHeight`, so nothing
+    /// around it moves and the artwork beside it does not resize.
+    nonisolated static let restHeightVisualizerOff: CGFloat = 6
+
+    /// The flat bar's height for the state the visualiser is in. One place, so
+    /// the drawing and any test cannot disagree about which height applies.
+    nonisolated static func restHeight(visualizerOn: Bool) -> CGFloat {
+        visualizerOn ? minHeight : restHeightVisualizerOff
+    }
 
     /// Horizontal run at each end from the round tip to the first (or last)
     /// band's point, over which the wave tapers down to the silent height.
@@ -268,15 +290,15 @@ enum SpectrumEnvelope {
     // MARK: - Geometry
 
     /// The round caps' radius: half the tip's height, kept inside the row.
-    nonisolated static func capRadius(in rect: CGRect) -> CGFloat {
-        max(0, min(min(minHeight, rect.height) / 2, rect.width / 2))
+    nonisolated static func capRadius(in rect: CGRect, rest: CGFloat = minHeight) -> CGFloat {
+        max(0, min(min(rest, rect.height) / 2, rect.width / 2))
     }
 
     /// Where the 16 band points sit: `taperWidth` in from each tip, evenly
     /// spaced between. The taper shrinks on a row too narrow to hold it.
-    nonisolated static func bandXs(in rect: CGRect) -> [CGFloat] {
+    nonisolated static func bandXs(in rect: CGRect, rest: CGFloat = minHeight) -> [CGFloat] {
         let count = AudioVisualizerService.bandCount
-        let cap = capRadius(in: rect)
+        let cap = capRadius(in: rect, rest: rest)
         let taper = min(taperWidth, max(0, (rect.width - 2 * cap) / 4))
         let first = rect.minX + cap + taper
         let last = rect.maxX - cap - taper
@@ -288,12 +310,13 @@ enum SpectrumEnvelope {
     }
 
     /// The top edge for these magnitudes: tip, 16 bands, tip.
-    nonisolated static func upperEdge(magnitudes: [Float], in rect: CGRect) -> Edge {
-        let floor = min(minHeight, rect.height)
-        let cap = capRadius(in: rect)
+    nonisolated static func upperEdge(magnitudes: [Float], in rect: CGRect,
+                                      rest: CGFloat = minHeight) -> Edge {
+        let floor = min(rest, rect.height)
+        let cap = capRadius(in: rect, rest: rest)
         var xs: [CGFloat] = [rect.minX + cap]
         var heights: [CGFloat] = [floor]
-        let bandPoints = bandXs(in: rect)
+        let bandPoints = bandXs(in: rect, rest: rest)
         for band in 0..<bandPoints.count {
             xs.append(bandPoints[band])
             heights.append(floor + (rect.height - floor) * magnitude(of: magnitudes, band: band))
@@ -322,10 +345,11 @@ enum SpectrumEnvelope {
 
     /// The closed wave: the top edge, a round cap at the right, the flat base
     /// back to the left, and a round cap there.
-    nonisolated static func outline(edge: Edge, in rect: CGRect) -> [Element] {
+    nonisolated static func outline(edge: Edge, in rect: CGRect,
+                                    rest: CGFloat = minHeight) -> [Element] {
         guard rect.width > 0, rect.height > 0 else { return [] }
         let base = rect.maxY
-        let radius = capRadius(in: rect)
+        let radius = capRadius(in: rect, rest: rest)
         let curl = kappa * radius
         let right = rect.maxX - radius
         let left = rect.minX + radius
@@ -441,12 +465,13 @@ enum SpectrumEnvelope {
     /// either side, and held at the end band's inside the taper. Past the
     /// first and last stops the gradient holds their colours.
     nonisolated static func progressStops(magnitudes: [Float], playhead: CGFloat,
-                                          in rect: CGRect) -> [ProgressStop] {
+                                          in rect: CGRect,
+                                          rest: CGFloat = minHeight) -> [ProgressStop] {
         let count = AudioVisualizerService.bandCount
         let head = min(1, max(0, playhead))
         var locations: [CGFloat] = []
         if rect.width > 0 {
-            for x in bandXs(in: rect) {
+            for x in bandXs(in: rect, rest: rest) {
                 locations.append((x - rect.minX) / rect.width)
             }
         } else {

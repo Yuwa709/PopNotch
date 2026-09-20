@@ -293,6 +293,31 @@ final class SpectrumEnvelopeTests: XCTestCase {
             XCTAssertTrue(stop.played)
         }
     }
+
+    // MARK: - The visible bar
+
+    /// With the visualiser off there is never a wave, so the flat bar carries
+    /// the row alone and is drawn thicker. With it on the silent height is
+    /// unchanged, or the wave's whole lower range would move with it.
+    func testTheFlatBarIsThickerOnlyWithTheVisualiserOff() {
+        XCTAssertEqual(SpectrumEnvelope.restHeight(visualizerOn: true),
+                       SpectrumEnvelope.minHeight)
+        XCTAssertGreaterThan(SpectrumEnvelope.restHeight(visualizerOn: false),
+                             SpectrumEnvelope.restHeight(visualizerOn: true))
+        XCTAssertLessThan(SpectrumEnvelope.restHeight(visualizerOn: false), row.height,
+                          "the resting bar must still sit inside the row")
+
+        // Silence, drawn at the off-state height: every point of the outline
+        // sits between the base and that height, tips and caps included.
+        let rest = SpectrumEnvelope.restHeight(visualizerOn: false)
+        let edge = SpectrumEnvelope.upperEdge(magnitudes: [Float](repeating: 0, count: 16),
+                                              in: row, rest: rest)
+        for point in allPoints(SpectrumEnvelope.outline(edge: edge, in: row, rest: rest)) {
+            XCTAssertLessThanOrEqual(point.y, row.maxY + 1e-6)
+            XCTAssertGreaterThanOrEqual(point.y, row.maxY - rest - 1e-6,
+                                        "the resting bar must not exceed its own height")
+        }
+    }
 }
 
 /// A linear congruential generator: enough spread for bounds testing, and
@@ -341,5 +366,21 @@ final class ScrubGeometryTests: XCTestCase {
         XCTAssertEqual(ScrubGeometry.fraction(atX: -20, width: 282), 0)
         XCTAssertEqual(ScrubGeometry.fraction(atX: 400, width: 282), 1)
         XCTAssertEqual(ScrubGeometry.fraction(atX: 10, width: 0), 0)
+    }
+
+
+    // MARK: - The grab zone
+
+    /// Taller than the row at both edges, so hitting the bar never depends on
+    /// hitting what is drawn.
+    func testTheGrabZoneReachesPastTheRow() {
+        let row = SpectrumEnvelope.maxHeight
+        let height = ScrubGeometry.hitHeight(rowHeight: row)
+        XCTAssertGreaterThan(height, row)
+        XCTAssertEqual(height - row, 2 * ScrubGeometry.hitOverhang, accuracy: 1e-9,
+                       "the overhang is symmetric, so an overlay centres on the row")
+        XCTAssertGreaterThan(ScrubGeometry.hitOverhang,
+                             SpectrumEnvelope.restHeight(visualizerOn: false),
+                             "a miss by more than the bar's own height must still land")
     }
 }

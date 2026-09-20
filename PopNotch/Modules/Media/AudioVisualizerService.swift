@@ -49,6 +49,14 @@ import os
 /// honestly about the music the notch is displaying. Per-app isolation is a
 /// different thing entirely and stays deferred — see
 /// `docs/FUTURE-audio-mixer.md`.
+///
+/// **What the tap excludes (Phase 6).** Whatever the tap engine is muting
+/// and re-rendering, pushed in through `setTappedProcesses`. A tapped app's
+/// own stream is muted before it reaches the hardware, so leaving it in the
+/// tap would show a level nobody can hear; PopNotch's re-render of that app
+/// is in the tap already — a global tap includes this process — and carries
+/// the gain the user chose. Exclude the tapped processes and the tap's
+/// content is the room's content.
 @MainActor
 @Observable
 final class AudioVisualizerService {
@@ -70,6 +78,10 @@ final class AudioVisualizerService {
     private(set) var lastError: String?
 
     @ObservationIgnored private(set) var isEnabled = false
+    /// Processes the tap engine is currently muting and re-rendering, which
+    /// this tap excludes. See `setTappedProcesses`. Readable so a test can
+    /// check what was excluded without opening a real tap.
+    @ObservationIgnored private(set) var tappedPIDs: [pid_t] = []
     /// Whether the view that draws the spectrum is on screen. Readable so tests
     /// can check what the media module reported without opening a real tap.
     @ObservationIgnored private(set) var spectrumVisible = false
@@ -259,12 +271,14 @@ final class AudioVisualizerService {
 
     /// Makes the engine that captures. Injected so tests can run the whole
     /// lifecycle on a fake: no test may open a real system-audio tap.
-    typealias CaptureFactory = @MainActor (_ onBands: @escaping ([Float]) -> Void) -> any AudioCaptureEngine
+    typealias CaptureFactory = @MainActor (_ excludedPIDs: [pid_t],
+                                           _ onBands: @escaping ([Float]) -> Void)
+        -> any AudioCaptureEngine
 
     /// `makeCapture` is nil in the app, which captures through the real
     /// system-audio tap.
     init(makeCapture: CaptureFactory? = nil) {
-        self.makeCapture = makeCapture ?? { SystemAudioTap(onBands: $0) }
+        self.makeCapture = makeCapture ?? { SystemAudioTap(excludedPIDs: $0, onBands: $1) }
     }
 
     // MARK: - Control
@@ -294,6 +308,55 @@ final class AudioVisualizerService {
         guard playing != isPlaying else { return }
         isPlaying = playing
         reconcile()
+    }
+
+    /// The processes the tap engine is muting and re-rendering right now,
+    /// pushed by `TapEngine` through AppDelegate whenever its legs change.
+    ///
+    /// They are **excluded** from the tap, which is what makes the spectrum
+    /// match what is audible: a tapped app's own stream never reaches the
+    /// hardware (`.mutedWhenTapped`), and the copy that does is PopNotch's
+    /// re-render, already at the slider's gain. Excluding PopNotch instead —
+    /// the arrangement Phase 0's test G suggested — would remove the
+    /// double-count but leave the app's *pre-mute* stream in the tap, so the
+    /// bars would read 100% while the user heard 30%.
+    ///
+    /// A change while capturing rebuilds the tap, because a tap's process
+    /// list is fixed at creation: an in-place description edit was measured
+    /// to add processes but not remove them (M1, on a mixdown tap), and on
+    /// an exclusive tap a failed removal would silently drop an app from the
+    /// spectrum for good. A rebuild is the whole capture start, measured at
+    /// a 27 ms median across 37 real captures, and only happens when the set
+    /// changes mid-capture — which it did not once in three days of use.
+    func setTappedProcesses(_ pids: [pid_t]) {
+        let next = Array(Set(pids)).sorted()
+        guard next != tappedPIDs else { return }
+        tappedPIDs = next
+        Self.logger.notice("Tapped processes: \(next.map(String.init).joined(separator: ","), privacy: .public)")
+        // Not capturing: the next start picks the new list up for free.
+        guard capture != nil else { return }
+        rebuild(reason: "tapped processes changed")
+    }
+
+    /// Tears the current capture down and starts a fresh one, keeping the
+    /// bands where they are: nothing about playback changed, only what the
+    /// tap is told to exclude (or, for a coreaudiod restart, which objects
+    /// exist). Never animates, so hard rule 8 has nothing to answer for.
+    private func rebuild(reason: String) {
+        guard shouldRun else { return }
+        Self.logger.notice("Rebuilding capture (\(reason, privacy: .public))")
+        stop(reason: reason)
+        start()
+    }
+
+    /// coreaudiod restarted: every object ID the engine held is stale and it
+    /// has already dropped them, so the only recovery is a fresh capture.
+    /// Matches `TapEngine.handleServiceRestarted`. Without this the IOProc
+    /// simply stopped being called, with `isRunning` still true and no error
+    /// anywhere — the wave froze until the panel was closed and reopened.
+    private func handleCaptureInvalidated() {
+        guard capture != nil else { return }
+        rebuild(reason: "coreaudiod restarted")
     }
 
     private var shouldRun: Bool { isEnabled && spectrumVisible && isPlaying }
@@ -327,8 +390,16 @@ final class AudioVisualizerService {
         // the wave had sunk to.
         settleTask?.cancel()
         settleTask = nil
-        let engine = makeCapture { [weak self] bands in
+        let engine = makeCapture(tappedPIDs) { [weak self] bands in
             Task { @MainActor in self?.publish(bands) }
+        }
+        // Synchronous, not a `Task` hop: the listener is registered on the
+        // main queue precisely so the rebuild happens in the same turn, with
+        // no window where a dead capture looks alive. `assumeIsolated`
+        // states that fact to the compiler, and traps if anything ever
+        // delivers this from elsewhere.
+        engine.onInvalidated = { [weak self] in
+            MainActor.assumeIsolated { self?.handleCaptureInvalidated() }
         }
         switch engine.start() {
         case .success:
@@ -427,6 +498,14 @@ final class AudioVisualizerService {
 nonisolated protocol AudioCaptureEngine: AnyObject {
     func start() -> AudioCaptureStartResult
     func stop()
+    /// Fired when coreaudiod restarts, after the engine has dropped its
+    /// now-meaningless object IDs. The service rebuilds; nothing else can,
+    /// because a tap, an aggregate and an IOProc ID are all stale at once
+    /// and destroying them by ID would act on whatever reused the number.
+    ///
+    /// **Delivered on the main queue**, which is what lets the service
+    /// handle it synchronously.
+    var onInvalidated: (() -> Void)? { get set }
 }
 
 nonisolated enum AudioCaptureStartResult {
@@ -464,14 +543,42 @@ private nonisolated final class SystemAudioTap: AudioCaptureEngine {
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
 
-    init(onBands: @escaping ([Float]) -> Void) {
+    /// PIDs the tap engine is muting and re-rendering; excluded from the
+    /// tap so the spectrum shows the re-render rather than both copies.
+    private let excludedPIDs: [pid_t]
+
+    var onInvalidated: (() -> Void)?
+    /// The `kAudioHardwarePropertyServiceRestarted` listener, kept so it can
+    /// be removed again. Registered on the **main** queue on purpose: this
+    /// type's object IDs are touched only from the main actor (the service
+    /// starts and stops it there), so a listener on any other queue would be
+    /// the one place they raced. The event is rare and the block does three
+    /// assignments, so nothing is charged to the main thread in practice.
+    private var restartListener: AudioObjectPropertyListenerBlock?
+
+    init(excludedPIDs: [pid_t], onBands: @escaping ([Float]) -> Void) {
+        self.excludedPIDs = excludedPIDs
         self.onBands = onBands
     }
 
     func start() -> AudioCaptureStartResult {
-        // 1. Tap the global output. Excluding nothing: the visualiser should
-        //    react to everything audible, not just one player.
-        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        // 1. Tap the global output, minus the processes PopNotch is already
+        //    muting and re-rendering. Their own streams never reach the
+        //    hardware, and our re-render — which is in the tap, because a
+        //    global tap includes this process — carries them at the gain the
+        //    user set. Excluding them is therefore what makes the spectrum
+        //    agree with the room. An app we do not tap is untouched and
+        //    stays in at its true level.
+        //
+        //    A PID with no Core Audio process object cannot be excluded
+        //    (Phase 0, A: a process only gets one when it has an audio
+        //    path). That app is then double-counted until the next rebuild,
+        //    so the count is logged rather than assumed.
+        let excluded = excludedPIDs.compactMap { Self.processObject(forPID: $0) }
+        if !excludedPIDs.isEmpty {
+            Self.logger.notice("Excluding \(excluded.count, privacy: .public) of \(self.excludedPIDs.count, privacy: .public) tapped processes")
+        }
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
         description.uuid = UUID()
         description.muteBehavior = .unmuted
         let tapStatus = AudioHardwareCreateProcessTap(description, &tapID)
@@ -531,8 +638,76 @@ private nonisolated final class SystemAudioTap: AudioCaptureEngine {
             cleanUp()
             return .failure("Could not start the device (\(Self.describe(startStatus))). System Audio Recording permission is likely not granted.")
         }
+        watchForServiceRestart()
         Self.logger.notice("Capture started (\(AudioVisualizerService.bandCount, privacy: .public) bands, \(AudioAnalyzer.fftSize, privacy: .public)-point FFT)")
         return .success
+    }
+
+    /// One listener, for the life of this capture, on the system object's
+    /// `ServiceRestarted` property. Not a timer and not a poll (hard rule
+    /// 9): it is registered by `start` and removed by `cleanUp`, so nothing
+    /// is watching while nobody is looking at the spectrum.
+    private func watchForServiceRestart() {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyServiceRestarted,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.handleServiceRestarted()
+        }
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, block)
+        if status == noErr {
+            restartListener = block
+        } else {
+            // Worth saying out loud: without it, a coreaudiod restart leaves
+            // this capture running and silent.
+            Self.logger.error("Could not watch for a coreaudiod restart (\(Self.describe(status), privacy: .public))")
+        }
+    }
+
+    /// Every ID this object holds names something that no longer exists.
+    /// Drop them **without** destroy calls — the same rule `TapEngine` keeps
+    /// — and hand the rebuild to the service.
+    private func handleServiceRestarted() {
+        // Idempotent: the block is removed from inside itself, so a second
+        // delivery already in flight must not ask for a second rebuild.
+        guard tapID != kAudioObjectUnknown || aggregateID != kAudioObjectUnknown
+            || procID != nil else { return }
+        Self.logger.notice("coreaudiod restarted; dropping stale tap, aggregate and IO proc")
+        procID = nil
+        aggregateID = AudioObjectID(kAudioObjectUnknown)
+        tapID = AudioObjectID(kAudioObjectUnknown)
+        removeServiceRestartListener()
+        onInvalidated?()
+    }
+
+    private func removeServiceRestartListener() {
+        guard let restartListener else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyServiceRestarted,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, restartListener)
+        self.restartListener = nil
+    }
+
+    /// The Core Audio process object for a PID, or nil when the process has
+    /// none. Public property, no private API (v1 plan, decision 5).
+    private static func processObject(forPID pid: pid_t) -> AudioObjectID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var qualifier = pid
+        var object = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address,
+            UInt32(MemoryLayout<pid_t>.size), &qualifier, &size, &object)
+        guard status == noErr, object != kAudioObjectUnknown else { return nil }
+        return object
     }
 
     func stop() {
@@ -546,18 +721,28 @@ private nonisolated final class SystemAudioTap: AudioCaptureEngine {
     /// device or a live tap behind outlives the process's usefulness and is
     /// exactly what "release all resources" means here.
     private func cleanUp() {
+        removeServiceRestartListener()
+        // `stop()` cleans up and then `deinit` cleans up again, so an
+        // unconditional line printed twice per capture and made the log
+        // useless for counting them. Say it only when something was really
+        // released (fixed 2026-09-19).
+        var released = false
         if let procID, aggregateID != kAudioObjectUnknown {
             AudioDeviceDestroyIOProcID(aggregateID, procID)
+            released = true
         }
         procID = nil
         if aggregateID != kAudioObjectUnknown {
             AudioHardwareDestroyAggregateDevice(aggregateID)
             aggregateID = AudioObjectID(kAudioObjectUnknown)
+            released = true
         }
         if tapID != kAudioObjectUnknown {
             AudioHardwareDestroyProcessTap(tapID)
             tapID = AudioObjectID(kAudioObjectUnknown)
+            released = true
         }
+        guard released else { return }
         Self.logger.notice("Tap and aggregate device released")
     }
 

@@ -71,6 +71,10 @@ struct SettingsView: View {
         } detail: {
             detail(for: selection ?? .general)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                // A fresh identity per section. The detail pane keeps one
+                // scroll view across selection changes, so without this a tab
+                // opened at whatever offset the previous one had been left at.
+                .id(selection ?? .general)
         }
         // Roughly System Settings' own proportions. The minimum is the point:
         // below it the split view starts collapsing the sidebar.
@@ -86,7 +90,8 @@ struct SettingsView: View {
             ModulesSettingsTab(coordinator: coordinator, settings: settings,
                                appVolume: appVolume)
         case .music:
-            MusicSettingsTab(account: spotify, settings: settings, visualizer: visualizer)
+            MusicSettingsTab(account: spotify, settings: settings, visualizer: visualizer,
+                             appVolume: appVolume)
         case .permissions:
             PermissionsSettingsTab()
         case .about:
@@ -110,6 +115,9 @@ struct MusicSettingsTab: View {
     @Bindable var account: SpotifyAccount
     @Bindable var settings: SettingsStore
     let visualizer: AudioVisualizerService
+    /// Only for the other-mixer warning below; nil in tests, which then do
+    /// not render it.
+    var appVolume: AppVolumeService?
 
     var body: some View {
         Form {
@@ -133,6 +141,24 @@ struct MusicSettingsTab: View {
 
             Section {
                 Toggle("Show a live spectrum", isOn: visualizerBinding)
+                // Another mixer re-rendering audio is the one thing that
+                // makes this drawing wrong in a way the user cannot see is
+                // wrong, so it is stated here, beside the switch that turns
+                // it on (Phase 6).
+                if let warning = AppVolumeService.mixerConflictWarning(
+                    names: appVolume?.conflictingMixers ?? []) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(warning)
+                            Text(AppVolumeService.mixerConflictDetail)
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
             } header: {
                 Text("Audio Visualizer")
             } footer: {

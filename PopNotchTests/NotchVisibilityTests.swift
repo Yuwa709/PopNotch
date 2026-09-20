@@ -57,7 +57,7 @@ final class NotchVisibilityTests: XCTestCase {
         // Captures through a fake, so no test here can open a real
         // system-audio tap; what the module reports is still readable as
         // `spectrumVisible`.
-        let visualizer = AudioVisualizerService(makeCapture: { _ in FakeAudioCapture() })
+        let visualizer = AudioVisualizerService(makeCapture: { _, _ in FakeAudioCapture() })
         let media = MediaModule(sources: [player], visualizer: visualizer)
         media.onPresenceChange = { [weak coordinator] in coordinator?.refreshPresentation() }
         media.onContentReflow = { [weak coordinator] in coordinator?.refreshPresentation() }

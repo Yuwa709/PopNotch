@@ -30,6 +30,9 @@ struct AppVolumePageView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
+            if let warning = AppVolumeService.mixerConflictWarning(names: service.conflictingMixers) {
+                conflictBanner(warning)
+            }
             content
         }
         .frame(width: Self.contentWidth, alignment: .leading)
@@ -51,6 +54,22 @@ struct AppVolumePageView: View {
         }
     }
 
+    /// Another mixer is running. Says what that does to the spectrum, not
+    /// merely that an app is open — a warning nobody can act on is noise.
+    /// Costs one row's worth of height, which `listHeight` gives back by
+    /// showing one row fewer, so the panel's ceiling is unchanged.
+    private func conflictBanner(_ warning: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9))
+            Text(warning)
+                .font(.system(size: 10))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(.orange.opacity(0.9))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     @ViewBuilder
     private var content: some View {
         let rows = service.mixerRows
@@ -68,15 +87,17 @@ struct AppVolumePageView: View {
                     }
                 }
             }
-            .frame(height: Self.listHeight(rowCount: rows.count))
+            .frame(height: Self.listHeight(rowCount: rows.count,
+                                           warningShown: !service.conflictingMixers.isEmpty))
         }
     }
 
     /// The list's height for a row count: exact up to `maxVisibleRows`,
     /// pinned there beyond. Pure so the eight-row cap is a test, not a
     /// hardware session.
-    nonisolated static func listHeight(rowCount: Int) -> CGFloat {
-        let visible = min(rowCount, maxVisibleRows)
+    nonisolated static func listHeight(rowCount: Int, warningShown: Bool = false) -> CGFloat {
+        let cap = warningShown ? maxVisibleRows - 1 : maxVisibleRows
+        let visible = min(rowCount, cap)
         return CGFloat(visible) * rowHeight + CGFloat(max(visible - 1, 0)) * rowSpacing
     }
 }

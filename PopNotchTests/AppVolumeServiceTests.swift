@@ -166,6 +166,45 @@ final class AppVolumeServiceTests: XCTestCase {
                        AppVolumePageView.listHeight(rowCount: 30),
                        "past eight rows the list scrolls instead of growing")
     }
+
+    // MARK: - Phase 6: another mixer running
+
+    func testTheWarningIsAbsentWhenNoOtherMixerRuns() {
+        XCTAssertNil(AppVolumeService.mixerConflictWarning(names: []))
+    }
+
+    func testTheWarningSaysWhatIsWrongWithTheSpectrum() {
+        let warning = AppVolumeService.mixerConflictWarning(names: ["FineTune"])
+        XCTAssertEqual(warning, "FineTune is running. The spectrum may be inaccurate: it re-renders other apps' audio, and the visualiser counts that copy as well as the original.")
+    }
+
+    func testTheWarningNamesEveryRunningMixer() {
+        let warning = AppVolumeService.mixerConflictWarning(names: ["FineTune", "Sapphire"])
+        XCTAssertEqual(warning?.hasPrefix("FineTune and Sapphire are running."), true)
+    }
+
+    func testRunningAppsResolveToMixerNames() {
+        let sut = service([:])
+        sut.applyRunningBundleIDs(["com.apple.Safari", "com.finetuneapp.FineTune"])
+        XCTAssertEqual(sut.conflictingMixers, ["FineTune"])
+        sut.applyRunningBundleIDs(["com.apple.Safari"])
+        XCTAssertEqual(sut.conflictingMixers, [], "quitting it clears the warning")
+    }
+
+    func testEveryMixerInTheNeverTapSetIsAlsoNamed() {
+        for (bundleID, name) in NeverTapSet.mixerNames {
+            XCTAssertEqual(NeverTapSet.reason(for: bundleID), "audio mixer")
+            XCTAssertEqual(NeverTapSet.mixerName(forBundleID: bundleID), name)
+        }
+    }
+
+    func testTheWarningCostsARowRatherThanPanelHeight() {
+        XCTAssertEqual(AppVolumePageView.listHeight(rowCount: 30, warningShown: true),
+                       AppVolumePageView.listHeight(rowCount: 7),
+                       "with the banner up the list shows seven rows, not eight")
+        XCTAssertLessThan(AppVolumePageView.listHeight(rowCount: 30, warningShown: true),
+                          AppVolumePageView.listHeight(rowCount: 30))
+    }
 }
 
 /// Stands in for the media module's scripted volumes: records which rows

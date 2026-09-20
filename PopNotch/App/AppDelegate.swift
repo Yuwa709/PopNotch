@@ -124,12 +124,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         if settingsWindow == nil {
+            // `.fullSizeContentView` and a transparent titlebar are
+            // load-bearing, not cosmetic (measured 2026-09-19, harness in
+            // `~/PopNotch-spikes/settingsinset`).
+            //
+            // `NavigationSplitView` with a sidebar makes AppKit draw a
+            // 52pt titlebar background and scroll pocket — macOS 26's
+            // translucent band — across the FULL width of whatever view it
+            // is hosted in. Without `.fullSizeContentView` the content view
+            // stops below the real titlebar, so that band lands 52pt inside
+            // the content instead of over the titlebar, and the hosting
+            // view's safe-area inset stays 0. Measured consequence: the
+            // detail `Form`'s scroll view began at the very top of the
+            // content area with a zero content inset and a minimum scroll
+            // offset of 0, which left its first 36pt — the first row —
+            // behind the band and impossible to scroll into view.
+            //
+            // With both set, the window hands SwiftUI a 52pt top safe area:
+            // the band coincides with the titlebar, the detail's content
+            // starts below it, and the sidebar list gets a matching 52pt
+            // content inset so it scrolls under the band the way every
+            // other macOS sidebar does.
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 715, height: 500),
-                styleMask: [.titled, .closable, .miniaturizable],
+                styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
+            window.titlebarAppearsTransparent = true
             window.title = "PopNotch Settings"
             window.contentView = NSHostingView(rootView: SettingsView(
                 coordinator: coordinator,
@@ -147,6 +169,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // silently gains the titlebar and stops matching the number the
             // view asks for. Below this the split view collapses the sidebar
             // into a toolbar menu, which is the failure the sidebar replaced.
+            //
+            // The width is the load-bearing half and the titlebar does not
+            // touch it. The height floor now measures a content view that
+            // includes the titlebar band, but `SettingsView`'s own
+            // `minHeight: 500` applies below the safe area and grows the
+            // window by the band's height, so the usable area stays 500.
             window.contentMinSize = NSSize(width: 715, height: 500)
             window.center()
             window.setFrameAutosaveName("PopNotchSettings")
@@ -234,10 +262,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tapEngine.onStatesChange = { [weak appVolume] states in
             appVolume?.applyEngineStates(states)
         }
+        // Phase 6. The visualiser's tap excludes whatever the engine is
+        // muting and re-rendering, so the spectrum carries our gain-adjusted
+        // copy instead of the app's pre-mute stream. Wired here, not between
+        // the modules: a feature never reaches into another one.
+        let visualizer = audioViz
+        tapEngine.onTappedProcessesChange = { [weak visualizer] pids in
+            visualizer?.setTappedProcesses(pids)
+        }
         // Launch restore: apply the stored taps toggle without a probe, so
         // launch never prompts. Saved volumes then engage lazily when a
         // qualifying app plays (v1 plan; Phase 5 design report).
         appVolume.restoreTapsEnabledFromSettings()
+        // Independent of the App Volume module's own on/off: the warning it
+        // feeds is about the visualiser too, which runs either way.
+        appVolume.startConflictWatch()
         let clipboard = ClipboardModule(service: clipboardService)
         let modules: [any NotchModule] = [
             media,

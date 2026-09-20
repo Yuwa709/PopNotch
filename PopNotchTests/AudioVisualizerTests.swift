@@ -339,6 +339,13 @@ final class AudioVisualizerPublishRateTests: XCTestCase {
 final class FakeAudioCapture: AudioCaptureEngine {
     private(set) var starts = 0
     private(set) var stops = 0
+    /// What the service asked this engine to exclude when it made it.
+    let excludedPIDs: [pid_t]
+    var onInvalidated: (() -> Void)?
+
+    init(excludedPIDs: [pid_t] = []) {
+        self.excludedPIDs = excludedPIDs
+    }
 
     func start() -> AudioCaptureStartResult {
         starts += 1
@@ -347,6 +354,11 @@ final class FakeAudioCapture: AudioCaptureEngine {
 
     func stop() {
         stops += 1
+    }
+
+    /// Stands in for coreaudiod restarting under a live capture.
+    func simulateServiceRestart() {
+        onInvalidated?()
     }
 }
 
@@ -360,8 +372,8 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
     /// A service whose engines are fakes, so no test here can open a real
     /// system-audio tap, whatever conditions it sets.
     private func makeService() -> AudioVisualizerService {
-        AudioVisualizerService(makeCapture: { _ in
-            let engine = FakeAudioCapture()
+        AudioVisualizerService(makeCapture: { excluded, _ in
+            let engine = FakeAudioCapture(excludedPIDs: excluded)
             self.engines.append(engine)
             return engine
         })
@@ -401,6 +413,110 @@ final class AudioVisualizerLifecycleTests: XCTestCase {
         service.setEnabled(true)
         service.setSpectrumVisible(true)
         service.setSpectrumVisible(false)
+        XCTAssertFalse(service.isRunning)
+    }
+
+    // MARK: - Phase 6: excluding what the tap engine re-renders
+    //
+    // The tap excludes the processes PopNotch is muting and re-rendering, so
+    // the spectrum carries our gain-adjusted copy rather than the app's
+    // pre-mute stream. The set arrives from `TapEngine` through AppDelegate.
+
+    private func runningService() -> AudioVisualizerService {
+        let service = makeService()
+        service.setEnabled(true)
+        service.setSpectrumVisible(true)
+        service.setPlaying(true)
+        return service
+    }
+
+    func testCaptureExcludesNothingWhenNothingIsTapped() {
+        let service = runningService()
+        XCTAssertTrue(service.isRunning)
+        XCTAssertEqual(engines.last?.excludedPIDs, [], "nothing tapped, nothing excluded")
+    }
+
+    func testTappedProcessesReachTheTap() {
+        let service = makeService()
+        service.setTappedProcesses([852, 2942])
+        service.setEnabled(true)
+        service.setSpectrumVisible(true)
+        service.setPlaying(true)
+        XCTAssertEqual(engines.last?.excludedPIDs, [852, 2942],
+                       "a capture starting later must exclude what is already tapped")
+    }
+
+    func testTappedProcessesAreDeduplicatedAndSorted() {
+        let service = makeService()
+        service.setTappedProcesses([2942, 852, 2942])
+        XCTAssertEqual(service.tappedPIDs, [852, 2942])
+    }
+
+    func testChangingTheTappedSetWhileCapturingRebuildsTheTap() {
+        let service = runningService()
+        XCTAssertEqual(engines.count, 1)
+
+        service.setTappedProcesses([2942])
+
+        XCTAssertEqual(engines.count, 2, "a tap's process list is fixed at creation")
+        XCTAssertEqual(engines[0].stops, 1, "the stale tap is torn down")
+        XCTAssertEqual(engines[1].excludedPIDs, [2942])
+        XCTAssertTrue(service.isRunning)
+    }
+
+    func testRepeatingTheSameTappedSetDoesNotRebuild() {
+        let service = runningService()
+        service.setTappedProcesses([2942])
+        service.setTappedProcesses([2942])
+        XCTAssertEqual(engines.count, 2, "an unchanged set must not cost a rebuild")
+    }
+
+    func testChangingTheTappedSetWhileIdleStartsNothing() {
+        let service = makeService()
+        service.setEnabled(true)
+        service.setTappedProcesses([2942])
+        XCTAssertTrue(engines.isEmpty, "nobody is looking; the next start picks the list up")
+        XCTAssertFalse(service.isRunning)
+    }
+
+    func testLegDisengagingRestoresTheAppToTheSpectrum() {
+        let service = runningService()
+        service.setTappedProcesses([2942])
+        service.setTappedProcesses([])
+        XCTAssertEqual(engines.count, 3)
+        XCTAssertEqual(engines.last?.excludedPIDs, [],
+                       "an app we no longer re-render is audible again, so it counts again")
+    }
+
+    // MARK: - Phase 6: coreaudiod restart
+
+    func testServiceRestartRebuildsTheCapture() {
+        let service = runningService()
+        engines[0].simulateServiceRestart()
+        XCTAssertEqual(engines.count, 2, "stale IDs cannot be reused")
+        XCTAssertTrue(service.isRunning)
+        XCTAssertNil(service.lastError)
+    }
+
+    func testServiceRestartKeepsTheExclusionList() {
+        let service = makeService()
+        service.setTappedProcesses([2942])
+        service.setEnabled(true)
+        service.setSpectrumVisible(true)
+        service.setPlaying(true)
+        engines[0].simulateServiceRestart()
+        XCTAssertEqual(engines.last?.excludedPIDs, [2942])
+    }
+
+    func testServiceRestartAfterCaptureStoppedStartsNothing() {
+        let service = runningService()
+        let engine = engines[0]
+        service.setPlaying(false)
+        XCTAssertFalse(service.isRunning)
+
+        engine.simulateServiceRestart()
+
+        XCTAssertEqual(engines.count, 1, "a restart must not resurrect a capture nobody wants")
         XCTAssertFalse(service.isRunning)
     }
 

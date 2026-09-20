@@ -48,6 +48,14 @@ nonisolated final class TapEngine {
 
     /// Row states for the page, keyed by owner key. Delivered via `notify`.
     var onStatesChange: (([String: TapRowState]) -> Void)?
+    /// Every PID currently in a live tap list — muted at the device and
+    /// re-rendered by us. The visualiser excludes exactly these, so its
+    /// spectrum shows our correctly-scaled re-render instead of the app's
+    /// pre-mute stream (Phase 6). Delivered via `notify`, like the states.
+    ///
+    /// A leg that is ramping out is still in the list and still muting its
+    /// app, so it stays in this set until `remove` takes it out.
+    var onTappedProcessesChange: (([pid_t]) -> Void)?
 
     // MARK: - Engine-context state (queue-confined in production)
 
@@ -109,6 +117,7 @@ nonisolated final class TapEngine {
     private var tapsEnabled = false
     private var permission: Permission = .unknown
     private var published: [String: TapRowState] = [:]
+    private var publishedTappedPIDs: [pid_t] = []
 
     init(hal: TapHAL? = nil,
          queue: DispatchQueue? = DispatchQueue(label: "com.techie.PopNotch.tapengine"),
@@ -210,6 +219,7 @@ nonisolated final class TapEngine {
             for aggregate in self.aggregates.values { self.teardown(aggregate) }
             self.aggregates = [:]
             self.activeLegs = [:]
+            self.publishTappedProcesses()
             Self.logger.notice("Engine shut down")
         }
         guard let queue else { work(); return }
@@ -283,6 +293,7 @@ nonisolated final class TapEngine {
             }
             hal.watchDeviceFormats(uids: Set(aggregates.keys))
             publish(states)
+            publishTappedProcesses()
         } while reconcileQueued
     }
 
@@ -452,6 +463,8 @@ nonisolated final class TapEngine {
     /// unmute — mute follows membership, measured), destroy its tap, and
     /// fold the aggregate when it was the last one.
     private func remove(_ leg: Leg) {
+        // Whichever way this returns, the leg set may have changed.
+        defer { publishTappedProcesses() }
         // A stale retire can fire after a revival cancelled it (cancelling
         // a work item already dequeued does not stop it): a leg that is no
         // longer ramping out is active again and must stay.
@@ -587,5 +600,15 @@ nonisolated final class TapEngine {
         published = states
         guard let onStatesChange else { return }
         notify { onStatesChange(states) }
+    }
+
+    /// Idempotent, so every path that can change a leg calls it without
+    /// having to know whether another one already did.
+    private func publishTappedProcesses() {
+        let pids = Array(Set(aggregates.values.flatMap { $0.legs.flatMap(\.pids) })).sorted()
+        guard pids != publishedTappedPIDs else { return }
+        publishedTappedPIDs = pids
+        guard let onTappedProcessesChange else { return }
+        notify { onTappedProcessesChange(pids) }
     }
 }

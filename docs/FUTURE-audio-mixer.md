@@ -1,14 +1,15 @@
 # Per-app audio mixer
 
-**Status: v1 in progress (2026-09-19). Phases 1 to 4 are done, Phase 0 has run, and Phase 5 — the tap engine — is built, measured under budget, and awaiting hardware verification.**
+**Status: v1 in progress (2026-09-20). Phases 0 to 6 are done; only Phase 7, living with it, is left.**
 
 - **Phase 1** is settings schema v9, plus a fake-engine seam so the visualiser's lifecycle tests never open a real tap (2026-09-18). See *Accepted defaults* and *Carried from the plan*.
 - **Phase 2** is the Spotify and Music volume slider on the player screen (`c532afb`, restyled in `3dfc3c7`, `a10f088` and `72d060e`).
 - **Phase 3** is process enumeration and naming with the corrected change trigger (`606af7d`).
 - **Phase 4** is the mixer page (`72d060e`, `ba43611`). It sits behind an App Volume toggle, off by default, which replaced Phase 3's Debug-only gate. Its Spotify and Music rows work; every other row is inert until Phase 5.
 - **Phase 0:** F, the gate, passed, but the CPU budget is exceeded, and several items are open (see *Phase 0*).
-- **Phase 5** is the tap engine (2026-09-19, uncommitted): `TapEngine`, `TapHAL` and the pure `TapReconciler`, wired through `AppVolumeService` to live mixer sliders. Built after three pre-build spike measurements (M1–M3, under *Phase 0*), adversarially reviewed (two review passes, ~1M tokens of subagent verification; the findings and their fixes are in the session record), and measured at **0.55 points of one core for one tapped app and ~1.4 per app at three** — under the 2-point budget; see *Phase 5: built* below.
-- **Not started:** Phases 6 and 7.
+- **Phase 5** is the tap engine (2026-09-19, `b152cd6`): `TapEngine`, `TapHAL` and the pure `TapReconciler`, wired through `AppVolumeService` to live mixer sliders. Built after three pre-build spike measurements (M1–M3, under *Phase 0*), adversarially reviewed (two review passes, ~1M tokens of subagent verification; the findings and their fixes are in the session record), and measured at **0.55 points of one core for one tapped app and ~1.4 per app at three** — under the 2-point budget; see *Phase 5: built* below.
+- **Phase 6** is coexistence with the visualiser (2026-09-20): the tap engine publishes its live tapped PIDs, the visualiser excludes them (inverting the accepted default, see above), the visualiser gained the `ServiceRestarted` rebuild it never had, and both surfaces warn when FineTune or Sapphire is running — which corrupts the spectrum in a way PopNotch cannot fix. See *Phase 6: built*.
+- **Not started:** Phase 7.
 
 v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
 
@@ -105,7 +106,7 @@ Recorded now because these are the parts that are discovered late and expensivel
 
 ## Spike results (2026-09-16 and 2026-09-17)
 
-**Setup.** A throwaway SwiftPM spike, kept outside the repo at `~/PopNotch-spikes/tapspike`; its README has the run commands. It uses Apple's public API only, and no reference implementation was opened. It ran as its own signed app bundle, launched with `open`, under hardened runtime with **no entitlements**.
+**Setup.** A throwaway SwiftPM spike, kept outside the repo at `~/PopNotch-spikes/tapspike`; its README has the run commands. It also holds `bundles/ToneApp1/2/3.app` — the same `tapspike` binary under three bundle IDs (`local.spike.tone1/2/3`), so three tones appear as three separate mixer rows. They were built by hand for the Phase 5 CPU cells and **`scripts/bundle.sh` does not rebuild them**; a clean rebuild of the spike drops them. It uses Apple's public API only, and no reference implementation was opened. It ran as its own signed app bundle, launched with `open`, under hardened runtime with **no entitlements**.
 
 **The audio under test** was a tone from a separate spike process standing in for an app, usually 19 kHz so it was near-inaudible. A tap reads samples digitally, so audibility doesn't matter.
 
@@ -321,6 +322,7 @@ A plan was proposed, then an interview challenged it question by question. The d
 - **Mute behaviour: `.mutedWhenTapped`.** It fails open: if PopNotch's audio thread stops or the process dies, the app returns to full volume rather than silence. This is the behaviour the SIGKILL test in *Phase 0* measures. **It passed (2026-09-18):** audio was back within 0.2 s of the kill.
 - **One private aggregate per tapped app,** so one app's helper restarting can't glitch another. One aggregate per output device only if the budget is exceeded. **Superseded by measurement:** the budget was exceeded per-app (2.2 points), so v1 ships the shared aggregate — and M1 (live tap-list edits, no IO interruption) removed the glitch concern that motivated per-app isolation.
 - **The visualiser's global tap excludes PopNotch's own process,** so a re-rendered app isn't counted twice. *Phase 0* test G confirms both the problem and this fix. **Both confirmed (2026-09-18).**
+  - **Superseded in Phase 6 (2026-09-20): the exclusion is inverted — the tap excludes the *tapped processes* and keeps PopNotch in.** G's fix is right about the double count and wrong about the level. A tapped app's own stream is muted before the hardware, so excluding *us* leaves the spectrum reading the app's **pre-mute** stream: bars at 100% while the user hears 30%. Excluding the tapped processes instead leaves exactly one copy of each app, and for a tapped one that copy is our re-render, already at the slider's gain. The tap's content is then the room's content. Everything G measured still holds; only which side to drop changed. Cost of the inversion: the exclusion set is no longer static, so it has to be maintained — see *Phase 6: built*.
 - **What the mixer page lists:**
   - apps playing now, plus apps played this session that are still running
   - apps in the never-tap set, shown greyed with the reason
@@ -446,12 +448,12 @@ One session per phase (hard rule 7). Each ends with a clean build, green tests, 
 | **3. Enumerate and name** | Read-only process source and resolver; rows logged, no taps | — |
 | **4. Mixer page** | The screen, its door and its row states, behind the Settings toggle | 3 |
 | **5. Tap engine** | Taps, aggregates, the IOProc, device changes, quit teardown. **Built 2026-09-19; see *Phase 5: built*.** The watchdog was dropped on M3's result | **Phase 0's F, E and CPU results** |
-| **6. Coexistence** | The visualiser exclusion; a warning when FineTune or Sapphire is running | Phase 0's G result |
+| **6. Coexistence** | The visualiser exclusion; a warning when FineTune or Sapphire is running. **Built 2026-09-20; see *Phase 6: built*.** The exclusion is inverted from G's version | Phase 0's G result |
 | **7. Live with it** | CPU time measured against the budget; a week of daily use; the FineTune decision | 5 |
 
 ---
 
-## Phase 5: built (2026-09-19, uncommitted)
+## Phase 5: built (2026-09-19, `b152cd6`)
 
 What shipped, in `PopNotch/Modules/AppVolume/`:
 
@@ -461,6 +463,8 @@ What shipped, in `PopNotch/Modules/AppVolume/`:
 - **Integration** — process snapshots carry output-device UIDs; `MixerRow` carries devices and engine state; the page's non-scripted rows get live sliders (drag applies live, release persists, 100 stored as absence); the taps toggle lives in Settings → Modules; AppDelegate owns the engine and restores the toggle at launch without a probe.
 
 **Exclusions this phase added, shown as row reasons:** AirPlay outputs (unmeasured transport), and **outputs that carry input streams** — AirPods and other headsets — because an aggregate exposes its sub-device's input streams to the IOProc, which would corrupt the count-keyed mapping and sum the device's own microphone into its output (caught in review; unmeasured). Unlocking headsets needs a spike measurement of stream order and `kAudioDevicePropertyIOProcStreamUsage`.
+
+**Corrected 2026-09-19, evening: AirPods are not excluded, and per-app volume works over them.** They are not one device object on this Mac. The output side has its own object, whose UID ends `:output` (`44-A7-F4-2C-B3-DA:output`, the owner's AirPods), so its input-scope stream configuration is empty, `TapHALDevice.hasInputStreams` reads false, and the gate never fires. From PopNotch's own `.notice` log, on hardware: `Engaged com.hnc.Discord gain 0.930000 on new aggregate for 44-A7-F4-2C-B3-DA:output` at 23:19:03, gain tracking a slider drag from 0.93 down to 0.00 and back up, then `Last leg left; aggregate for 44-A7-F4-2C-B3-DA:output torn down` at 23:19:06 — no error anywhere in the session. Wired EarPods (`AppleUSBAudioEngine:Apple, Inc.:EarPods:…`) engage the same way, at 23:18:24. **The exclusion still stands as written for a device that really does present both scopes on one object,** and that is what the stream-order and `kAudioDevicePropertyIOProcStreamUsage` measurement is still owed. Unverified: that the AirPods microphone is a separate `…:input` object (they were disconnected when this was checked), and whether a Bluetooth profile switch mid-call changes the output object's stream layout.
 
 **Measured (2026-09-19), CPU time over 60 s windows, PopNotch + coreaudiod, deltas over same-tone-count baselines, Discord call live throughout, visualiser not capturing, panel closed:**
 
@@ -475,7 +479,154 @@ Under the 2-point budget (decision 8). Window noise from the live call is roughl
 
 **Tests: 604 pass, 0 skipped** (566 before the phase; TapEngineTests 21, TapReconcilerTests 17, TapDesireFilterTests 3, minus the one renamed). No test creates a real tap or aggregate.
 
-**Still open after this phase:** engage-seam audibility on music (hardware ears); headset outputs (the stream-usage measurement above); the System Settings revocation path; Discord echo and DAW behaviour (unchanged, recorded); saved measurement volumes for `local.spike.tone1/2/3` remain in the owner's settings from the CPU cells.
+**Still open after this phase:** engage-seam audibility on music (hardware ears); device objects that carry both scopes (the stream-usage measurement above — AirPods are not one, see the correction); the System Settings revocation path; Discord echo and DAW behaviour (unchanged, recorded); the measurement volumes for `local.spike.tone1/2/3` were cleared from the owner's settings after the cells, so any later run sets them again (Phase 6 did).
+
+---
+
+## Phase 6: built (2026-09-20)
+
+Coexistence with the audio visualiser. Four changes, in the order they were
+made, plus the doc corrections above.
+
+**1. The visualiser survives a coreaudiod restart.** `AudioVisualizerService`
+registered **no property listeners at all**, so a restart left its tap,
+aggregate and IOProc IDs naming nothing, the IOProc simply stopped being
+called, and `isRunning` stayed true with no error anywhere: the wave froze
+until the panel was closed and reopened. It now watches
+`kAudioHardwarePropertyServiceRestarted` — registered by `start`, removed by
+`cleanUp`, so nothing watches while nobody is looking — drops the stale IDs
+**without** destroy calls (the rule `TapEngine.handleServiceRestarted`
+already kept) and rebuilds. The listener is registered on the main queue,
+which is where this type's IDs are touched, so the rebuild is synchronous and
+there is no window where a dead capture looks alive. This was live for every
+user with the visualiser on, mixer or no mixer.
+
+**2. The exclusion, inverted.** The accepted default said exclude PopNotch;
+Phase 6 excludes **the tapped processes** instead and keeps PopNotch in. Why,
+and what it costs, is under *Accepted defaults* above. Mechanically:
+`TapEngine` publishes every PID in a live tap list through
+`onTappedProcessesChange` (a leg ramping out is still muting its app, so it
+stays in the set until `remove` takes it out); AppDelegate hands that to
+`AudioVisualizerService.setTappedProcesses`, because a feature never reaches
+into another one; the capture translates PIDs to process objects with
+`kAudioHardwarePropertyTranslatePIDToProcessObject` and builds
+`CATapDescription(stereoGlobalTapButExcludeProcesses:)` from them.
+
+- **A change while capturing rebuilds the tap**, rather than editing the
+  live description in place. M1 measured an in-place edit **adding**
+  processes but not removing them, on a *mixdown* tap; on an **exclusive**
+  tap nobody has measured it, and if the add-only behaviour carried over, a
+  failed removal would silently drop an app from the spectrum for good. The
+  rebuild is the ordinary capture start: **27 ms median, 41 ms p90, 56 ms
+  max** across the 37 real captures in the log. It is only paid when the set
+  changes *during* a capture, which happened **zero times in three days** —
+  captures are short (median 1.5 s, 23 of 37 under 2 s) and a leg usually
+  engages before one starts.
+- **A PID with no Core Audio process object cannot be excluded** (Phase 0,
+  A). That app is double-counted until the next rebuild, so the capture logs
+  how many of the asked-for exclusions it resolved rather than assuming all.
+- **Unverified:** that the excluded composition looks right. It is arithmetic
+  plus G's measurement, not an acoustic test — see *Still open*.
+
+**3. A warning when another mixer is running.** FineTune and Sapphire
+re-render other apps' audio exactly as PopNotch does, and **our exclusion
+cannot help**: nothing public identifies somebody else's re-render, so the
+spectrum counts both their copy and the original. `NeverTapSet` now carries
+the display names as well as the never-tap reason — one list, two uses — and
+`AppVolumeService` watches `NSWorkspace`'s launch and terminate
+notifications (push only, no timer, hard rule 9 satisfied by there being
+nothing to suspend). Deliberately **not** tied to the App Volume module's
+on/off: the warning is about the visualiser, which runs either way. It
+appears on the mixer page and beside the visualiser's own switch in
+Settings, and it says what is wrong — *"the spectrum may be inaccurate: it
+re-renders other apps' audio, and the visualiser counts that copy as well as
+the original"* — not merely that an app is open. On the notch page it costs
+one row of list height rather than panel height, so the 460 pt ceiling is
+unchanged.
+
+**4. The doubled release line.** `stop()` cleaned up and then `deinit`
+cleaned up again, so "Tap and aggregate device released" printed twice per
+capture — 74 lines for 37 captures — and anyone counting captures from it got
+double. It now prints only when something was really released.
+
+**Measured (2026-09-20), same method as Phase 5:** installed Debug build,
+`ps` CPU-time delta over one 60 s window, PopNotch + coreaudiod, tones
+standing in for apps at `local.spike.tone1/2/3` = 60, deltas against
+same-tone-count baselines with the same tones playing untapped. Discord's
+output was live in every window and nothing else was (checked from the
+`Audio rows` log); the visualiser was not capturing, panel closed.
+
+| Cell | PopNotch Δ | coreaudiod Δ |
+|---|---|---|
+| 1 tone, untapped (baseline) | 0.01 s | 13.46 s |
+| **1 tapped app** | 0.21 s | 13.69 s |
+| 3 tones, untapped (baseline ×3) | 0.01 / 0.01 / 0.03 s | 17.65 / 18.84 / 16.59 s |
+| **3 tapped apps** (×2) | 0.21 / 0.22 s | 17.05 / 17.09 s |
+
+- **PopNotch's own share is 0.20 s per 60 s — 0.33 points — and it does not
+  grow from one leg to three.** One shared aggregate means one IOProc, and
+  the per-leg `vDSP_vsma` is below this measurement's resolution.
+- **coreaudiod's share is not resolvable here.** Its untapped baseline varies
+  by **±1.1 s** across three windows while the tapped windows cluster within
+  0.04 s, so the 3-app difference (−0.62 s, i.e. *negative*) is noise, not a
+  saving. The 1-app pair gives +0.23 s. Both are inside the noise band.
+- **Against Phase 5's figures:** 1 app measures **0.43 s ≈ 0.72 points**
+  against Phase 5's 0.33 s ≈ 0.55, and at 3 apps the total is negative
+  against Phase 5's 1.4 per app. Phase 5's numbers were taken with a live
+  Discord *call*; these with Discord merely holding its output open. Read
+  both as "well under the 2-point budget, and below the noise a normal
+  desktop makes", not as a change between phases. Nothing in Phase 6 touches
+  the audio path: the exclusion is computed once per capture start.
+- **The three cells that need the visualiser running — visualiser only, both
+  at 1 app, both at 3 — are not taken.** Capture needs the panel pinned open
+  on the player screen with the tracked player playing, which is a hand on
+  the machine, not a command. The harness for them is
+  `phase6-cells.sh` (`<tones> <label> [seconds]`) in the session scratchpad.
+  For scale while they are outstanding: the visualiser measured **8.6 points
+  by CPU time without its animation, 21.5 by profiler with it**
+  (`PROJECT-CONTEXT.md`, *Audio visualiser CPU cost*), of which the whole
+  audio side — IO thread, FFT, publish — was 2.3. It is an order of magnitude
+  more expensive than the taps, and its cost is SwiftUI drawing.
+
+**Tests: 625 pass, 1 fails, 0 skipped** (604 before). The failure is
+`SettingsWindowTests.testWindowCannotShrinkBelowTheSidebarFloor`, which
+reads 552 against an expected 500 — 500 plus the 52 pt titlebar band that the
+**uncommitted** `.fullSizeContentView` settings-window work introduces, as
+that work's own comment predicts. It is not Phase 6's: with neither FineTune
+nor Sapphire running, the warning this phase added renders nothing at all.
+New here: 12 visualiser tests (exclusion plumbing, rebuild-on-change,
+restart) and 6 mixer ones (warning wording, name resolution, the row the
+banner costs). No test opens a real tap.
+
+**Exercised on hardware, from the `.notice` log:** `Engaged
+local.spike.tone1 gain 0.600000 on new aggregate for BuiltInSpeakerDevice`
+followed in the same millisecond by `[AudioViz] Tapped processes: 44771`;
+three legs joining one aggregate (slots 0–2) with the exclusion list growing
+`45142` → `45142,45144,45146`; and teardown publishing the empty set. The
+visualiser was not capturing during those runs, so the no-rebuild path — "the
+next start picks the new list up" — is what ran.
+
+**Still open after this phase:**
+
+- **The composition is unheard.** That the excluded tap reads like the room
+  is arithmetic over G's measurement, not an acoustic check. The test is a
+  tapped app at ~30%, the visualiser running, and eyes on whether the bars
+  follow the slider.
+- **In-place description edits on an exclusive tap** are still unmeasured
+  (M1 covered mixdown). Only worth measuring if the rebuild ever proves too
+  expensive, and at 27 ms it does not.
+- **A failed start after a coreaudiod restart** is not retried: the spectrum
+  stays flat until the next capture. Self-healing in practice, because
+  captures are seconds long, but it is a choice, not an oversight.
+- **Sapphire ships a privileged helper** at
+  `Contents/Library/LaunchDaemons/com.shariq.sapphireHelper.plist` — note the
+  prefix, `com.shariq.`, against the app's `com.cshariq.sapphire` — and it
+  runs while the app does not (seen on this machine, 2026-09-20). The warning
+  keys on the **app**, which is right if the mixing lives there; a daemon is
+  not a per-user audio path. Unverified either way.
+- Unchanged and recorded elsewhere: engage-seam audibility, device objects
+  carrying both scopes, the System Settings revocation path, Discord echo,
+  DAW behaviour.
 
 ---
 
