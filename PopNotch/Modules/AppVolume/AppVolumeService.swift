@@ -18,6 +18,12 @@ struct MixerRow: Equatable {
     var isPlaying: Bool
     /// Non-nil for apps in `NeverTapSet`: the short reason the row shows.
     var neverTapReason: String?
+    /// UIDs of the output devices the owner's processes use right now.
+    /// Part of equality on purpose: a device move republishes the rows,
+    /// which is what pushes fresh desires to the tap engine.
+    var deviceUIDs: [String] = []
+    /// The tap engine's view of this row (Phase 5).
+    var engineState: TapRowState = .notTapped
 }
 
 /// Per-app volume's engine service, owned by AppDelegate rather than being a
@@ -66,6 +72,25 @@ final class AppVolumeService {
     /// engine (Phase 5). Set by AppDelegate once the media module exists;
     /// weak because the coordinator's arbiter already owns that module.
     @ObservationIgnored weak var playerVolumes: ScriptedPlayerVolumes?
+
+    /// The tap engine (Phase 5). Set by AppDelegate, which owns it; every
+    /// mixer-row change pushes fresh desires through `pushDesires()`.
+    @ObservationIgnored var tapEngine: TapEngine?
+    /// Where saved positions and the taps toggle live (settings v9). Set by
+    /// AppDelegate.
+    @ObservationIgnored weak var settingsStore: SettingsStore?
+    /// Slider positions mid-drag, applied live to the engine and persisted
+    /// only on release (carried from the plan).
+    ///
+    /// **Observed, deliberately**: this is what the slider's knob reads
+    /// while the pointer is down, so an `@ObservationIgnored` here stops
+    /// the row re-rendering and the knob freezes until release, when the
+    /// settings write finally fires observation. That was the bug on the
+    /// first build (2026-09-19). `MediaModule.playerVolumes` is observed
+    /// for the same reason, which is why the scripted rows always tracked.
+    private var livePositions: [String: Int] = [:]
+    /// The engine's row states, merged into `mixerRows` as they arrive.
+    @ObservationIgnored private var engineStates: [String: TapRowState] = [:]
 
     @ObservationIgnored private let logger: Logger
     @ObservationIgnored private let source: AudioProcessSource
@@ -167,10 +192,11 @@ final class AppVolumeService {
     /// objects persist.
     private func buildMixerRows(processes: [AudioProcessSnapshot],
                                 playing: [AudioAppRow]) -> [MixerRow] {
-        var liveByKey: [String: (owner: AudioOwner, pids: [pid_t])] = [:]
+        var liveByKey: [String: (owner: AudioOwner, pids: [pid_t], deviceUIDs: Set<String>)] = [:]
         for process in processes {
             guard case .shown(let owner)? = resolved[process.objectID] else { continue }
-            liveByKey[owner.key, default: (owner, [])].pids.append(process.pid)
+            liveByKey[owner.key, default: (owner, [], [])].pids.append(process.pid)
+            liveByKey[owner.key]?.deviceUIDs.formUnion(process.outputDeviceUIDs)
         }
         for row in playing {
             sessionOwners[row.owner.key] = row.owner
@@ -187,7 +213,9 @@ final class AppVolumeService {
                 MixerRow(owner: owner,
                          pids: (liveByKey[owner.key]?.pids ?? []).sorted(),
                          isPlaying: playingKeys.contains(owner.key),
-                         neverTapReason: NeverTapSet.reason(for: owner.key))
+                         neverTapReason: NeverTapSet.reason(for: owner.key),
+                         deviceUIDs: (liveByKey[owner.key]?.deviceUIDs ?? []).sorted(),
+                         engineState: engineStates[owner.key] ?? .notTapped)
             }
             .sorted { ($0.owner.name.localizedLowercase, $0.owner.key)
                     < ($1.owner.name.localizedLowercase, $1.owner.key) }
@@ -197,6 +225,105 @@ final class AppVolumeService {
         guard newRows != mixerRows else { return }
         mixerRows = newRows
         onRowsChange?()
+        pushDesires()
+    }
+
+    // MARK: - Tap engine glue (Phase 5)
+
+    /// Whether taps are on (settings v9). nil-safe: absent means off.
+    var tapsEnabled: Bool {
+        settingsStore?.settings.appVolume.tapsEnabled ?? false
+    }
+
+    /// The row's slider position: mid-drag value, else saved, else 100.
+    func tapPosition(for key: String) -> Int {
+        if let live = livePositions[key] { return live }
+        return settingsStore?.settings.appVolume.volumes?[key] ?? 100
+    }
+
+    /// The Settings toggle. Turning on runs the engine's permission probe
+    /// (decision 3: the prompt belongs to this moment, never to launch).
+    func setTapsEnabled(_ on: Bool) {
+        settingsStore?.update { $0.appVolume.tapsEnabled = on }
+        tapEngine?.setTapsEnabled(on, probing: true)
+        pushDesires()
+    }
+
+    /// Launch restore: apply the stored toggle without a probe, so launch
+    /// can never prompt (the TCC-reset residual excepted; recorded).
+    func restoreTapsEnabledFromSettings() {
+        guard tapsEnabled else { return }
+        tapEngine?.setTapsEnabled(true, probing: false)
+        pushDesires()
+    }
+
+    func setTapPosition(_ position: Int, for key: String) {
+        livePositions[key] = PlayerVolume.clamp(position)
+        pushDesires()
+    }
+
+    /// Release persists the position — 100 is stored as absence — and the
+    /// live overlay ends.
+    func endTapVolumeEdit(for key: String) {
+        let position = livePositions.removeValue(forKey: key)
+        guard let position else { return }
+        settingsStore?.update {
+            var volumes = $0.appVolume.volumes ?? [:]
+            if position >= 100 { volumes[key] = nil } else { volumes[key] = position }
+            $0.appVolume.volumes = volumes.isEmpty ? nil : volumes
+        }
+        pushDesires()
+    }
+
+    /// Called by AppDelegate with the engine's state updates.
+    func applyEngineStates(_ states: [String: TapRowState]) {
+        engineStates = states
+        var updated = mixerRows
+        for index in updated.indices {
+            let key = updated[index].owner.key
+            updated[index].engineState = states[key] ?? .notTapped
+            // A row going inert can swap its live slider out mid-drag, so
+            // the release callback never fires; drop the orphaned overlay
+            // rather than letting it shadow the saved position.
+            if case .inert = updated[index].engineState {
+                livePositions[key] = nil
+            }
+        }
+        guard updated != mixerRows else { return }
+        mixerRows = updated
+        onRowsChange?()
+    }
+
+    /// Spotify and Music are adjusted through their own AppleScript volume,
+    /// never a tap (decision 3). This is an identity, not a capability:
+    /// disabling the Media module makes `handlesVolume` false, and that
+    /// must make their rows inert, not reroute them to the tap engine.
+    nonisolated static let scriptedPlayerKeys: Set<String> = [
+        SpotifyAdapter.bundleID, MusicAdapter.bundleID,
+    ]
+
+    /// Everything the engine needs to decide what exists: one desire per
+    /// row the tap path owns (never scripted players, never the never-tap
+    /// set — the engine must not even see those). Pure and static so the
+    /// filter is a test, not a hardware session.
+    nonisolated static func desires(from rows: [MixerRow],
+                                    position: (String) -> Int) -> [TapDesire] {
+        rows.compactMap { row in
+            guard row.neverTapReason == nil,
+                  !scriptedPlayerKeys.contains(row.owner.key) else { return nil }
+            return TapDesire(key: row.owner.key,
+                             position: position(row.owner.key),
+                             isPlaying: row.isPlaying,
+                             pids: row.pids,
+                             deviceUIDs: row.deviceUIDs)
+        }
+    }
+
+    private func pushDesires() {
+        guard let tapEngine else { return }
+        tapEngine.apply(desires: Self.desires(
+            from: mixerRows,
+            position: { self.tapPosition(for: $0) }))
     }
 
     /// At `.notice`, and only when something changed, so the log is a record

@@ -47,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// page with inert sliders. No taps; the engine is Phase 5.
     /// `AppVolumeModule`'s toggle is what starts and stops the watching.
     private(set) lazy var appVolume = AppVolumeService()
+    /// The Phase 5 tap engine: a service owned here, never a module
+    /// (v1 plan, decision 4). Its own serial queue holds every Core Audio
+    /// call, so nothing here blocks on the capture permission prompt.
+    private(set) lazy var tapEngine = TapEngine()
 
     /// The system now-playing source, held only so the music-over-video
     /// preference can be applied live from Settings. MediaModule owns it as
@@ -132,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 settings: settings,
                 spotify: spotifyAccount,
                 visualizer: audioViz,
+                appVolume: appVolume,
                 updater: updaterController.updater,
                 onQuit: { NSApp.terminate(nil) }
             ))
@@ -222,6 +227,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // own volume through the media module, as a protocol, so the row
         // and the player slider share one value and one write path.
         appVolume.playerVolumes = media
+        // The tap engine's inputs and outputs both route through the
+        // service: rows down as desires, per-row engine states back up.
+        appVolume.tapEngine = tapEngine
+        appVolume.settingsStore = settings
+        tapEngine.onStatesChange = { [weak appVolume] states in
+            appVolume?.applyEngineStates(states)
+        }
+        // Launch restore: apply the stored taps toggle without a probe, so
+        // launch never prompts. Saved volumes then engage lazily when a
+        // qualifying app plays (v1 plan; Phase 5 design report).
+        appVolume.restoreTapsEnabledFromSettings()
         let clipboard = ClipboardModule(service: clipboardService)
         let modules: [any NotchModule] = [
             media,
@@ -289,6 +305,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Taps first: they are other apps' audio path. Synchronous on the
+        // engine queue, reverse order of creation; a clean destroy restores
+        // audio within 0.5 s (measured). SIGTERM already routes here, and
+        // SIGKILL fails open by `.mutedWhenTapped` (measured, 0.2 s).
+        tapEngine.shutdownSync()
         coordinator.stop()
         // appVolume needs no stop here: its Core Audio listeners die with
         // the process, and the module's toggle owns the in-session lifecycle.

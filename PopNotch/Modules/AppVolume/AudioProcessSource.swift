@@ -13,6 +13,11 @@ struct AudioProcessSnapshot: Equatable {
     /// `kAudioProcessPropertyIsRunningOutput`: actually playing. The rows
     /// come from this, never from the list of running apps.
     var isRunningOutput: Bool
+    /// UIDs of the output devices this process is using
+    /// (`kAudioProcessPropertyDevices`, output scope). The tap engine keys
+    /// its aggregates by these; UIDs, not object IDs, because a dock
+    /// reconnect renumbers every device's object ID (measured in the spike).
+    var outputDeviceUIDs: [String] = []
 }
 
 /// The audio-producing processes on the system, and a callback whenever that
@@ -162,11 +167,29 @@ final class CoreAudioProcessSource: AudioProcessSource {
     }
 
     private static func snapshot(_ object: AudioObjectID) -> AudioProcessSnapshot {
-        AudioProcessSnapshot(objectID: object,
-                             pid: scalar(object, kAudioProcessPropertyPID, as: pid_t.self) ?? -1,
-                             bundleID: string(object, kAudioProcessPropertyBundleID),
-                             isRunningOutput: (scalar(object, kAudioProcessPropertyIsRunningOutput,
-                                                      as: UInt32.self) ?? 0) != 0)
+        let deviceIDs = objectArray(object, kAudioProcessPropertyDevices,
+                                    scope: kAudioObjectPropertyScopeOutput)
+        return AudioProcessSnapshot(objectID: object,
+                                    pid: scalar(object, kAudioProcessPropertyPID, as: pid_t.self) ?? -1,
+                                    bundleID: string(object, kAudioProcessPropertyBundleID),
+                                    isRunningOutput: (scalar(object, kAudioProcessPropertyIsRunningOutput,
+                                                             as: UInt32.self) ?? 0) != 0,
+                                    outputDeviceUIDs: deviceIDs.compactMap {
+                                        string($0, kAudioDevicePropertyDeviceUID)
+                                    }.sorted())
+    }
+
+    private static func objectArray(_ object: AudioObjectID,
+                                    _ selector: AudioObjectPropertySelector,
+                                    scope: AudioObjectPropertyScope) -> [AudioObjectID] {
+        var address = address(selector, scope: scope)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr, size > 0
+        else { return [] }
+        var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &ids) == noErr
+        else { return [] }
+        return ids
     }
 
     private static func scalar<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,

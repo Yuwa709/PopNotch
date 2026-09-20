@@ -1,13 +1,14 @@
 # Per-app audio mixer
 
-**Status: v1 in progress (2026-09-18). Phases 2, 3 and 4 are committed, Phase 1 is built, and Phase 0 has run.**
+**Status: v1 in progress (2026-09-19). Phases 1 to 4 are done, Phase 0 has run, and Phase 5 — the tap engine — is built, measured under budget, and awaiting hardware verification.**
 
 - **Phase 1** is settings schema v9, plus a fake-engine seam so the visualiser's lifecycle tests never open a real tap (2026-09-18). See *Accepted defaults* and *Carried from the plan*.
 - **Phase 2** is the Spotify and Music volume slider on the player screen (`c532afb`, restyled in `3dfc3c7`, `a10f088` and `72d060e`).
 - **Phase 3** is process enumeration and naming with the corrected change trigger (`606af7d`).
 - **Phase 4** is the mixer page (`72d060e`, `ba43611`). It sits behind an App Volume toggle, off by default, which replaced Phase 3's Debug-only gate. Its Spotify and Music rows work; every other row is inert until Phase 5.
 - **Phase 0:** F, the gate, passed, but the CPU budget is exceeded, and several items are open (see *Phase 0*).
-- **Not started:** Phases 5 to 7.
+- **Phase 5** is the tap engine (2026-09-19, uncommitted): `TapEngine`, `TapHAL` and the pure `TapReconciler`, wired through `AppVolumeService` to live mixer sliders. Built after three pre-build spike measurements (M1–M3, under *Phase 0*), adversarially reviewed (two review passes, ~1M tokens of subagent verification; the findings and their fixes are in the session record), and measured at **0.55 points of one core for one tapped app and ~1.4 per app at three** — under the 2-point budget; see *Phase 5: built* below.
+- **Not started:** Phases 6 and 7.
 
 v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
 
@@ -307,7 +308,8 @@ A plan was proposed, then an interview challenged it question by question. The d
 7. **Crash safety is a hard exit.** If *Phase 0* shows a SIGKILL leaves tapped apps muted, **v1 stops.** No recovery machinery: no public taps recorded on disk, no relaunch agent.
 8. **Budget.** Idle is unchanged. Active is **at most 2 points of one core per tapped app**, PopNotch and coreaudiod combined, measured by CPU time with 1 and 3 tapped apps.
    - **Over budget means v1 doesn't ship until the cost is fixed.** The first fix to try is one shared aggregate per output device.
-   - **Measured over budget (2026-09-18):** about 2.2 points per tapped app, linear in the number of apps. Whether a shared aggregate helps is unmeasured. See *Phase 0*.
+   - **Measured over budget (2026-09-18):** about 2.2 points per tapped app, linear in the number of apps, with per-app aggregates in the spike.
+   - **Measured under budget (2026-09-19), in the app, with the shared aggregate:** 0.55 points for one tapped app, ~1.4 per app at three (window noise from a live Discord call spans roughly 0.5–1.2). The first build measured **6 points per app** because the IOProc's per-frame Swift loop ran under the Debug build's ~50x interpretation tax; the steady-state path is now one `vDSP` call per buffer and the cost collapsed. See *Phase 5: built*.
    - Recorded in `CLAUDE.md`, *Performance budget*.
 9. **A fixed never-tap set replaces the editable bypass list.** The set covers DAWs, routing and mixer tools, PopNotch itself, and system daemons that can't be traced to an app. It has no editor and no settings fields. Each bundle ID is verified against a real install before it ships, never guessed. Why not an editable list:
    - **An app at 100% is never tapped,** so dragging a misbehaving app back to 100% already removes its tap.
@@ -317,7 +319,7 @@ A plan was proposed, then an interview challenged it question by question. The d
 ### Accepted defaults
 
 - **Mute behaviour: `.mutedWhenTapped`.** It fails open: if PopNotch's audio thread stops or the process dies, the app returns to full volume rather than silence. This is the behaviour the SIGKILL test in *Phase 0* measures. **It passed (2026-09-18):** audio was back within 0.2 s of the kill.
-- **One private aggregate per tapped app,** so one app's helper restarting can't glitch another. One aggregate per output device only if the budget is exceeded.
+- **One private aggregate per tapped app,** so one app's helper restarting can't glitch another. One aggregate per output device only if the budget is exceeded. **Superseded by measurement:** the budget was exceeded per-app (2.2 points), so v1 ships the shared aggregate — and M1 (live tap-list edits, no IO interruption) removed the glitch concern that motivated per-app isolation.
 - **The visualiser's global tap excludes PopNotch's own process,** so a re-rendered app isn't counted twice. *Phase 0* test G confirms both the problem and this fix. **Both confirmed (2026-09-18).**
 - **What the mixer page lists:**
   - apps playing now, plus apps played this session that are still running
@@ -351,7 +353,7 @@ In the spike, not the app. It needs audio, a second participant for the call tes
 |---|---|
 | **F:** SIGKILL recovery with `.mutedWhenTapped`. **Passed; see below** | **Whether v1 exists** (decision 7) |
 | **G:** the visualiser's global tap alongside a re-rendered app, with and without excluding PopNotch's own process. **Answered; see below** | The visualiser default |
-| **E:** re-render latency, from the tap callback to audible output. **Provisional; needs a re-run** | Lip-sync risk for browser video |
+| **E:** re-render latency, from the tap callback to audible output. **Answered on the re-run (2026-09-18): the first run's ~100 ms was a detector artifact; the path measures ~8 ms nominal, low tens of ms after known systematics — see below** | Lip-sync risk for browser video |
 | **CPU time** with 1 and 3 tapped apps, PopNotch and coreaudiod. **Over budget; see below** | The budget (decision 8) |
 | **A Discord call on the laptop speakers,** second participant listening, slider moving. **Pending** | Call-time adjustment (decision 6) |
 | **GarageBand running** while another app is tapped on the same device. **Not run; unverified** | Whether taps pause while a DAW runs (decision 9) |
@@ -399,10 +401,12 @@ In the spike, not the app. It needs audio, a second participant for the call tes
     - **So decision 8 applies:** v1 doesn't ship until the cost is fixed.
     - **Limits:** one run per cell, so run-to-run noise isn't known. The owner's music may have been playing. The spike's IOProc also meters every buffer, so its share is an upper bound for PopNotch's gain-only one. And the runs don't separate a tap's cost from its aggregate's, so whether one shared aggregate per device (decision 8's first fix) helps is unmeasured.
     - **A first attempt was discarded:** BSD `seq 1 0` counts down, so its zero-tap baseline actually ran two taps.
-  - **E: provisional, about 100 ms. Needs a re-run.** The tone played 10 ms bursts at 2.5 kHz once a second, re-rendered at unity gain. The tap logged the IOProc entry time of each burst, and the microphone logged each arrival's capture time less its input latency.
-    - **Result:** 19 of the tap's 27 bursts paired with a microphone event within 200 ms. 9 of those 19 fell between 96 and 114 ms, 6 within 5 ms of the 100 ms median (mean 100.7 ms).
-    - **Why provisional:** the room wasn't quiet. The other pairs, at 0–13 ms and 195–198 ms, were noise tripping the microphone's adaptive detector, and choosing the 100 ms cluster is a judgement. It also measures only the IOProc to the speaker, not the app to the tap before it.
-    - **So the lip-sync question isn't answered.** Re-run in a quiet room before Phase 5 relies on it.
+  - **E: re-run 2026-09-18 in a quiet room. The ~100 ms was an artifact; the re-render path measures ~8 ms by the harness's own corrections, low tens of ms after its known systematics.**
+    - **The first run's number is fully explained, from its own log.** Every one of `E-mic.log`'s 112 inter-click gaps is exactly **0.300 s** — the detector's refractory period — and none sits on the 1.0 s burst period. A continuous room sound kept the detector firing the moment it re-armed, so those clicks carried no burst information, and pairing a 1 s click train against a 0.3 s comb spreads deltas uniformly over 0–300 ms. The "96–114 ms cluster" was sampling noise on that spread; there was never a 100 ms latency.
+    - **The re-run** (burst −6 dBFS instead of −12, mic threshold −36 dB, same method otherwise): 15 s ambient check first — noise floor −40 dB rms, one spurious click. Then 230 bursts: **225 of 230 paired (98%)**, 214 of 263 mic inter-click gaps on the 1.000 s period, **median 7.9 ms, IQR 4.7–10.6 ms, p95 12.4 ms**, 211 of 225 pairs within 5 ms of the median. 0 timestamp jumps, 0 overloads, clock +6.66 ppm over 231 s.
+    - **The absolute number carries one named systematic.** 7.9 ms is *below* the render aggregate's own reported output latency (60+48+556 frames + 512 buffer ≈ 24.5 ms), so at least one latency correction is off — the prime suspect is the microphone's reported input latency (14+36+2399 frames ≈ 51 ms subtracted from every arrival), which would bias the result low if overstated. The spread (IQR ~6 ms) is trustworthy; the absolute value is best read as **"low tens of ms at most"**, bounded above by ~35 ms even if the mic correction is wholly wrong in the unfavourable direction.
+    - **The lip-sync question is answered.** Whether 8 ms or 30 ms, the re-render path sits well below lip-sync perceptibility (~45 ms+), and far below the provisional 100 ms. It still measures IOProc-to-speaker only; the app-to-tap segment before it rides the process's own render cadence and adds buffers, not tens of ms.
+    - **Evidence:** `E2-ambient.log`, `E2-tone.log`, `E2-mic.log`, `E2-tap.log` in `evidence/2026-09-18/`, alongside the first run's `E-*.log`.
   - **Level blip: nothing at disengage; possibly a short gap at engage.** A muted tap re-rendered the 19 kHz tone at unity gain on the same speakers, so the level at the microphone shouldn't move. It was read in 50 ms windows.
     - **Disengage:** every window within 0.7 dB.
     - **Engage:** one window 1.6 dB low. That fits up to about 15 ms of missing audio, or the two paths briefly overlapping out of phase. Whether it's audible on music isn't established, so whether engage needs a crossfade stays open.
@@ -412,8 +416,17 @@ In the spike, not the app. It needs audio, a second participant for the call tes
     - **Mute, `.muted` to `.unmuted`:** read back as unmuted, and the app was audible at the microphone within 0.1 s. The tapped stream hiccupped once at the change: 8 glitch samples, and callback counts of 97 then 90 against a steady 94.
     - **Process list, `[old]` to `[new]`:** read back as `[new, old]`, and the stream then carried both tones. So a process can be added in place. Removing one this way doesn't work; other ways of removing one weren't tried.
   - **Firefox plays from its own process,** `org.mozilla.firefox`, resolved as "the app itself". Taken from PopNotch's Phase 3 log of the owner's real Firefox playback (2026-09-18, 00:09 and 11:57), not a spike run. No helper mapping is needed.
+- **The Phase 5 pre-build measurements (2026-09-18, late evening).** Three questions the checkpoint design left open, measured in the spike before engine code. FineTune quit throughout; evidence `M1-*`, `M2-*`, `M3-*.log` in `evidence/2026-09-18/`; the `multitap` spike command was added for M1.
+  - **M1: a live aggregate's tap list is editable, both directions.** With tone 1 tapped (`.mutedWhenTapped`, no render) and IO running, setting `kAudioAggregateDevicePropertyTapList` to add a second tap returned `noErr`; the new stream appeared in the IOProc within a second, callbacks never stalled (93–96 per interval throughout). Setting the list back to one entry also returned `noErr`; the survivor's stream was uninterrupted.
+    - **Mute follows list membership, not tap existence.** Tone 1 was audible again at the microphone within one 0.5 s interval of leaving the list, while its tap object still existed; destroying the object ten seconds later changed nothing audible. So removal order is: ramp to unity → edit the list (the unmute) → destroy the object at leisure.
+    - **Stream indices shift down on removal** (the survivor moved from buffer 1 to buffer 0), so per-leg gain mapping must be keyed by the callback's buffer count, not assumed stable.
+    - **Anomaly, explained and non-tap:** ~8 s after tone 1 was unmuted, its acoustic level fell ~20 dB with heavy harmonic distortion at the mic while the process's own meter stayed at exactly −25 dBFS — the built-in speaker's protection DSP reacting to a sustained pure tone, downstream of everything measured here. Findings above ride on 40+ dB floor-vs-audible transitions and are unaffected.
+  - **M2: with two `.mutedWhenTapped` taps on one process, the mute holds until the last tap is gone.** Tap A rendered at 0 dB, tap B at −60 dB (deliberately inaudible, so the post-A phase is binary). B engaged instantly over the already-muted process with full input from its first interval; both taps received the full stream during the overlap. When A tore down completely (`noErr`), the speakers dropped to B's −60 render — the original did **not** return until B exited. **Make-before-break is safe:** the old side's teardown cannot unmute a process the new side still taps.
+    - Caveat: this run's acoustic levels sat ~40 dB below M1's (speaker-protection carry-over or the output volume changed between runs); the discriminating swings were 25–30 dB and unambiguous either way.
+  - **M3: revoking the grant does nothing to a live tap.** `tccutil reset AudioCapture` on the spike's bundle succeeded mid-run; for the remaining 75 s the tap's callbacks (47/interval), 100% non-zero input, −30.0 dB tone, audible render, and the process itself all continued unchanged, and teardown was clean. TCC is checked at `AudioDeviceStart`, not continuously.
+    - **Consequence, a recorded deviation from the carried plan:** v1 ships **no zero-input watchdog**. Its trigger scenario does not occur on the testable revocation path, and the Phase 5 design review separately proved a zeros-watchdog false-positives on a measured routine behaviour (Chrome's helper delivers zeros with is-running-output true for up to ~a minute after a pause). Permission failure is handled where it measurably appears: a failed start (probe or engage) marks permission denied, rows go inert with the reason, and the taps toggle is the recovery lever. The System Settings toggle path (as opposed to `tccutil`) remains unmeasured — it may behave differently, and if it silences live taps the symptom is silence from adjusted apps until the user cycles the taps toggle.
+    - The spike bundle's own grant is now reset: the next spike tap run will re-prompt.
   - **Still open after this run:**
-    - **E, re-render latency.** Provisional at about 100 ms; needs a re-run in a quiet room (see *E* above).
     - **Whether the engage blip is audible** on music, which decides whether engage needs a crossfade (see *Level blip* above).
     - **The Discord call echo test.** Pending: no second participant was available.
     - **Read-back of a volume changed outside PopNotch.** Pending: it needs the owner to move Spotify's own slider while a probe watches.
@@ -432,9 +445,37 @@ One session per phase (hard rule 7). Each ends with a clean build, green tests, 
 | **2. Spotify and Music volume** | AppleScript volume and the player's volume button. **Shippable on its own:** it covers the most frequent moment with no new permission and no tap | Phase 0's Spotify Connect check only (answered 2026-09-17: no effect during Connect playback; see *Phase 0*) |
 | **3. Enumerate and name** | Read-only process source and resolver; rows logged, no taps | — |
 | **4. Mixer page** | The screen, its door and its row states, behind the Settings toggle | 3 |
-| **5. Tap engine** | Taps, aggregates, the IOProc, device changes, quit teardown, the watchdog | **Phase 0's F, E and CPU results** |
+| **5. Tap engine** | Taps, aggregates, the IOProc, device changes, quit teardown. **Built 2026-09-19; see *Phase 5: built*.** The watchdog was dropped on M3's result | **Phase 0's F, E and CPU results** |
 | **6. Coexistence** | The visualiser exclusion; a warning when FineTune or Sapphire is running | Phase 0's G result |
 | **7. Live with it** | CPU time measured against the budget; a week of daily use; the FineTune decision | 5 |
+
+---
+
+## Phase 5: built (2026-09-19, uncommitted)
+
+What shipped, in `PopNotch/Modules/AppVolume/`:
+
+- **`TapHAL.swift`** — the Core Audio seam (`TapHAL` protocol, `CoreAudioTapHAL`) and `TapRenderState`, the preallocated lock-free gain state. The IOProc allocates nothing, locks nothing, and does its steady-state work as one `vDSP_vsma` per buffer; the scalar per-frame ramp runs only for the ~2 buffers after a gain change. Gain mapping is keyed by the callback's buffer count (M1: stream indices shift on removal). Word-sized shared values lean on arm64's single-copy atomicity — this project is arm64-only by decision.
+- **`TapReconciler.swift`** — pure planning: desires and legs in, ops and per-row states out. Qualification: tapsEnabled ∧ position < 100 ∧ playing ∧ not never-tap ∧ not Spotify/Music (an **identity** check, so disabling the Media module cannot reroute them to taps) ∧ single stereo non-AirPlay output with **no input streams** ∧ capacity (8 legs/device) ∧ permission not denied.
+- **`TapEngine.swift`** — executes plans on one serial queue: shared aggregate per device, one tap per owner, live tap-list edits for joins and removals, make-before-break device moves (single engage op; the engine retires the old leg), unity-ramped disengage with revival on a slider wiggle through 100, a 3 s one-shot grace with fire-time re-check, pid-restart leg rebuilds, `ServiceRestarted` and device-format listeners, wake reconcile, the toggle-time permission probe (decision 3), and a 2 s-bounded synchronous quit teardown. Every transition logs at `.notice`.
+- **Integration** — process snapshots carry output-device UIDs; `MixerRow` carries devices and engine state; the page's non-scripted rows get live sliders (drag applies live, release persists, 100 stored as absence); the taps toggle lives in Settings → Modules; AppDelegate owns the engine and restores the toggle at launch without a probe.
+
+**Exclusions this phase added, shown as row reasons:** AirPlay outputs (unmeasured transport), and **outputs that carry input streams** — AirPods and other headsets — because an aggregate exposes its sub-device's input streams to the IOProc, which would corrupt the count-keyed mapping and sum the device's own microphone into its output (caught in review; unmeasured). Unlocking headsets needs a spike measurement of stream order and `kAudioDevicePropertyIOProcStreamUsage`.
+
+**Measured (2026-09-19), CPU time over 60 s windows, PopNotch + coreaudiod, deltas over same-tone-count baselines, Discord call live throughout, visualiser not capturing, panel closed:**
+
+| Cell | PopNotch Δ | coreaudiod Δ | Per tapped app |
+|---|---|---|---|
+| 1 tapped app | 0.22 s | 0.11 s | **0.33 s ≈ 0.55 points** |
+| 3 tapped apps | 0.23 s | 2.29 s | **0.84 s ≈ 1.4 points** |
+
+Under the 2-point budget (decision 8). Window noise from the live call is roughly ±0.5–1 s on coreaudiod, so the 3-app figure spans ~0.5–1.2 points per app. The first build measured **6 points for one app**: the per-frame Swift loop under the Debug build's ~50x tax — the vDSP steady-state path is what fixed it, and the shared aggregate's coreaudiod share (0.1–0.8 points per app) is what confirmed decision 8's hypothesis.
+
+**Exercised on hardware, from the `.notice` log:** launch restore engaging a playing app with a saved volume (no prompt, existing grant); a second and third owner joining by live tap-list edit (slots 0–2, one aggregate); a pid-restart leg rebuild; kill-driven disengages with one-by-one live-edit removals; "Last leg left; aggregate torn down" — the zero-cost state — and clean `Engine shut down` on SIGTERM.
+
+**Tests: 604 pass, 0 skipped** (566 before the phase; TapEngineTests 21, TapReconcilerTests 17, TapDesireFilterTests 3, minus the one renamed). No test creates a real tap or aggregate.
+
+**Still open after this phase:** engage-seam audibility on music (hardware ears); headset outputs (the stream-usage measurement above); the System Settings revocation path; Discord echo and DAW behaviour (unchanged, recorded); saved measurement volumes for `local.spike.tone1/2/3` remain in the owner's settings from the CPU cells.
 
 ---
 

@@ -64,7 +64,7 @@ struct AppVolumePageView: View {
             ScrollView(.vertical, showsIndicators: rows.count > Self.maxVisibleRows) {
                 LazyVStack(spacing: Self.rowSpacing) {
                     ForEach(rows, id: \.owner.key) { row in
-                        MixerRowView(row: row, players: service.playerVolumes)
+                        MixerRowView(row: row, service: service)
                     }
                 }
             }
@@ -83,22 +83,27 @@ struct AppVolumePageView: View {
 
 /// One app's row: icon, name and state caption, and the slider. A never-tap
 /// row is greyed with its reason and a disabled slider — explained, not
-/// broken-looking.
+/// broken-looking. Non-scripted rows carry the tap engine's slider (Phase
+/// 5), live while taps are on and the engine reports the row workable.
 private struct MixerRowView: View {
     let row: MixerRow
-    let players: ScriptedPlayerVolumes?
+    let service: AppVolumeService
 
     /// Close to a never-tap row's whole-row 0.4, so every slider that does
     /// nothing reads the same.
     static let inertSliderOpacity: Double = 0.45
 
     /// The player that owns this row's volume, when it is Spotify or Music
-    /// and the media module is on. Nil means the tap-engine path, inert
-    /// until Phase 5.
+    /// and the media module is on. Nil means the tap-engine path.
     private var scriptedPlayer: ScriptedPlayerVolumes? {
-        guard let players, row.neverTapReason == nil,
+        guard let players = service.playerVolumes, row.neverTapReason == nil,
               players.handlesVolume(for: row.owner.key) else { return nil }
         return players
+    }
+
+    private var engineReason: String? {
+        if case .inert(let reason) = row.engineState { return reason }
+        return nil
     }
 
     var body: some View {
@@ -116,10 +121,15 @@ private struct MixerRowView: View {
             .frame(width: 150, alignment: .leading)
             if let scriptedPlayer {
                 ScriptedVolumeSlider(bundleID: row.owner.key, players: scriptedPlayer)
+            } else if row.neverTapReason == nil, service.tapsEnabled, engineReason == nil,
+                      !AppVolumeService.scriptedPlayerKeys.contains(row.owner.key) {
+                // The identity check keeps Spotify and Music off the tap
+                // path even while the Media module (their slider's owner)
+                // is disabled: their row goes inert, never to a tap.
+                TapVolumeSlider(ownerKey: row.owner.key, service: service)
             } else {
-                // Inert until Phase 5, and drawn that way: disabled and
-                // dimmed, so it does not look like the working Spotify and
-                // Music sliders beside it. A never-tap row is already
+                // Dimmed and disabled: never-tap, taps off, or an engine
+                // reason the caption explains. A never-tap row is already
                 // dimmed whole, so its slider takes no second dimming.
                 Slider(value: .constant(1.0))
                     .controlSize(.small)
@@ -136,7 +146,37 @@ private struct MixerRowView: View {
 
     private var caption: String {
         if let reason = row.neverTapReason { return "Not adjustable — \(reason)" }
+        if scriptedPlayer == nil {
+            if let reason = engineReason { return "Not adjustable — \(reason)" }
+            if !service.tapsEnabled { return "Taps are off" }
+        }
         return row.isPlaying ? "Playing" : "Not playing"
+    }
+}
+
+/// The tap engine's slider: the position applies live while dragging (the
+/// engine ramps each change) and persists on release — 100 is stored as
+/// absence. Usable on a row that is not playing: the position is remembered
+/// and applies the moment the app next outputs.
+private struct TapVolumeSlider: View {
+    let ownerKey: String
+    let service: AppVolumeService
+
+    var body: some View {
+        // The getter re-reads rather than closing over a value captured at
+        // body time: during a drag the knob is drawn from whatever this
+        // returns, so a captured constant would pin it in place even once
+        // the row re-renders.
+        let position = service.tapPosition(for: ownerKey)
+        Slider(value: Binding(
+                   get: { Double(service.tapPosition(for: ownerKey)) / 100 },
+                   set: { service.setTapPosition(PlayerVolume.value(atFraction: $0), for: ownerKey) }),
+               onEditingChanged: { editing in
+                   if !editing { service.endTapVolumeEdit(for: ownerKey) }
+               })
+            .controlSize(.small)
+            .accessibilityLabel("Volume")
+            .accessibilityValue("\(position) percent")
     }
 }
 

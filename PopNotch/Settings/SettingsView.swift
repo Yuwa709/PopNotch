@@ -46,6 +46,9 @@ struct SettingsView: View {
     let spotify: SpotifyAccount
 
     let visualizer: AudioVisualizerService
+    /// The mixer service, for the taps toggle (Phase 5). Optional so tests
+    /// build the view without one; the toggle then does not render.
+    var appVolume: AppVolumeService?
     /// Optional so the tab stays constructible without a live Sparkle
     /// updater — tests build it with nil, and the Check for Updates row
     /// simply does not render.
@@ -80,7 +83,8 @@ struct SettingsView: View {
         case .general:
             GeneralSettingsTab(coordinator: coordinator, settings: settings)
         case .modules:
-            ModulesSettingsTab(coordinator: coordinator, settings: settings)
+            ModulesSettingsTab(coordinator: coordinator, settings: settings,
+                               appVolume: appVolume)
         case .music:
             MusicSettingsTab(account: spotify, settings: settings, visualizer: visualizer)
         case .permissions:
@@ -195,6 +199,8 @@ struct ModulesSettingsTab: View {
     let coordinator: NotchCoordinator
     /// Observed so the rows re-render when a preference is written.
     @Bindable var settings: SettingsStore
+    /// Nil in tests; the taps section then does not render.
+    var appVolume: AppVolumeService?
 
     var body: some View {
         Form {
@@ -207,6 +213,15 @@ struct ModulesSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let appVolume {
+                Section {
+                    Toggle("Adjust other apps' volume", isOn: tapsBinding(appVolume))
+                } footer: {
+                    Text("Lets App Volume turn down apps like browsers and Discord. Turning it on asks for the System Audio Recording permission. Spotify and Music use their own volume and need no permission.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()
@@ -216,6 +231,15 @@ struct ModulesSettingsTab: View {
         Binding(
             get: { settings.isEnabled(id, default: current) },
             set: { coordinator.setEnabled($0, for: id) }
+        )
+    }
+
+    /// The prompt appears right here, at the toggle (v1 plan, decision 3),
+    /// via the engine's probe start — on its queue, never this thread.
+    private func tapsBinding(_ appVolume: AppVolumeService) -> Binding<Bool> {
+        Binding(
+            get: { settings.settings.appVolume.tapsEnabled ?? false },
+            set: { appVolume.setTapsEnabled($0) }
         )
     }
 }
