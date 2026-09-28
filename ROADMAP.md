@@ -211,7 +211,7 @@ Do this once Phase 4 is stable, even if later phases are unfinished.
 Consequences, to be stated plainly in the README rather than discovered by users:
 
 - macOS quarantines anything downloaded from a browser. An un-notarized app is **blocked on first launch**, with a dialog saying Apple cannot verify it is free of malware.
-- On macOS 15 and later the right-click → Open shortcut no longer works. The user must go to **System Settings → Privacy & Security**, find the message about PopNotch, and click **Open Anyway**.
+- Apple removed the right-click → Open bypass for un-notarized apps in macOS 15 (Sequoia), and it is still gone in macOS 26 (Tahoe). The user must go to **System Settings → Privacy & Security**, find the message about PopNotch, and click **Open Anyway**.
 - Because `LSUIElement = YES` means no Dock icon and no window, a blocked launch looks like **nothing happening at all**. The README must say so, or every first-time user thinks the app is broken.
 - Approval is a one-time action per download. Updates through Sparkle do not re-trigger it.
 

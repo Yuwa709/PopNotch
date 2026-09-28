@@ -13,7 +13,7 @@
 #
 # The DMG still matters even with Sparkle wired: Sparkle only updates an app
 # somebody already has. First installs come through the DMG and still hit
-# Gatekeeper, which is why README documents `xattr -cr`.
+# Gatekeeper, which is why README documents the Open Anyway flow.
 #
 # Publishing is a deliberate, separate act: upload both packages to a GitHub
 # Release tagged v<version>, then commit appcast.xml to the repo root on main,

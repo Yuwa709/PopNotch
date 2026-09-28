@@ -22,17 +22,25 @@ Built with Swift and SwiftUI, no web runtime, no Electron. An overlay that costs
 
 ## Install
 
-Download the latest `PopNotch-<version>.dmg` from [Releases](https://github.com/Yuwa709/PopNotch/releases), drag PopNotch to Applications, then run this once:
+Download the latest `PopNotch-<version>.dmg` from [Releases](https://github.com/Yuwa709/PopNotch/releases). PopNotch is signed ad-hoc and not notarized, so macOS blocks the first launch until you approve it:
 
-```bash
-xattr -cr /Applications/PopNotch.app
-```
+1. Open the DMG and drag PopNotch to Applications.
+2. Double-click PopNotch. macOS blocks it.
+3. Open **System Settings → Privacy & Security**, scroll to the **Security** section, and click **Open Anyway** next to the PopNotch notice.
+4. Authenticate, then click **Open**. macOS only asks once.
 
-**That command is not optional.** PopNotch is signed ad-hoc and not notarized, so macOS quarantines the download and blocks the first launch. Because the app has no Dock icon and no window, a blocked launch looks exactly like nothing happening — see below if you skipped it. Clearing the quarantine attribute up front avoids the whole detour.
+This applies to the first install only. Updates through Sparkle (**Settings → About → Check for Updates**) don't repeat it, and PopNotch never checks for updates on its own.
 
-Then launch it yourself (`open /Applications/PopNotch.app`, or via Spotlight) — that way macOS attributes the permission prompts to you.
+If it doesn't go as above:
 
-Updates after that are handled in-app: **Settings → About → Check for Updates**. PopNotch never checks on its own, and the update path clears quarantine for you, so `xattr` is a first-install step only.
+- **No Open Anyway notice?** It only appears after a launch attempt, and it isn't available indefinitely. Double-click PopNotch again, then reopen Privacy & Security.
+- **"PopNotch is damaged" with no Open Anyway button?** On macOS 26 some unnotarized apps get this message instead. For that case only, run:
+
+  ```bash
+  xattr -cr /Applications/PopNotch.app
+  ```
+
+Because PopNotch has no Dock icon and no window, a blocked launch looks like nothing happening at all. It isn't broken; it's waiting for step 3.
 
 ### Building from source instead
 
@@ -43,23 +51,7 @@ cd PopNotch
 open /Applications/PopNotch.app
 ```
 
-`install.sh` builds the app, replaces any running copy, and installs to `/Applications`. Builds you compile yourself are never quarantined, so they skip the `xattr` step entirely.
-
-### "Nothing happened when I opened it"
-
-PopNotch is signed ad-hoc, not notarized (notarization needs a $99/year Apple Developer account, which this project doesn't have yet). If you downloaded a build rather than compiling it, macOS will block the first launch — and because PopNotch has **no Dock icon and no window**, a blocked launch looks like *nothing happening at all*. It's not broken:
-
-```bash
-xattr -cr /Applications/PopNotch.app
-```
-
-Then open it again. If you would rather not run a terminal command:
-
-1. Open **System Settings → Privacy & Security**.
-2. Scroll down: you'll see *"PopNotch" was blocked to protect your Mac*.
-3. Click **Open Anyway**, then confirm.
-
-Either way this is a one-time step per download. On macOS 15 and later the old right-click → Open trick no longer works. Builds you compile yourself with `install.sh` don't hit this at all, and neither do updates installed through Sparkle.
+`install.sh` builds the app, replaces any running copy, and installs to `/Applications`. Builds you compile yourself are never quarantined, so they skip the Open Anyway step entirely.
 
 ## Permissions it asks for, and why
 
@@ -77,7 +69,7 @@ Nothing leaves your machine except the feature-essential requests: album artwork
 - **No Spotify account connection.** Earlier versions could connect a Spotify account for Up Next, likes and artist info, but Spotify caps that at 25 users, so it was removed. If you connected one, the old token may still sit in your login keychain; nothing reads it any more, and `security delete-generic-password -s com.techie.PopNotch -a spotify-refresh-token` removes it.
 - **Pandora and YouTube Music are not supported.** They have no scriptable Mac app, and Apple gated the private framework that once made universal now-playing possible (macOS 15.4+). If Apple relents, the adapter slot is already there.
 - **Lyrics coverage is whatever LRCLIB has.** Instrumentals and obscure tracks may show none; plain-text-only lyrics are treated as none, since the notch can't scroll untimed text.
-- **Un-notarized.** See the Gatekeeper section above; first install needs `xattr -cr`. Updates go through Sparkle and are **manual only** — PopNotch never checks on its own, so nothing phones home unless you press the button in Settings → About.
+- **Un-notarized.** See Install above; the first launch needs Open Anyway in Privacy & Security. Updates go through Sparkle and are **manual only** — PopNotch never checks on its own, so nothing phones home unless you press the button in Settings → About.
 - **The notch is the product.** External displays get a plain fallback strip, not the full experience.
 
 ## License
