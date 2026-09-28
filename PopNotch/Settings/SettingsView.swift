@@ -43,8 +43,6 @@ struct SettingsView: View {
 
     let coordinator: NotchCoordinator
     let settings: SettingsStore
-    let spotify: SpotifyAccount
-
     let visualizer: AudioVisualizerService
     /// The mixer service, for the taps toggle (Phase 5). Optional so tests
     /// build the view without one; the toggle then does not render.
@@ -90,7 +88,7 @@ struct SettingsView: View {
             ModulesSettingsTab(coordinator: coordinator, settings: settings,
                                appVolume: appVolume)
         case .music:
-            MusicSettingsTab(account: spotify, settings: settings, visualizer: visualizer,
+            MusicSettingsTab(settings: settings, visualizer: visualizer,
                              appVolume: appVolume)
         case .permissions:
             PermissionsSettingsTab()
@@ -106,13 +104,11 @@ struct SettingsView: View {
 /// Modules despite being purely a now-playing concern. Both are here now;
 /// Modules keeps only the on/off switches that every feature has.
 ///
-/// The Spotify half has deliberately nothing to configure. The Client ID is
-/// PopNotch's own and is built into the app (see `SpotifyAccount.clientID`);
-/// it used to be a text field here, which meant a fresh install could not
-/// connect at all until the user went and registered their own developer app.
+/// There is no Spotify section. The optional account connection (OAuth, the
+/// Web API) was removed: Spotify caps a development-mode app at 25 users, so
+/// Connect failed for nearly everyone, and it was the app's only Keychain use.
 struct MusicSettingsTab: View {
 
-    @Bindable var account: SpotifyAccount
     @Bindable var settings: SettingsStore
     let visualizer: AudioVisualizerService
     /// Only for the other-mixer warning below; nil in tests, which then do
@@ -165,27 +161,6 @@ struct MusicSettingsTab: View {
                 Text("Draws what's playing in the notch. Needs the System Audio Recording permission (System Settings → Privacy & Security → Screen & System Audio Recording). Off by default.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-
-            Section("Spotify") {
-            if account.isConnected {
-                LabeledContent("Account") {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        Text("Connected")
-                        Spacer()
-                        Button("Disconnect") { account.disconnect() }
-                    }
-                }
-            } else {
-                Button("Connect Spotify…") { account.beginAuthorization() }
-                Text("Opens Spotify in your browser to authorize PopNotch. Enables Up Next and liking the current track. You can disconnect at any time.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let error = account.lastError {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
             }
         }
         .formStyle(.grouped)

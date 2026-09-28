@@ -229,7 +229,7 @@ struct MediaExpandedView: View {
                     }
                     .buttonStyle(.plain)
                     // Everything right of the artwork is one column: titles
-                    // (and the trailing pill) on top, the scrub bar directly
+                    // (and the trailing hint) on top, the scrub bar directly
                     // beneath them, spanning from the artwork's edge to the
                     // panel's. The bar is no longer its own full-width row
                     // below the header.
@@ -239,58 +239,19 @@ struct MediaExpandedView: View {
                                 Text(playing.title ?? "—")
                                     .font(.system(size: 17, weight: .semibold))
                                     .lineLimit(1)
-                                HStack(spacing: 5) {
-                                    // Official artist avatar, when the account
-                                    // is connected and Spotify has one.
-                                    if let data = module.artistImageData,
-                                       let image = NSImage(data: data) {
-                                        Image(nsImage: image)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .frame(width: 15, height: 15)
-                                            .clipShape(Circle())
-                                    }
-                                    Text(playing.artist ?? "")
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.white.opacity(0.6))
-                                        .lineLimit(1)
-                                }
-                                // Followers, labelled for what it is: the
-                                // official API does not expose monthly
-                                // listeners.
-                                if let followers = module.artistInfo?.followers, followers > 0 {
-                                    Text("\(CountFormatter.short(followers)) followers")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.white.opacity(0.42))
-                                        .lineLimit(1)
-                                }
+                                Text(playing.artist ?? "")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .lineLimit(1)
                             }
                             // Bounded: the panel sizes itself to measured
                             // content; an unbounded one-line title would
                             // balloon it.
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            // Trailing corner, per the reference: the pill,
-                            // and the one place in the panel a refused System
-                            // Audio Recording grant shows.
-                            VStack(alignment: .trailing, spacing: 5) {
-                                // Popularity pill, where the reference puts
-                                // its play count. Spotify's official 0-100
-                                // score, not plays.
-                                if let popularity = module.trackPopularity {
-                                    HStack(spacing: 3) {
-                                        Image(systemName: "chart.bar.fill")
-                                            .font(.system(size: 7, weight: .bold))
-                                        Text("\(popularity)")
-                                            .font(.system(size: 10, weight: .bold))
-                                    }
-                                    .foregroundStyle(.green)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(Capsule().fill(.green.opacity(0.16)))
-                                }
-                                if let visualizer = module.visualizer {
-                                    AudioVisualizerPermissionHint(service: visualizer)
-                                }
+                            // Trailing corner: the one place in the panel a
+                            // refused System Audio Recording grant shows.
+                            if let visualizer = module.visualizer {
+                                AudioVisualizerPermissionHint(service: visualizer)
                             }
                         }
                         MediaProgressBar(module: module)
@@ -455,12 +416,10 @@ private struct MediaControlsRow: View {
 /// The favourite heart, in one of two modes decided by the *source*, not by
 /// this view.
 ///
-/// Apple Music's `favorited` is read-write, and Spotify's Web API can save a
-/// track, so both of those are real toggles. Spotify's AppleScript `starred`
-/// is read-only — with no connected account the value is knowable but not
-/// changeable, so the heart renders as state rather than as a control and
-/// takes no clicks at all. Offering a toggle there would be offering
-/// something the scripting interface cannot do.
+/// Apple Music's `favorited` is read-write, so it is a real toggle. A source
+/// that can report a favourite but not change it renders the heart as state
+/// rather than as a control, taking no clicks at all. Spotify reports none
+/// (`starred` is unimplemented), so it shows no heart.
 ///
 /// Hidden entirely when there is no value to show, which is what a denied
 /// Automation prompt looks like. A greyed-out heart of unknown truth is

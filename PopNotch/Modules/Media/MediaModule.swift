@@ -71,8 +71,8 @@ final class MediaModule: NotchModule {
     private(set) var artworkImage: NSImage?
     @ObservationIgnored private var accentSourceData: Data?
 
-    /// Account-backed extras (nil until the user connects Spotify).
-    private(set) var upNext: SpotifyUpNext?
+    /// Up Next and favourite, mirrored from the active source.
+    private(set) var upNext: UpNextTrack?
     private(set) var likedCurrent: Bool?
     /// Shuffle and repeat, mirrored from the active source the same way
     /// `likedCurrent` and `upNext` are. The mirror is the point: the
@@ -93,20 +93,6 @@ final class MediaModule: NotchModule {
     /// `ScriptedPlayerVolumes`, so the row and the player slider are one
     /// value: moving either moves the other.
     private(set) var playerVolumes: [String: Int] = [:]
-    /// Official artist metadata: avatar, follower count, genres.
-    private(set) var artistInfo: SpotifyArtistInfo?
-    private(set) var artistImageData: Data?
-    /// Spotify's 0-100 popularity score for the current track.
-    private(set) var trackPopularity: Int?
-    /// Cached per artist so skipping within an album costs no extra calls.
-    @ObservationIgnored private var artistCache: [String: (SpotifyArtistInfo, Data?)] = [:]
-
-    /// Where playback was started from, e.g. `spotify:playlist:...`. Drives
-    /// the artwork tap. Not `@Observable` state — nothing renders from it.
-    /// Kept across a track change rather than cleared: within one playlist
-    /// the context does not change, so the stale value is the right value,
-    /// and the refresh overwrites it a round trip later either way.
-    @ObservationIgnored private var playbackContextURI: String?
 
     /// When true the expanded notch shows full scrolling lyrics instead of
     /// the player, and stays open regardless of hover until dismissed.
@@ -114,13 +100,11 @@ final class MediaModule: NotchModule {
 
     @ObservationIgnored private let sources: [MediaSource]
     @ObservationIgnored private let lyricsService = LyricsService()
-    @ObservationIgnored private let account: SpotifyAccount?
     /// Injected, not owned. The progress row renders the spectrum, and this
     /// module is what tells the service whether they may capture: the
     /// tracked player's play state, and whether the player screen, whose
     /// progress row draws it, is on screen. Nil in tests that do not care.
     @ObservationIgnored let visualizer: AudioVisualizerService?
-    @ObservationIgnored private let webAPI: SpotifyWebAPI?
     /// The open panel's live-sync clock. Exists only between
     /// `didBecomeVisible()` and `didResignVisible()`, and is stopped by
     /// display sleep in between — hard rule 9, all three clauses.
@@ -196,21 +180,12 @@ final class MediaModule: NotchModule {
         return candidates.first { !($0 is SystemMediaAdapter) } ?? candidates.first
     }
 
-    /// Whether the current track's favourite can be changed. False for
-    /// Spotify without a connected account, because `starred` is read-only
-    /// in its dictionary — the UI must not offer a toggle there.
+    /// Whether the current track's favourite can be changed: only when the
+    /// source itself can write it. Spotify never can — its `starred` is
+    /// unimplemented in the dictionary — so the UI never offers it a toggle.
     var canToggleFavorite: Bool {
-        if activeSource?.sourceID == "spotify" {
-            return webAPI != nil && accountConnected && !libraryForbidden
-        }
-        return activeSource?.favorite.isEditable ?? false
+        activeSource?.favorite.isEditable ?? false
     }
-
-    /// Spotify has refused this account's library with a 403. See
-    /// `SpotifyAccount.libraryAccessForbidden`.
-    var libraryForbidden: Bool { account?.libraryAccessForbidden == true }
-
-    var accountConnected: Bool { account?.isConnected == true }
 
     /// Drives the in-notch "allow Automation" banner, which renders only
     /// when the widget is empty. Denial explains emptiness only for a player
@@ -249,12 +224,9 @@ final class MediaModule: NotchModule {
     var hasExpandedContent: Bool { expandedScreen != nil }
 
     init(sources: [MediaSource],
-         account: SpotifyAccount? = nil,
          visualizer: AudioVisualizerService? = nil) {
         self.sources = sources
-        self.account = account
         self.visualizer = visualizer
-        self.webAPI = account.map(SpotifyWebAPI.init(account:))
         for source in sources {
             source.onUpdate = { [weak self, weak source] snapshot in
                 guard let source else { return }
@@ -363,10 +335,9 @@ final class MediaModule: NotchModule {
     /// genuinely different things:
     /// - **Music** answers both itself, with no network: a real queue via
     ///   `current playlist`, and a read-write `favorited`.
-    /// - **Spotify** answers neither usefully. It has no queue class at all,
-    ///   and `starred` is read-only. Its Up Next and its *editable* like come
-    ///   from the optional Web API; with no account connected it degrades to
-    ///   `starred` as display-only, which is all the dictionary permits.
+    /// - **Spotify** answers neither. It has no queue class at all, and
+    ///   `starred` is unimplemented, so it reports nil and `.unsupported` and
+    ///   the notch shows neither for it.
     ///
     /// Synchronous and free — the adapter refreshed these during its own
     /// Apple Event before calling back.
@@ -380,23 +351,12 @@ final class MediaModule: NotchModule {
             volume = nil
             return
         }
-        // Above the account guard, deliberately: the Web API owns Up Next
-        // and the like, but the playback modes come from the scripting
-        // interface for every Spotify user, connected or not. Below it they
-        // would never mirror for a connected account.
         shuffling = active.shuffling
         repeating = active.repeating
-        // The volume likewise, for the same reason.
         volumeSupported = active.supportsVolume
         if !isEditingVolume { mirrorVolume(active.volume, of: active) }
-        if active is SpotifyAdapter {
-            guard !accountConnected else { return } // Web API path owns these
-            setUpNext(nil)
-            likedCurrent = active.favorite.value
-        } else {
-            setUpNext(active.upNext)
-            likedCurrent = active.favorite.value
-        }
+        setUpNext(active.upNext)
+        likedCurrent = active.favorite.value
     }
 
     // MARK: - Playback modes
@@ -591,7 +551,6 @@ final class MediaModule: NotchModule {
         lyricsReserved = lyrics != nil
         lyrics = nil
         fetchLyrics(for: snapshot, trackKey: key)
-        refreshAccountExtras()
     }
 
     /// The adapter commands go to: whoever owns the notch, falling back to
@@ -686,7 +645,7 @@ final class MediaModule: NotchModule {
         }
     }
 
-    /// One pull from every player, plus the account extras.
+    /// One pull from every player.
     ///
     /// Sources observe by push and say nothing until playback changes, so
     /// without this a track already playing at launch would not put the
@@ -695,7 +654,6 @@ final class MediaModule: NotchModule {
     /// meant standby membership, which in practice fired once, at launch.
     private func pullSources() {
         sources.forEach { $0.refresh() }
-        refreshAccountExtras()
     }
 
     // MARK: - Live sync
@@ -765,65 +723,6 @@ final class MediaModule: NotchModule {
         visualizer.setSpectrumVisible(isVisible && Self.drawsSpectrum(on: expandedScreen))
     }
 
-    // MARK: - Account extras
-
-    /// The current track's Spotify ID, when the URI is a track at all.
-    private var currentTrackID: String? {
-        nowPlaying?.artworkIdentifier.flatMap(SpotifyWebAPI.trackID(fromURI:))
-    }
-
-    /// Event-driven only (track change, panel opening): no polling loop.
-    ///
-    /// Gated on Spotify owning the notch: querying Spotify's Web API while
-    /// Apple Music is playing would report the wrong player's queue and the
-    /// wrong track's like state.
-    private func refreshAccountExtras() {
-        guard let webAPI, accountConnected, activeSource is SpotifyAdapter else { return }
-        let trackID = currentTrackID
-        Task { [weak self] in
-            let next = await webAPI.fetchUpNext()
-            let context = await webAPI.fetchPlaybackContext()
-            // Not asked again once refused. The 403 is a property of the
-            // account, not of this track, so re-asking on every track change
-            // would be a loop with extra steps — and each attempt is a
-            // request that cannot succeed. `likedCurrent` stays nil, which
-            // hides the heart outright rather than dimming a dead one.
-            guard let self else { return }
-            let liked: Bool? = if let trackID, !self.libraryForbidden {
-                await webAPI.isSaved(trackID: trackID)
-            } else { nil }
-            self.setUpNext(next)
-            if let context { self.playbackContextURI = context }
-            self.likedCurrent = liked
-            await self.refreshArtistDetail(trackID: trackID, webAPI: webAPI)
-        }
-    }
-
-    /// Official track and artist metadata: popularity score, artist avatar,
-    /// follower count. Two calls on a track change, then cached per artist.
-    private func refreshArtistDetail(trackID: String?, webAPI: SpotifyWebAPI) async {
-        guard let trackID, let detail = await webAPI.fetchTrackDetail(trackID: trackID) else {
-            trackPopularity = nil
-            return
-        }
-        trackPopularity = detail.popularity
-
-        if let cached = artistCache[detail.artistID] {
-            artistInfo = cached.0
-            artistImageData = cached.1
-            return
-        }
-        guard let info = await webAPI.fetchArtist(id: detail.artistID) else { return }
-        var imageData: Data?
-        if let url = info.imageURL {
-            imageData = await webAPI.fetchImage(url)
-        }
-        artistCache[detail.artistID] = (info, imageData)
-        artistInfo = info
-        artistImageData = imageData
-        onContentReflow?()
-    }
-
     /// Brings the Spotify app forward, and does nothing else.
     ///
     /// This activates Spotify — permitted because it is a direct response to
@@ -831,11 +730,9 @@ final class MediaModule: NotchModule {
     /// against hover-stealing).
     ///
     /// **Deliberately not a navigation.** It previously opened a
-    /// `spotify:` URI — the playback context when the Web API had supplied
-    /// one, the track otherwise — which made the same tap land somewhere
-    /// different depending on whether an account happened to be connected,
-    /// and could move the user off what they were looking at. Bringing the
-    /// app forward is the one behaviour that is the same every time.
+    /// `spotify:` URI, which could move the user off what they were looking
+    /// at. Bringing the app forward is the one behaviour that is the same
+    /// every time.
     ///
     /// Behaves like clicking Spotify in the Dock, which is stronger than
     /// activation in two ways that both matter here: it **launches** Spotify
@@ -883,34 +780,12 @@ final class MediaModule: NotchModule {
         }
     }
 
-    /// Only ever called when `canToggleFavorite` is true. Spotify writes go
-    /// through the Web API because its `starred` is read-only; Music writes
-    /// go straight to the player.
+    /// Only ever called when `canToggleFavorite` is true, so only for a
+    /// source that writes its own favourite (Music's `favorited`).
     func toggleLike() {
-        guard canToggleFavorite else { return }
-        // A 403 arriving mid-flight retires the control; the optimistic
-        // value below must not be left behind as a heart nobody can change.
-        let target = !(likedCurrent ?? false)
-        likedCurrent = target // optimistic; revert on failure
-
-        if let active = activeSource, !(active is SpotifyAdapter) {
-            active.setFavorite(target)
-            likedCurrent = active.favorite.value
-            return
-        }
-        guard let webAPI, let trackID = currentTrackID else {
-            likedCurrent = !target
-            return
-        }
-        Task { [weak self] in
-            let accepted = await webAPI.setSaved(target, trackID: trackID)
-            guard let self else { return }
-            if self.libraryForbidden {
-                self.likedCurrent = nil
-            } else if !accepted {
-                self.likedCurrent = !target
-            }
-        }
+        guard canToggleFavorite, let active = activeSource else { return }
+        active.setFavorite(!(likedCurrent ?? false))
+        likedCurrent = active.favorite.value
     }
 
     func didResignVisible() {

@@ -11,7 +11,6 @@ Built with Swift and SwiftUI, no web runtime, no Electron. An overlay that costs
 
 - **Now playing** for **Spotify** and **Apple Music**: artwork, title, artist, play/pause/skip, scrubbing, and an artwork-derived accent color. Whichever player is actually playing owns the notch.
 - **Time-synced lyrics**, resolved from the player itself when possible, then from [LRCLIB](https://lrclib.net). Tap for a full-screen lyrics view.
-- **Up Next** from Apple Music's queue, or from Spotify with an optional account connection.
 - **System stats**: CPU, memory, disk, GPU, battery.
 - **Launch at login**, a hover-delay setting, and a Permissions pane that tells you honestly what's granted.
 
@@ -70,20 +69,12 @@ Either way this is a one-time step per download. On macOS 15 and later the old r
 
 That's the complete list today. If you decline, the notch keeps working — the media widget hides or shows a one-line hint, and you can re-grant later in System Settings → Privacy & Security → Automation (the in-app **Permissions** settings pane shows current status and takes you there).
 
-Nothing leaves your machine except the feature-essential requests: album artwork from the URL Spotify itself provides, lyrics lookups to LRCLIB (song title, artist, duration — nothing about you), and, only if you connect a Spotify account, calls to Spotify's official Web API. **No analytics, no telemetry, ever.** The source is public so you can check.
-
-## Optional: connecting Spotify
-
-Playback control needs no account. Connecting one adds Up Next, like/unlike from the notch, and artist info, via Spotify's **official** Web API with OAuth (PKCE).
-
-There is nothing to configure: PopNotch ships its own Spotify Client ID, so connecting is one button in **Settings → Music**. (A Client ID is public information under PKCE — it identifies the app, not you, and there is no client secret anywhere in this app.)
-
-Your token stays in your Keychain; there is no server side. **Note:** Spotify caps apps in development mode at **25 users**, so until PopNotch's registration is granted extended quota, connecting only works for accounts explicitly allowlisted on its Spotify dashboard. Everything else in the app works without connecting at all.
+Nothing leaves your machine except the feature-essential requests: album artwork from the URL Spotify itself provides, and lyrics lookups to LRCLIB (song title, artist, duration — nothing about you). **No analytics, no telemetry, ever.** The source is public so you can check.
 
 ## Known limitations
 
 - **Spotify artwork requires the Automation permission.** Track metadata arrives without it (Spotify broadcasts it), but artwork is fetched via AppleScript.
-- **Spotify's Web API extras cap at 25 users** until the app's registration is granted extended quota (their development-mode limit), so Connect may fail for accounts that are not allowlisted. See above.
+- **No Spotify account connection.** Earlier versions could connect a Spotify account for Up Next, likes and artist info, but Spotify caps that at 25 users, so it was removed. If you connected one, the old token may still sit in your login keychain; nothing reads it any more, and `security delete-generic-password -s com.techie.PopNotch -a spotify-refresh-token` removes it.
 - **Pandora and YouTube Music are not supported.** They have no scriptable Mac app, and Apple gated the private framework that once made universal now-playing possible (macOS 15.4+). If Apple relents, the adapter slot is already there.
 - **Lyrics coverage is whatever LRCLIB has.** Instrumentals and obscure tracks may show none; plain-text-only lyrics are treated as none, since the notch can't scroll untimed text.
 - **Un-notarized.** See the Gatekeeper section above; first install needs `xattr -cr`. Updates go through Sparkle and are **manual only** — PopNotch never checks on its own, so nothing phones home unless you press the button in Settings → About.

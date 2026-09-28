@@ -184,7 +184,7 @@ The traditional route was the private MediaRemote framework, giving now-playing 
 5. **Artwork and accent color.** Extract album art, derive a tint. `CIAreaAverage` is faster than manual averaging. Cache by track identifier — re-deriving a tint on every poll is wasteful and causes visible flicker. **Done** — `ArtworkColor.dominant(in:)` over a 24×24 downsample, recomputed only when the artwork bytes change, never black.
 6. **Scrubbing.** Draggable progress bar that seeks. Interpolate position locally between polls or it stutters. **Done.**
 7. **Lyrics (optional).** LRCLIB offers free time-synced lyrics with no key. Do not scrape Genius or Musixmatch. **Done, and larger than "optional" implied** — timed lyrics, a pinned page, and a full-screen takeover. Endpoint decision now recorded in `PROJECT-CONTEXT.md`, which it was not when this shipped.
-8. **Spotify account features.** OAuth via PKCE from Settings, refresh token in the Keychain, Up Next, like/unlike, official artist metadata. **Done.** Official Web API only — the private API is declined and that decision is recorded.
+8. **Spotify account features.** OAuth via PKCE from Settings, refresh token in the Keychain, Up Next, like/unlike, official artist metadata. **Done, then removed 2026-09-28:** Spotify's 25-user development-mode cap made Connect fail for nearly everyone, and the Keychain token caused prompts. See `PROJECT-CONTEXT.md`. Official Web API only — the private API is declined and that decision is recorded.
 
 ### Where Phase 4 actually stands
 
@@ -275,7 +275,7 @@ Written after reviewing a feature analysis of Sapphire. That analysis stays out 
 |---|---|
 | Now-playing, artwork, transport, scrubbing | Shipped (Spotify) |
 | Lyrics in the notch | Shipped, timed, with a full-page takeover |
-| Up Next / recommended | Shipped via official Spotify Web API |
+| Up Next / recommended | Removed with the Spotify Web API (2026-09-28) |
 | CPU, memory, disk, GPU, battery monitoring | Shipped. **Absent from Sapphire's public material** — the clearest differentiator PopNotch has, and it already exists |
 
 ### Already scheduled

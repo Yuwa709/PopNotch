@@ -244,15 +244,6 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(AppSettings().showMenuBarIcon)
     }
 
-    /// The whole point of the change: the Client ID is the app's own, so it is
-    /// present without anyone configuring anything. A fresh install used to
-    /// have no ID at all, which left Connect permanently disabled.
-    func testBuiltInClientIDIsPresentOnAFreshInstall() {
-        XCTAssertEqual(store().settings, AppSettings(), "fresh install, nothing persisted")
-        XCTAssertFalse(SpotifyAccount.clientID.isEmpty,
-                       "Connect must work with no user configuration")
-    }
-
     // MARK: - v7: the Spotify connected flag
 
     /// CLAUDE.md's rule: every schemaVersion bump gets a test that loads the
@@ -278,33 +269,20 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.visualizerEnabled)
         XCTAssertFalse(settings.showMenuBarIcon)
         XCTAssertFalse(settings.preferMusicOverVideo)
-        // And the new field arrives NIL, not false: v6 JSON cannot say
-        // whether a token exists, and guessing "no" would log the user out.
-        XCTAssertNil(settings.spotifyAccountConnected,
-                     "v6 payload must not be read as 'no Spotify account'")
+        // v6 JSON cannot say whether a Spotify token exists, so the one-time
+        // Keychain cleanup is queued rather than guessed away.
+        XCTAssertTrue(settings.spotifyKeychainCleanupPending,
+                      "v6 payload must not be read as 'no Spotify token'")
     }
 
-    /// A v7 payload round-trips the flag, and an unwritten one stays nil.
-    func testV7FlagRoundTripsInEveryState() throws {
-        for stored in [true, false] {
-            defaults.removePersistentDomain(forName: suiteName)
-            let settings = store()
-            settings.update { $0.spotifyAccountConnected = stored }
-            XCTAssertEqual(store().settings.spotifyAccountConnected, stored,
-                           "flag must survive a reload")
-        }
-        defaults.removePersistentDomain(forName: suiteName)
-        XCTAssertNil(store().settings.spotifyAccountConnected)
-    }
-
-    /// Older payloads all the way back to v1 must also arrive with a nil
-    /// flag rather than a guessed one.
-    func testEveryOlderSchemaLeavesTheSpotifyFlagUnknown() throws {
-        for version in 1...7 {
+    /// Every pre-v11 payload that never recorded the old connected flag
+    /// arrives with the cleanup queued: nothing said there was no token.
+    func testEveryOlderSchemaWithoutTheFlagQueuesTheCleanup() throws {
+        for version in 1...10 {
             defaults.removePersistentDomain(forName: suiteName)
             write("{\"schemaVersion\": \(version), \"moduleEnablement\": {}}")
-            XCTAssertNil(store().settings.spotifyAccountConnected,
-                         "v\(version) must not claim to know the Spotify state")
+            XCTAssertTrue(store().settings.spotifyKeychainCleanupPending,
+                          "v\(version) must not claim to know the Spotify state")
         }
     }
 
@@ -335,7 +313,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.visualizerEnabled)
         XCTAssertFalse(settings.showMenuBarIcon)
         XCTAssertFalse(settings.preferMusicOverVideo)
-        XCTAssertEqual(settings.spotifyAccountConnected, true, "nothing dropped")
+        XCTAssertTrue(settings.spotifyKeychainCleanupPending, "a stored token is queued for cleanup")
         XCTAssertFalse(settings.capybaraThemeEnabled, "the new field arrives OFF")
     }
 
@@ -371,7 +349,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.visualizerEnabled)
         XCTAssertFalse(settings.showMenuBarIcon)
         XCTAssertFalse(settings.preferMusicOverVideo)
-        XCTAssertEqual(settings.spotifyAccountConnected, true)
+        XCTAssertTrue(settings.spotifyKeychainCleanupPending)
         XCTAssertTrue(settings.capybaraThemeEnabled)
         // And the new struct arrives empty.
         XCTAssertNil(settings.appVolume.tapsEnabled, "taps arrive off: a capture permission is opt-in")
@@ -444,7 +422,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(settings.visualizerEnabled)
         XCTAssertFalse(settings.showMenuBarIcon)
         XCTAssertFalse(settings.preferMusicOverVideo)
-        XCTAssertEqual(settings.spotifyAccountConnected, true)
+        XCTAssertTrue(settings.spotifyKeychainCleanupPending)
         XCTAssertTrue(settings.capybaraThemeEnabled)
         XCTAssertEqual(settings.appVolume.tapsEnabled, true, "taps stay on across the upgrade")
         XCTAssertEqual(settings.appVolume.volumes, ["com.hnc.Discord": 35, "webkit": 60],
@@ -470,5 +448,83 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(appVolume.outputs, ["com.hnc.Discord": "usb"],
                        "a non-string or empty UID loses itself, not the other apps' outputs")
         XCTAssertEqual(appVolume.volumes, ["com.hnc.Discord": 35], "and never the volumes beside it")
+    }
+
+    // MARK: - v11: the Spotify account removed
+
+    /// CLAUDE.md's rule: real v10 JSON loads with nothing dropped. Every v10
+    /// field holds a non-default value, so one that silently fell back to its
+    /// default would fail here. The one field v11 removes is converted, not
+    /// dropped: a stored token becomes a queued cleanup.
+    func testV10JSONMigratesToV11WithNothingDropped() {
+        write("""
+        {"schemaVersion": 10,
+         "moduleEnablement": {"media": true, "clipboard": false, "app-volume": true},
+         "hoverEnterDelay": 0.42,
+         "visualizerEnabled": true,
+         "showMenuBarIcon": false,
+         "preferMusicOverVideo": false,
+         "spotifyAccountConnected": true,
+         "capybaraThemeEnabled": true,
+         "appVolume": {"tapsEnabled": true,
+                       "volumes": {"com.hnc.Discord": 35, "webkit": 60},
+                       "outputs": {"com.hnc.Discord": "usb-uid"}}}
+        """)
+        let settings = store().settings
+
+        XCTAssertEqual(settings.schemaVersion, 11)
+        XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertEqual(settings.moduleEnablement, ["media": true, "clipboard": false, "app-volume": true])
+        XCTAssertEqual(settings.hoverEnterDelay, 0.42, accuracy: 0.0001)
+        XCTAssertTrue(settings.visualizerEnabled)
+        XCTAssertFalse(settings.showMenuBarIcon)
+        XCTAssertFalse(settings.preferMusicOverVideo)
+        XCTAssertTrue(settings.capybaraThemeEnabled)
+        XCTAssertEqual(settings.appVolume.tapsEnabled, true)
+        XCTAssertEqual(settings.appVolume.volumes, ["com.hnc.Discord": 35, "webkit": 60])
+        XCTAssertEqual(settings.appVolume.outputs, ["com.hnc.Discord": "usb-uid"])
+        XCTAssertTrue(settings.spotifyKeychainCleanupPending, "a stored token is queued for cleanup")
+        XCTAssertNil(defaults.data(forKey: SettingsStore.salvageKey), "nothing was unreadable")
+    }
+
+    /// A definite `false` was the Keychain itself saying there was no token,
+    /// so the cleanup is not queued: that user's launch never touches the
+    /// Keychain at all.
+    func testV10DefiniteNoAccountDoesNotQueueTheCleanup() {
+        write(#"{"schemaVersion": 10, "spotifyAccountConnected": false}"#)
+        XCTAssertFalse(store().settings.spotifyKeychainCleanupPending)
+    }
+
+    /// A fresh install cannot hold a token from a version it never ran, so
+    /// it must never be sent to the Keychain.
+    func testFreshInstallNeverQueuesTheCleanup() {
+        XCTAssertFalse(AppSettings().spotifyKeychainCleanupPending)
+        XCTAssertFalse(store().settings.spotifyKeychainCleanupPending,
+                       "nothing stored reads as a fresh install")
+    }
+
+    /// The removed key is not written back: the first save after upgrading
+    /// persists v11's shape, and the cleared flag stays cleared.
+    func testTheRemovedFlagIsNotWrittenBack() throws {
+        write(#"{"schemaVersion": 10, "spotifyAccountConnected": true, "hoverEnterDelay": 0.5}"#)
+        store().update { $0.spotifyKeychainCleanupPending = false }
+
+        let data = try XCTUnwrap(defaults.data(forKey: SettingsStore.storageKey))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["spotifyAccountConnected"], "the removed field must not be persisted")
+        XCTAssertEqual(json["schemaVersion"] as? Int, 11)
+        XCTAssertEqual(json["spotifyKeychainCleanupPending"] as? Bool, false)
+        XCTAssertFalse(store().settings.spotifyKeychainCleanupPending, "cleared survives a reload")
+        XCTAssertEqual(store().settings.hoverEnterDelay, 0.5, "and nothing else moved")
+    }
+
+    /// Once a payload is v11, only the new key counts. A stray old key must
+    /// not re-arm a cleanup that already ran, or the Keychain would be asked
+    /// again on every launch.
+    func testAV11PayloadIgnoresAStrayLegacyKey() {
+        write(#"{"schemaVersion": 11, "spotifyKeychainCleanupPending": false, "spotifyAccountConnected": true}"#)
+        XCTAssertFalse(store().settings.spotifyKeychainCleanupPending)
+        write(#"{"schemaVersion": 11, "spotifyKeychainCleanupPending": true}"#)
+        XCTAssertTrue(store().settings.spotifyKeychainCleanupPending, "a pending flag survives a reload")
     }
 }

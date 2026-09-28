@@ -205,8 +205,8 @@ final class SpotifyCapabilityTests: XCTestCase {
 
     @MainActor
     func testSpotifyAdapterHasNoFavoriteState() {
-        // Not .readOnly — unavailable. With an account connected the Web API
-        // owns the like, and MediaModule never consults this.
+        // Not .readOnly — unavailable: `starred` is unimplemented, so the
+        // notch shows no heart for Spotify at all.
         XCTAssertEqual(SpotifyAdapter().favorite, .unsupported)
         XCTAssertNil(SpotifyAdapter().favorite.value)
     }

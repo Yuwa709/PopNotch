@@ -26,7 +26,8 @@ struct AppSettings: Codable, Equatable {
     /// v8: added capybaraThemeEnabled.
     /// v9: added appVolume.
     /// v10: added appVolume.outputs.
-    static let currentSchemaVersion = 10
+    /// v11: removed spotifyAccountConnected; added spotifyKeychainCleanupPending.
+    static let currentSchemaVersion = 11
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -45,7 +46,8 @@ struct AppSettings: Codable, Equatable {
     // was the wrong model: the Client ID identifies *PopNotch* to Spotify, not
     // the user, so every install needs the same one. Shipping it empty meant a
     // fresh install had no Client ID at all and Connect was permanently
-    // disabled. It is now a build-time constant on `SpotifyAccount`.
+    // disabled. It became a build-time constant, and v11 removed the Spotify
+    // account feature it served altogether.
 
     /// Whether the menu bar icon is inserted. **Defaults to on**: hiding it
     /// is a deliberate choice, and an agent with no Dock icon, no menu bar
@@ -78,22 +80,20 @@ struct AppSettings: Codable, Equatable {
     /// their own adapters and outrank this source either way.
     var preferMusicOverVideo: Bool = true
 
-    /// Whether a Spotify refresh token exists, cached outside the Keychain.
+    /// Whether an older version may have left a Spotify refresh token in the
+    /// Keychain that `LegacySpotifyKeychain` has not yet tried to delete.
     ///
-    /// **Deliberately tri-state.** `true`/`false` are answers; `nil` means
-    /// "never recorded" — an install upgraded from v6 or earlier, or a fresh
-    /// install whose settings have never been written. Only `nil` may
-    /// consult the Keychain, and doing so writes the answer here, so the
-    /// question is asked of the Keychain at most once per install.
+    /// Schema 10 and earlier had an optional Spotify account (OAuth) whose
+    /// refresh token lived in the Keychain, and `spotifyAccountConnected`
+    /// cached whether one existed. v11 removed the feature, and this flag is
+    /// all that is left of it: the one-time cleanup's bookkeeping.
     ///
-    /// A plain `Bool` would collapse "no account" and "don't know" into
-    /// `false`, which is precisely the bug that would log existing users out
-    /// on upgrade: the Keychain outlives the app bundle, so a token can be
-    /// present on an install whose settings are brand new.
-    ///
-    /// It caches a fact about the Keychain, never a credential — the refresh
-    /// token itself stays in the Keychain and never touches UserDefaults.
-    var spotifyAccountConnected: Bool?
+    /// **False by default**, so a fresh install never touches the Keychain —
+    /// it cannot hold a token from a version it never ran. Only decoding a
+    /// v10-or-earlier payload sets it (see the decoder), and the cleanup
+    /// clears it the first time it runs, whatever the Keychain answers, so
+    /// the Keychain is asked at most once per install, ever.
+    var spotifyKeychainCleanupPending = false
 
     /// Capybara theme on the scrub bar: a sprite walks the track as it
     /// plays, towards a finish flag. Off by default — it is decoration, and
@@ -144,8 +144,15 @@ struct AppSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, moduleEnablement, hoverEnterDelay, visualizerEnabled
-        case showMenuBarIcon, preferMusicOverVideo, spotifyAccountConnected
+        case showMenuBarIcon, preferMusicOverVideo, spotifyKeychainCleanupPending
         case capybaraThemeEnabled, appVolume
+    }
+
+    /// Keys an older schema wrote that this one no longer has. Read only by
+    /// the decoder, to carry what they meant into the current shape.
+    private enum LegacyCodingKeys: String, CodingKey {
+        /// v7...v10. See `spotifyKeychainCleanupPending`.
+        case spotifyAccountConnected
     }
 
     init() {}
@@ -173,10 +180,23 @@ struct AppSettings: Codable, Equatable {
         // Absent in v5 and earlier; on is the shipped default.
         preferMusicOverVideo = (try? container.decode(Bool.self, forKey: .preferMusicOverVideo))
             ?? true
-        // Absent in v6 and earlier, and nil is meaningful here rather than a
-        // fallback: it is what sends `SpotifyAccount` to the Keychain once.
-        spotifyAccountConnected = try? container.decodeIfPresent(
-            Bool.self, forKey: .spotifyAccountConnected)
+        // v11 replaced spotifyAccountConnected with the cleanup flag. The
+        // conversion lives here rather than in `migrate` because the old key
+        // is the only evidence of whether a token might exist, and `migrate`
+        // sees only the decoded struct. Pending unless the old flag was a
+        // definite `false`: `true` means a token was stored, and nil (v6 and
+        // earlier, or a Keychain that never answered) means nobody knows.
+        // A `false` was the Keychain itself saying there was none — asking
+        // again would be a Keychain call for nothing.
+        if schemaVersion >= 11 {
+            spotifyKeychainCleanupPending = (try? container.decode(
+                Bool.self, forKey: .spotifyKeychainCleanupPending)) ?? false
+        } else {
+            let legacy = try? decoder.container(keyedBy: LegacyCodingKeys.self)
+            let wasConnected = try? legacy?.decodeIfPresent(
+                Bool.self, forKey: .spotifyAccountConnected)
+            spotifyKeychainCleanupPending = wasConnected != false
+        }
         // Absent in v7 and earlier; off is the shipped default.
         capybaraThemeEnabled = (try? container.decode(Bool.self, forKey: .capybaraThemeEnabled))
             ?? false
@@ -227,13 +247,9 @@ struct AppSettings: Codable, Equatable {
             // for v5 JSON, which is the on-by-default state. Nothing moves.
             fallthrough
         case 6:
-            // v7 added spotifyAccountConnected. It stays **nil** here on
-            // purpose: this migration cannot know whether a token exists
-            // without reading the Keychain, which is the very thing the
-            // field was added to avoid at launch. Nil routes the first
-            // `SpotifyAccount.init` through one Keychain read, which then
-            // records the answer — so an upgrading user who is connected
-            // stays connected. Writing `false` here would log them out.
+            // v7 added spotifyAccountConnected, left nil here on purpose: only
+            // the Keychain knew whether a token existed. v11 removed it; see
+            // case 10.
             fallthrough
         case 7:
             // v8 added capybaraThemeEnabled; the lenient decoder fills false
@@ -247,6 +263,14 @@ struct AppSettings: Codable, Equatable {
             // v10 added appVolume.outputs; the lenient decoder fills nil for
             // v9 JSON: every app on System default. Taps and saved volumes
             // are untouched. Nothing moves.
+            fallthrough
+        case 10:
+            // v11 removed spotifyAccountConnected with the Spotify account
+            // feature, and added spotifyKeychainCleanupPending. The decoder
+            // has already converted one into the other; it is the only place
+            // the removed key is still visible. Dropping the old flag is not a
+            // silent wipe: it cached a fact about the Keychain for a feature
+            // that no longer exists, and nothing the user chose is lost.
             fallthrough
         default:
             break

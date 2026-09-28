@@ -91,7 +91,7 @@ To compensate, add `os.Logger` output at every state transition (panel expand, c
 3. **Never change the notch panel's `level`, `collectionBehavior`, or `styleMask`** without explaining what you are changing and why. Those three properties are the entire reason the overlay works.
 4. **Never add `NSApplication.shared.activate` or anything that steals focus.** Hovering the notch must never pull focus from the user's current app.
 5. **No SwiftData, no Core Data.** Settings are a single `Codable` struct in UserDefaults. Notch data is live system state and is not persisted.
-6. **No analytics, telemetry, or crash-phone-home, ever.** Network calls are allowed only in features that are inherently network-based, and only to the endpoint that feature needs: **weather** (Open-Meteo), **lyrics** (LRCLIB), **stocks** (Phase 6, provider TBD), **update checks** (Sparkle, Phase 5), **Spotify album artwork** (the URL Spotify's scripting interface returns), and **Spotify account features** (accounts.spotify.com OAuth + api.spotify.com queue/likes — official API only, never the private one; decisions recorded in `PROJECT-CONTEXT.md`). Adding a network call anywhere else requires an explicit decision recorded in `PROJECT-CONTEXT.md`.
+6. **No analytics, telemetry, or crash-phone-home, ever.** Network calls are allowed only in features that are inherently network-based, and only to the endpoint that feature needs: **weather** (Open-Meteo), **lyrics** (LRCLIB), **stocks** (Phase 6, provider TBD), **update checks** (Sparkle, Phase 5), and **Spotify album artwork** (the URL Spotify's scripting interface returns). The Spotify account features (OAuth + Web API) were removed on 2026-09-28 and their endpoints are no longer permitted; see `PROJECT-CONTEXT.md`. Adding a network call anywhere else requires an explicit decision recorded in `PROJECT-CONTEXT.md`.
 7. **One feature per session.** If asked for something large, propose a breakdown first and wait for confirmation.
 8. **Respect Reduce Motion.** Check `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion` before every spring or expand/collapse animation and fall back to an instant transition. The whole app is animation; ignoring this makes it unusable for the people who need the setting.
 9. **Never poll on a fixed timer without a suspend path.** This app runs for days. Every timer must stop when the display sleeps, when the panel is collapsed and its module is not visible, or when the owning module is disabled.
@@ -146,7 +146,7 @@ One `Codable` `AppSettings` struct persisted to `UserDefaults` as JSON, with a `
 
 ## Testing
 
-The test target exists (created in Phase 2) and runs 126 tests as of 2026-08-28 — geometry, arbitration, settings migration, media parsing for both adapters, lyrics, OAuth, and artwork color. A new test file joins the target automatically (file-system-synchronized groups); confirm a new suite actually ran by finding its cases by name in the test output.
+The test target exists (created in Phase 2) and runs 126 tests as of 2026-08-28 — geometry, arbitration, settings migration, media parsing for both adapters, lyrics, and artwork color (the OAuth tests went with the Spotify account on 2026-09-28). A new test file joins the target automatically (file-system-synchronized groups); confirm a new suite actually ran by finding its cases by name in the test output.
 
 What is testable without a screen, and therefore what gets tests:
 

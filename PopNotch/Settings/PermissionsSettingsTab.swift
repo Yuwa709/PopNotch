@@ -92,9 +92,8 @@ struct AutomationTarget: Identifiable {
 
 /// Automation permission per player.
 ///
-/// Apple Music needs no account — it is AppleScript only — so there is
-/// deliberately no connection UI here. Spotify's account toggle stays on its
-/// own tab; that is for the optional Web API extras, not for playback.
+/// Both players are AppleScript only and need no account, so there is
+/// deliberately no connection UI here.
 struct PermissionsSettingsTab: View {
 
     private static let targets: [AutomationTarget] = [.spotify, .music]

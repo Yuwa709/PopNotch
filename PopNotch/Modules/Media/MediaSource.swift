@@ -5,16 +5,11 @@ import os
 ///
 /// Only Music.app can answer this from its scripting dictionary. Spotify's
 /// has no playlist, context, or queue — its `next track` is a *command* that
-/// skips, not data — so `SpotifyAdapter` always reports nil here and Up Next
-/// for Spotify comes from the optional Web API instead.
+/// skips, not data — so `SpotifyAdapter` always reports nil here.
 struct UpNextTrack: Equatable {
     let title: String
     let artist: String
 }
-
-/// Kept so the Web API layer and its tests keep their original name while
-/// both sources now speak the same type.
-typealias SpotifyUpNext = UpNextTrack
 
 /// Whether the current track is favourited, and whether this source can
 /// change it.

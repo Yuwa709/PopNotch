@@ -19,9 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings: settings, caffeinate: caffeinate,
         pinState: pinState, statsPage: statsPage,
         appVolume: appVolume)
-    /// Given the settings store so launch reads the cached connected flag
-    /// instead of the Keychain.
-    private(set) lazy var spotifyAccount = SpotifyAccount(settings: settings)
     private let statsService = SystemStatsService()
     /// The stats page's own data layer. Both hold no timer until the page
     /// opens — the coordinator starts and stops them on the destination —
@@ -156,7 +153,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.contentView = NSHostingView(rootView: SettingsView(
                 coordinator: coordinator,
                 settings: settings,
-                spotify: spotifyAccount,
                 visualizer: audioViz,
                 appVolume: appVolume,
                 updater: updaterController.updater,
@@ -189,6 +185,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The only Keychain call left in the app, and it runs at most once
+        // per install: only for settings upgraded from schema 10 or earlier,
+        // never for a fresh install. Skipped under XCTest, whose host app
+        // launches against the developer's real defaults and Keychain.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            LegacySpotifyKeychain.runIfPending(settings: settings)
+        }
         coordinator.start()
         installSignalHandling()
 
@@ -237,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // it here. The file stays in the target so the work resumes from
             // a built, tested read path rather than from scratch.
             sources: mediaSources(includingSystem: systemMedia),
-            account: spotifyAccount, visualizer: audioViz)
+            visualizer: audioViz)
         // Held so the Settings toggle can apply live rather than at next
         // launch — and so the source is ready the moment `isRegistered`
         // flips, without this wiring having to be rebuilt.
