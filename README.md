@@ -17,7 +17,7 @@ Built with Swift and SwiftUI, no web runtime, no Electron. An overlay that costs
 ## Requirements
 
 - A Mac with a camera notch: **MacBook Pro (2021 or later)** or **MacBook Air (2022 or later)**. It runs on any Apple Silicon Mac — on a notchless display you get a small fallback strip — but the notch is the point.
-- **macOS 14.0 (Sonoma) or later.**
+- **macOS 14.2 (Sonoma) or later.**
 - Apple Silicon only. There is no Intel build; no Intel Mac has a notch.
 
 ## Install
