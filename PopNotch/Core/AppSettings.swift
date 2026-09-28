@@ -25,7 +25,8 @@ struct AppSettings: Codable, Equatable {
     /// v7: added spotifyAccountConnected.
     /// v8: added capybaraThemeEnabled.
     /// v9: added appVolume.
-    static let currentSchemaVersion = 9
+    /// v10: added appVolume.outputs.
+    static let currentSchemaVersion = 10
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -109,7 +110,9 @@ struct AppSettings: Codable, Equatable {
     var appVolume = AppVolume()
 
     /// The tap engine's settings. Spotify's and Music's volumes are never
-    /// here: they live in the apps themselves, set through AppleScript.
+    /// here: they live in the apps themselves, set through AppleScript. Their
+    /// output choice is, because AppleScript cannot route: a routed Spotify
+    /// or Music is tapped at unity and its volume stays the app's own.
     ///
     /// **Every field is optional, and nil is the shipped default.** JSON
     /// written before a field existed decodes it as nil rather than
@@ -125,6 +128,16 @@ struct AppSettings: Codable, Equatable {
         /// app never turned down has no entry. Positions, not gains, so the
         /// taper can be retuned without a migration.
         var volumes: [String: Int]?
+
+        /// Chosen output device per owner (V2 routing), keyed by the same
+        /// `AudioOwner.key` as `volumes`. The value is the device's UID, never
+        /// its `AudioDeviceID`: a dock reconnect renumbers every device's
+        /// object ID (measured in the spike), while a UID survives it. System
+        /// default is stored as absence, so an app never routed has no entry.
+        /// A saved UID outlives its device being unplugged: the app falls
+        /// back to its own output meanwhile and is routed again when the
+        /// device returns.
+        var outputs: [String: String]?
     }
 
     // MARK: - Decoding
@@ -230,6 +243,11 @@ struct AppSettings: Codable, Equatable {
             // v9 added appVolume; the lenient decoder fills an empty one for
             // v8 JSON: taps off, no saved volumes. Nothing moves.
             fallthrough
+        case 9:
+            // v10 added appVolume.outputs; the lenient decoder fills nil for
+            // v9 JSON: every app on System default. Taps and saved volumes
+            // are untouched. Nothing moves.
+            fallthrough
         default:
             break
         }
@@ -243,16 +261,18 @@ struct AppSettings: Codable, Equatable {
 extension AppSettings.AppVolume: Codable {
 
     private enum CodingKeys: String, CodingKey {
-        case tapsEnabled, volumes
+        case tapsEnabled, volumes, outputs
     }
 
     /// Lenient the way `AppSettings` is, one level down: a missing or
-    /// malformed field decodes as nil, and a malformed volume loses only its
-    /// own entry, never another app's.
+    /// malformed field decodes as nil, and a malformed volume or output
+    /// loses only its own entry, never another app's.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         tapsEnabled = try? container.decodeIfPresent(Bool.self, forKey: .tapsEnabled)
         volumes = (try? container.decodeIfPresent([String: LenientVolume].self, forKey: .volumes))?
+            .compactMapValues(\.value)
+        outputs = (try? container.decodeIfPresent([String: LenientUID].self, forKey: .outputs))?
             .compactMapValues(\.value)
     }
 
@@ -262,6 +282,17 @@ extension AppSettings.AppVolume: Codable {
 
         init(from decoder: Decoder) throws {
             value = try? decoder.singleValueContainer().decode(Int.self)
+        }
+    }
+
+    /// One saved device UID, or nil when the stored value is not a
+    /// non-empty string.
+    private struct LenientUID: Decodable {
+        let value: String?
+
+        init(from decoder: Decoder) throws {
+            let uid = try? decoder.singleValueContainer().decode(String.self)
+            value = uid?.isEmpty == false ? uid : nil
         }
     }
 }

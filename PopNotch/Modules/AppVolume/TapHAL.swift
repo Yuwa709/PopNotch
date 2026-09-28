@@ -121,9 +121,18 @@ protocol TapHAL: AnyObject {
 
     func processObject(forPID pid: pid_t) -> AudioObjectID?
     func device(forUID uid: String) -> TapHALDevice?
+    /// Every device with output streams that a user could route an app to,
+    /// sorted by name. This process's own private aggregates (the engine's
+    /// and the visualiser's) are left out: they are visible only to us, and
+    /// they are the machinery, not a destination.
+    func outputDevices() -> [TapHALDevice]
 
     /// coreaudiod restarted: every object this engine holds is invalid.
     var onServiceRestarted: (() -> Void)? { get set }
+    /// The system's device list changed: something was plugged in or
+    /// unplugged — or one of our own aggregates came or went, which the
+    /// engine filters out by comparing `outputDevices()`.
+    var onDevicesChanged: (() -> Void)? { get set }
     /// The named device's nominal rate or stream layout changed.
     var onDeviceFormatChanged: ((String) -> Void)? { get set }
     /// Registers format listeners for exactly these device UIDs (the ones
@@ -138,23 +147,37 @@ nonisolated final class CoreAudioTapHAL: TapHAL {
 
     var onServiceRestarted: (() -> Void)?
     var onDeviceFormatChanged: ((String) -> Void)?
+    var onDevicesChanged: (() -> Void)?
 
     private var restartListener: AudioObjectPropertyListenerBlock?
+    private var devicesListener: AudioObjectPropertyListenerBlock?
     private var formatListeners: [String: (device: AudioObjectID, block: AudioObjectPropertyListenerBlock)] = [:]
     /// Serializes listener bookkeeping with the engine queue's calls.
     private let listenerQueue = DispatchQueue(label: "com.techie.PopNotch.taphal.listeners")
 
     init() {
+        let system = AudioObjectID(kAudioObjectSystemObject)
         var addr = Self.address(kAudioHardwarePropertyServiceRestarted)
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             Self.logger.notice("coreaudiod restarted; every tap object is invalid")
             self?.onServiceRestarted?()
         }
-        if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),
-                                               &addr, listenerQueue, block) == noErr {
+        if AudioObjectAddPropertyListenerBlock(system, &addr, listenerQueue, block) == noErr {
             restartListener = block
         } else {
             Self.logger.error("Could not watch for coreaudiod restarts")
+        }
+        // Push-only, like the restart listener: a routed device being
+        // unplugged, or coming back, is what makes the engine re-resolve
+        // routes. No timer (hard rule 9); nothing to suspend.
+        var devicesAddr = Self.address(kAudioHardwarePropertyDevices)
+        let devicesBlock: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.onDevicesChanged?()
+        }
+        if AudioObjectAddPropertyListenerBlock(system, &devicesAddr, listenerQueue, devicesBlock) == noErr {
+            devicesListener = devicesBlock
+        } else {
+            Self.logger.error("Could not watch the device list; routes will not follow unplugs")
         }
     }
 
@@ -332,18 +355,49 @@ nonisolated final class CoreAudioTapHAL: TapHAL {
     func device(forUID uid: String) -> TapHALDevice? {
         let ids = Self.allDeviceIDs()
         for id in ids where Self.string(id, kAudioDevicePropertyDeviceUID) == uid {
-            let transport = Self.scalar(id, kAudioDevicePropertyTransportType, as: UInt32.self) ?? 0
-            let out = Self.streamLayout(id, scope: kAudioObjectPropertyScopeOutput)
-            let input = Self.streamLayout(id, scope: kAudioObjectPropertyScopeInput)
-            return TapHALDevice(
-                uid: uid,
-                name: Self.string(id, kAudioObjectPropertyName) ?? uid,
-                sampleRate: Self.scalar(id, kAudioDevicePropertyNominalSampleRate, as: Float64.self) ?? 48000,
-                isStereoOut: out.streams == 1 && out.channels == 2,
-                isAirPlay: transport == kAudioDeviceTransportTypeAirPlay,
-                hasInputStreams: input.streams > 0)
+            return Self.describe(id, uid: uid)
         }
         return nil
+    }
+
+    func outputDevices() -> [TapHALDevice] {
+        Self.allDeviceIDs()
+            .compactMap { id -> TapHALDevice? in
+                guard Self.streamLayout(id, scope: kAudioObjectPropertyScopeOutput).streams > 0,
+                      (Self.scalar(id, kAudioDevicePropertyIsHidden, as: UInt32.self) ?? 0) == 0,
+                      !Self.isOwnPrivateAggregate(id),
+                      let uid = Self.string(id, kAudioDevicePropertyDeviceUID) else { return nil }
+                return Self.describe(id, uid: uid)
+            }
+            .sorted { ($0.name.localizedLowercase, $0.uid) < ($1.name.localizedLowercase, $1.uid) }
+    }
+
+    private static func describe(_ id: AudioObjectID, uid: String) -> TapHALDevice {
+        let transport = scalar(id, kAudioDevicePropertyTransportType, as: UInt32.self) ?? 0
+        let out = streamLayout(id, scope: kAudioObjectPropertyScopeOutput)
+        let input = streamLayout(id, scope: kAudioObjectPropertyScopeInput)
+        return TapHALDevice(
+            uid: uid,
+            name: string(id, kAudioObjectPropertyName) ?? uid,
+            sampleRate: scalar(id, kAudioDevicePropertyNominalSampleRate, as: Float64.self) ?? 48000,
+            isStereoOut: out.streams == 1 && out.channels == 2,
+            isAirPlay: transport == kAudioDeviceTransportTypeAirPlay,
+            hasInputStreams: input.streams > 0)
+    }
+
+    /// A private aggregate is visible only to the process that made it, so
+    /// any we can see is ours. The composition's private flag is the
+    /// principled test; the name prefix covers an aggregate whose
+    /// composition cannot be read.
+    private static func isOwnPrivateAggregate(_ id: AudioObjectID) -> Bool {
+        guard scalar(id, kAudioDevicePropertyTransportType, as: UInt32.self)
+                == kAudioDeviceTransportTypeAggregate else { return false }
+        if let composition = dictionary(id, kAudioAggregateDevicePropertyComposition),
+           let isPrivate = composition[kAudioAggregateDeviceIsPrivateKey] as? NSNumber,
+           isPrivate.boolValue {
+            return true
+        }
+        return string(id, kAudioObjectPropertyName)?.hasPrefix("PopNotch ") ?? false
     }
 
     func watchDeviceFormats(uids: Set<String>) {
@@ -429,5 +483,17 @@ nonisolated final class CoreAudioTapHAL: TapHAL {
         }
         guard status == noErr, let value else { return nil }
         return value.takeRetainedValue() as String
+    }
+
+    private static func dictionary(_ object: AudioObjectID,
+                                   _ selector: AudioObjectPropertySelector) -> [String: Any]? {
+        var addr = address(selector)
+        var size = UInt32(MemoryLayout<CFDictionary?>.size)
+        var value: Unmanaged<CFDictionary>?
+        let status = withUnsafeMutablePointer(to: &value) {
+            AudioObjectGetPropertyData(object, &addr, 0, nil, &size, $0)
+        }
+        guard status == noErr, let value else { return nil }
+        return value.takeRetainedValue() as? [String: Any]
     }
 }

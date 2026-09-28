@@ -10,6 +10,9 @@ struct TapDesire: Equatable {
     var pids: [pid_t]
     /// UIDs of the output devices the owner's processes are using.
     var deviceUIDs: [String]
+    /// The user's chosen output (V2 routing), by device UID. nil is System
+    /// default: render wherever the owner's own process plays.
+    var outputUID: String? = nil
 }
 
 /// One live leg, as the engine holds it.
@@ -59,6 +62,18 @@ enum TapReconciler {
         Float(min(max(position, 0), 100)) / 100
     }
 
+    /// Where an owner's tap renders (V2 routing): the chosen device when one
+    /// is set and connected, otherwise the owner's own device. A chosen
+    /// device that is unplugged falls back without being forgotten — the
+    /// saved choice is the caller's, and the next pass after the device
+    /// returns routes to it again. "Connected" is whatever `device` can
+    /// find, the same lookup that qualifies the device below.
+    nonisolated static func target(chosen: String?, own: String,
+                                   device: (String) -> TapHALDevice?) -> String {
+        guard let chosen, chosen != own, device(chosen) != nil else { return own }
+        return chosen
+    }
+
     nonisolated static func plan(desires: [TapDesire],
                                  legs: [TapLegFacts],
                                  tapsEnabled: Bool,
@@ -82,7 +97,10 @@ enum TapReconciler {
 
             guard tapsEnabled else { drop(.notTapped); continue }
             guard !permissionDenied else { drop(.inert(reason: "permission needed")); continue }
-            guard desire.position < 100 else { drop(.notTapped); continue }
+            // A tap exists to turn an app down, or to move it (V2). At 100%
+            // with no chosen output there is nothing for one to do.
+            let adjustsVolume = desire.position < 100
+            guard adjustsVolume || desire.outputUID != nil else { drop(.notTapped); continue }
             guard desire.isPlaying || leg != nil else {
                 // Not playing and not tapped: nothing to build. The position
                 // is remembered and applies at the next play (restore path).
@@ -90,11 +108,17 @@ enum TapReconciler {
                 continue
             }
             guard desire.isPlaying else { drop(.notTapped, afterGrace: true); continue }
-            guard desire.deviceUIDs.count == 1, let uid = desire.deviceUIDs.first else {
+            guard desire.deviceUIDs.count == 1, let own = desire.deviceUIDs.first else {
                 drop(.inert(reason: desire.deviceUIDs.isEmpty
                     ? "no output device" : "on several outputs"))
                 continue
             }
+            let uid = target(chosen: desire.outputUID, own: own, device: device)
+            // Routed to where the app already plays (chosen explicitly, or
+            // the chosen device is unplugged) at full volume: nothing to do.
+            guard adjustsVolume || uid != own else { drop(.notTapped); continue }
+            // The gates below are about the device the aggregate renders to,
+            // which is the target: its layout is what the IOProc writes.
             guard let dev = device(uid) else { drop(.notTapped); continue }
             guard !dev.isAirPlay else { drop(.inert(reason: "AirPlay output")); continue }
             // A headset's microphone would ride into the aggregate as extra
@@ -110,12 +134,15 @@ enum TapReconciler {
             if let leg {
                 keptKeys.insert(desire.key)
                 if leg.deviceUID != uid {
-                    // The app moved devices. One engage op: the engine's
-                    // engage retires the existing leg itself, after the new
-                    // one is up — make-before-break, measured safe in M2
-                    // (the mute holds until the last tap goes). A separate
-                    // disengage here would land on the NEW leg, since ops
-                    // are keyed by owner and the engage replaces the leg.
+                    // The app moved devices, or its route changed (a new
+                    // choice, an unplug, a return). One engage op: the
+                    // engine's engage retires the existing leg itself, after
+                    // the new one is up — make-before-break (M2: the mute
+                    // holds until the last tap goes; the engine times the
+                    // handover for a cross-device target's warm-up). A
+                    // separate disengage here would land on the NEW leg,
+                    // since ops are keyed by owner and the engage replaces
+                    // the leg.
                     ops.append(.engage(key: desire.key, deviceUID: uid,
                                        pids: desire.pids, gain: target))
                 } else if Set(leg.pids) != Set(desire.pids) {

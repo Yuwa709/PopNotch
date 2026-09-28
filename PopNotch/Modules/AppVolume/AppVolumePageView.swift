@@ -13,6 +13,10 @@ import SwiftUI
 /// engine (Phase 5). Never-tap apps show greyed with the reason instead of
 /// a working slider (decision 9).
 ///
+/// V2: every adjustable row also carries an output menu at its trailing
+/// edge (`OutputMenu`). It changes no row height, so choosing an output
+/// never resizes the panel.
+///
 /// Fixed 420pt content width, the clipboard page's, so the two doors read
 /// as one family. Height follows the row count up to eight rows, then the
 /// list scrolls: the panel's 460pt ceiling minus the neck and padding
@@ -136,7 +140,7 @@ private struct MixerRowView: View {
                     .lineLimit(1)
                 Text(caption)
                     .font(.system(size: 9))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(captionColor)
                     .lineLimit(1)
             }
             .frame(width: 150, alignment: .leading)
@@ -158,6 +162,10 @@ private struct MixerRowView: View {
                     .opacity(row.neverTapReason == nil ? Self.inertSliderOpacity : 1)
                     .accessibilityHidden(true)
             }
+            // Never-tap apps are never tapped, so they cannot be routed.
+            if row.neverTapReason == nil {
+                OutputMenu(row: row, service: service, route: route)
+            }
         }
         .frame(height: AppVolumePageView.rowHeight)
         .opacity(row.neverTapReason == nil ? 1 : 0.4)
@@ -165,13 +173,92 @@ private struct MixerRowView: View {
         .accessibilityLabel("\(row.owner.name), \(caption)")
     }
 
+    private var route: OutputRoute { service.route(for: row.owner.key) }
+
     private var caption: String {
-        if let reason = row.neverTapReason { return "Not adjustable — \(reason)" }
-        if scriptedPlayer == nil {
-            if let reason = engineReason { return "Not adjustable — \(reason)" }
-            if !service.tapsEnabled { return "Taps are off" }
+        AppVolumeService.caption(for: row, scripted: scriptedPlayer != nil,
+                                 tapsEnabled: service.tapsEnabled, route: route)
+    }
+
+    /// An unplugged choice is the one caption that needs noticing.
+    private var captionColor: Color {
+        if case .disconnected = route { return .orange.opacity(0.9) }
+        return .white.opacity(0.45)
+    }
+}
+
+/// The row's output choice (V2 routing): "System default" first, then the
+/// current output devices by name, each checked when chosen. A device that
+/// cannot be a target is listed disabled, with the reason, rather than
+/// hidden. An unplugged choice stays listed — checked, disabled, marked
+/// disconnected — so the menu never shows the fallback as if it were the
+/// choice.
+///
+/// A system menu, so there is no SwiftUI animation here to gate for Reduce
+/// Motion (hard rule 8), and opening it resizes nothing.
+private struct OutputMenu: View {
+    let row: MixerRow
+    let service: AppVolumeService
+    let route: OutputRoute
+
+    /// Routing needs a tap, so it needs taps on and the capture grant.
+    private var isEnabled: Bool {
+        service.tapsEnabled && row.engineState != .inert(reason: "permission needed")
+    }
+
+    var body: some View {
+        Menu {
+            Toggle("System default", isOn: choice(nil))
+            Divider()
+            ForEach(service.outputDevices, id: \.uid) { device in
+                let reason = AppVolumeService.routeUnavailableReason(device)
+                Toggle(reason.map { "\(device.name) (\($0))" } ?? device.name,
+                       isOn: choice(device.uid))
+                    .disabled(reason != nil)
+            }
+            if case .disconnected(_, let name) = route {
+                Toggle("\(name ?? "Saved output") (disconnected)", isOn: .constant(true))
+                    .disabled(true)
+            }
+        } label: {
+            Image(systemName: route == .systemDefault ? "hifispeaker" : "hifispeaker.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(glyphColor)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
         }
-        return row.isPlaying ? "Playing" : "Not playing"
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : MixerRowView.inertSliderOpacity)
+        .accessibilityLabel("Output")
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var glyphColor: Color {
+        switch route {
+        case .systemDefault: return .white.opacity(0.55)
+        case .device: return .white.opacity(0.9)
+        case .disconnected: return .orange.opacity(0.9)
+        }
+    }
+
+    private var accessibilityValue: String {
+        switch route {
+        case .systemDefault: return "System default"
+        case .device(_, let name): return name
+        case .disconnected(_, let name): return "\(name ?? "Saved output"), disconnected"
+        }
+    }
+
+    /// Checked when this is the saved choice. Choosing the checked item
+    /// again changes nothing: a toggle's "off" is never a choice.
+    private func choice(_ uid: String?) -> Binding<Bool> {
+        let key = row.owner.key
+        return Binding(get: { service.output(for: key) == uid },
+                       set: { isOn in if isOn { service.setOutput(uid, for: key) } })
     }
 }
 

@@ -262,6 +262,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tapEngine.onStatesChange = { [weak appVolume] states in
             appVolume?.applyEngineStates(states)
         }
+        // V2 routing. The engine is the one watcher of the device list:
+        // it re-resolves routes on a change and hands the list up here for
+        // the rows' output menus, so the two cannot disagree.
+        tapEngine.onOutputDevicesChange = { [weak appVolume] devices in
+            appVolume?.applyOutputDevices(devices)
+        }
+        tapEngine.refreshOutputDevices()
         // Phase 6. The visualiser's tap excludes whatever the engine is
         // muting and re-rendering, so the spectrum carries our gain-adjusted
         // copy instead of the app's pre-mute stream. Wired here, not between

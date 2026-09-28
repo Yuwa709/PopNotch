@@ -416,4 +416,59 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(appVolume.volumes, ["com.hnc.Discord": 35],
                        "a malformed entry loses itself, not the other apps' volumes")
     }
+
+    // MARK: - v10: output routing
+
+    /// CLAUDE.md's rule: real v9 JSON loads with nothing dropped. Every v9
+    /// field holds a non-default value, the app-volume ones included, so one
+    /// that silently fell back to its default would fail here.
+    func testV9JSONMigratesToV10WithNothingDropped() {
+        write("""
+        {"schemaVersion": 9,
+         "moduleEnablement": {"media": true, "clipboard": false, "app-volume": true},
+         "hoverEnterDelay": 0.42,
+         "visualizerEnabled": true,
+         "showMenuBarIcon": false,
+         "preferMusicOverVideo": false,
+         "spotifyAccountConnected": true,
+         "capybaraThemeEnabled": true,
+         "appVolume": {"tapsEnabled": true,
+                       "volumes": {"com.hnc.Discord": 35, "webkit": 60}}}
+        """)
+        let settings = store().settings
+
+        XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertGreaterThanOrEqual(settings.schemaVersion, 10, "v9 lands at v10 or beyond")
+        XCTAssertEqual(settings.moduleEnablement, ["media": true, "clipboard": false, "app-volume": true])
+        XCTAssertEqual(settings.hoverEnterDelay, 0.42, accuracy: 0.0001)
+        XCTAssertTrue(settings.visualizerEnabled)
+        XCTAssertFalse(settings.showMenuBarIcon)
+        XCTAssertFalse(settings.preferMusicOverVideo)
+        XCTAssertEqual(settings.spotifyAccountConnected, true)
+        XCTAssertTrue(settings.capybaraThemeEnabled)
+        XCTAssertEqual(settings.appVolume.tapsEnabled, true, "taps stay on across the upgrade")
+        XCTAssertEqual(settings.appVolume.volumes, ["com.hnc.Discord": 35, "webkit": 60],
+                       "every saved volume survives")
+        XCTAssertNil(settings.appVolume.outputs, "every app arrives on System default")
+        XCTAssertNil(defaults.data(forKey: SettingsStore.salvageKey), "nothing was unreadable")
+    }
+
+    func testOutputsRoundTripByDeviceUID() {
+        let saved = ["com.hnc.Discord": "AppleUSBAudioEngine:Apple, Inc.:EarPods:1",
+                     SpotifyAdapter.bundleID: "44-A7-F4-2C-B3-DA:output"]
+        store().update { $0.appVolume.outputs = saved }
+        XCTAssertEqual(store().settings.appVolume.outputs, saved, "must survive a reload")
+    }
+
+    func testOneMalformedOutputCostsOnlyItself() {
+        write("""
+        {"schemaVersion": 10,
+         "appVolume": {"volumes": {"com.hnc.Discord": 35},
+                       "outputs": {"com.hnc.Discord": "usb", "webkit": 42, "org.chromium": ""}}}
+        """)
+        let appVolume = store().settings.appVolume
+        XCTAssertEqual(appVolume.outputs, ["com.hnc.Discord": "usb"],
+                       "a non-string or empty UID loses itself, not the other apps' outputs")
+        XCTAssertEqual(appVolume.volumes, ["com.hnc.Discord": 35], "and never the volumes beside it")
+    }
 }

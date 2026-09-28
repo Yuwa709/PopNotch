@@ -10,6 +10,8 @@
 - **Phase 5** is the tap engine (2026-09-19, `b152cd6`): `TapEngine`, `TapHAL` and the pure `TapReconciler`, wired through `AppVolumeService` to live mixer sliders. Built after three pre-build spike measurements (M1–M3, under *Phase 0*), adversarially reviewed (two review passes, ~1M tokens of subagent verification; the findings and their fixes are in the session record), and measured at **0.55 points of one core for one tapped app and ~1.4 per app at three** — under the 2-point budget; see *Phase 5: built* below.
 - **Phase 6** is coexistence with the visualiser (2026-09-20): the tap engine publishes its live tapped PIDs, the visualiser excludes them (inverting the accepted default, see above), the visualiser gained the `ServiceRestarted` rebuild it never had, and both surfaces warn when FineTune or Sapphire is running — which corrupts the spectrum in a way PopNotch cannot fix. See *Phase 6: built*.
 - **Not started:** Phase 7.
+- **V2 spike (2026-09-20):** per-app *output routing* — a different destination device than the app's own — measured for feasibility, independently of v1's phases above. The make-or-break mute question passed. CPU turned out to be **per destination device, not per app** (0.73 points each for two apps sharing one destination; 2.6 for one app alone, which the per-app budget cannot express). The blocker is instead a **~616 ms IO stall on every live tap-list edit**, which silences already-routed apps when another joins — v1's same-device path is unaffected. See *V2 Phase 1: per-app output routing*.
+- **V2 Phase 2 (2026-09-27): output routing built**, by the owner's decision, ahead of the stall measurement and of Phase 7, with the stall and the single-route CPU overrun recorded as known. A per-row output menu; the engine renders to the chosen device when it is connected and falls back to the app's own device when it is not. Exercised on hardware on 2026-09-28, from the log; the cross-device hold and the shared-device stall weren't exercised. See *V2 Phase 2: built*.
 
 v1's decisions and phasing are in *v1 plan*. A throwaway spike measured the mechanism itself, outside the app; see *Spike results*.
 
@@ -627,6 +629,482 @@ next start picks the new list up" — is what ran.
 - Unchanged and recorded elsewhere: engage-seam audibility, device objects
   carrying both scopes, the System Settings revocation path, Discord echo,
   DAW behaviour.
+
+---
+
+## V2 Phase 1: per-app output routing — feasibility spike (2026-09-20)
+
+**Measure only; nothing built.** A different question from v1's per-app
+*volume*: whether a tapped app's audio can go to an output device other than
+the one its own process reports, while its original output stays silent.
+Same `tapspike` harness as the v1 spike (unchanged since 2026-09-18, source
+in `~/PopNotch-spikes/tapspike`), same method: a 19 kHz tone standing in for
+an app, the built-in microphone as the acoustic probe, `ps` cputime deltas
+for CPU.
+
+**Confounds.** FineTune was not running. Sapphire's app was not running, but
+its privileged helper `com.shariq.sapphireHelper` was — unchanged from the
+Phase 6 note, a known and still-unresolved confound on this machine, not
+something a measurement spike can clear (it's a LaunchDaemon, not something
+`quit` reaches). Discord was not running for either CPU run, unlike Phase
+5/6's live-call and output-open conditions — noted because it changes what
+the coreaudiod baseline includes, not because it's expected to change the
+*delta* the routing itself costs.
+
+The built-in speaker's own volume was raised from its ambient 0.128571 to
+0.65 for the acoustic runs (read and set through
+`kAudioHardwareServiceDeviceProperty_VirtualMainVolume`) and restored to
+exactly 0.128571 afterward.
+
+**Unchanged today:** `TapHAL` builds one aggregate per output device with
+that device as `kAudioAggregateDeviceMainSubDeviceKey`; `TapReconciler`
+derives the render device from `kAudioProcessPropertyDevices` on the owner's
+own processes. This spike simply pointed a tap's aggregate at a **different**
+device's UID than the tone's own output — no code changed.
+
+### 1. Make-or-break: does `mutedWhenTapped` still mute when the aggregate's main sub-device differs from the tapped process's own device?
+
+**Yes.** Three configurations, tone on `BuiltInSpeakerDevice` throughout,
+tap's aggregate rendering elsewhere:
+
+| Render device | Mute behaviour | Mic result at 19 kHz |
+|---|---|---|
+| Dock "Headphones" (USB, 48 kHz) | `.mutedWhenTapped` | Noise floor, ~−107 to −141 dB, for the tap's full duration |
+| Dock "Headphones" (same route) | `.unmuted`, the negative control | Stayed at the tone's steady level, −49.5 to −50.0 dB, the whole run |
+| EarPods (USB, 44.1 kHz) | `.mutedWhenTapped` | Noise floor, ~−112 to −134 dB |
+
+The unmuted control used the identical route as the muted case, so the
+silence isn't an artifact of routing itself — only the mute behaviour changes
+it. Tap-side telemetry agrees throughout: `nz=100%`, tone at the expected
+level (−12.1 dB same-rate; −15.5 dB into the 44.1 kHz EarPods, a 3.4 dB loss
+matching the original spike's *C* finding for 19 kHz near Nyquist, to the
+decimal), `glitch=0`, `tsJumps=0`, `overloads=0` in every run.
+
+**So the mechanism holds:** the mute follows the tap's mute behaviour, not
+the render device's identity. Nothing in `TapHAL`/`TapReconciler`'s current
+one-aggregate-per-output-device design blocks pointing that aggregate at a
+device the tapped process never reports.
+
+### 2. What an already-playing app does when rerouted: gap, glitch, or clean
+
+**Clean, with a warm-up latency — no audible gap, no glitch, but not
+instant.** Engaging a `mutedWhenTapped` tap mid-tone (dock route, 50 ms mic
+resolution, all times relative to the same wall clock):
+
+- `AudioDeviceStart` returned `noErr` at 00:56:05.728.
+- The aggregate's IOProc delivered **zero** real callbacks (`cb=0`, every
+  field at the floor) for the next samples, up to 00:56:06.291.
+- The first real callback landed at 00:56:06.342 — **614 ms** after
+  `AudioDeviceStart` returned — already at full level (`cb=3`, tone
+  −12.3 dB).
+- The original speaker was unchanged (steady −49.9 dB) through 00:56:06.330,
+  a **full 602 ms** after `AudioDeviceStart` returned. It is not touched
+  until the replacement path is actually delivering audio — so there's no
+  silent gap before the reroute, just a delay before anything changes.
+- The drop itself is fast and smooth: −49.9 dB (06.330) → −66.5 dB (06.382)
+  → −110.7 dB (06.433), landing on the noise floor **705 ms** after
+  `AudioDeviceStart` returned. No overshoot; `resMax` stayed at ~5×10⁻⁶,
+  far below the 3% glitch threshold, throughout.
+
+Disengaging (teardown) is the opposite — fast and clean, with no comparable
+warm-up:
+
+- `destroyed aggregate` logged at 00:56:45.780.
+- The mic's sample immediately after that, at 00:56:45.814, was still at the
+  floor (−105.3 dB).
+- The next sample, one 52 ms window later at 00:56:45.866, read −49.3 dB —
+  full pre-tap level. Recovery landed somewhere in that 52 ms window, so
+  within at most 86 ms of the destroy call, with no ramp and no overshoot.
+
+**Reading:** rerouting an already-playing app is safe from a glitch
+standpoint — nothing clicks, nothing partially transitions. But the ~600 ms
+asymmetry between engage and disengage is new information, not previously
+measured: v1's same-device "Level blip" check (Phase 0) found only a 1.6 dB
+dip in one 50 ms window, on an aggregate that was likely already warm from
+prior activity in that run. Here, standing up a **fresh** aggregate against a
+device with no prior I/O took over half a second before anything audible
+happened. A slider drag that starts a first tap for a not-yet-tapped app
+would carry a more-than-half-second lag before the user hears anything
+change. **Not measured:** whether a live-edit onto an *already-running*
+aggregate — the shape v1's `TapEngine` actually uses when a second app joins
+via `kAudioAggregateDevicePropertyTapList` — has the same warm-up, or whether
+it's specific to cold-starting a device with no prior IOProc traffic. That
+distinction matters for whether this latency is a one-time cost per output
+device or a recurring one per app.
+
+### 3. CPU cost of one routed app
+
+**About 2.5 points of one core — over the 2-point budget, and roughly 3.5×
+the 0.72-point same-device reference from Phase 6.** Same method as
+Phase 5/6: `ps` cputime deltas over 60 s windows, tap process + coreaudiod,
+against a same-tone-count untapped baseline taken immediately before each
+routed run. Render device: dock "Headphones" (48 kHz, matching the tone's
+own rate — no resampling confound). Two independent baseline/routed pairs:
+
+| Run | Tap process Δ | coreaudiod Δ above its own baseline | Total | Points |
+|---|---|---|---|---|
+| 1 | 0.22 s | 1.28 s | 1.50 s | **2.50** |
+| 2 | 0.20 s | 1.29 s | 1.49 s | **2.48** |
+
+- **The tap process's own share is unaffected by routing:** ~0.21 s/60 s
+  either run, in line with Phase 6's same-device PopNotch Δ (0.20–0.23 s).
+  Cross-device rendering costs PopNotch itself nothing extra — the `vDSP`
+  steady-state path doesn't care where the aggregate's main sub-device is.
+- **All of the excess is coreaudiod's:** ~1.28 s/60 s in both runs, about
+  2.1 points — five to ten times coreaudiod's same-device share (0.11–0.23 s
+  in Phase 5/6). This is reproducible, not noise: Phase 6 measured
+  coreaudiod's own baseline-to-baseline scatter at ±1.1 s across three
+  *unsignalled* windows with nothing to explain it; here, two independent
+  baseline/routed *pairs*, run minutes apart, each showed the same ~1.28 s
+  excess, in the same direction, both times.
+- **Reading:** driving a second, genuinely separate hardware output (the
+  dock's USB backend) instead of muting-and-replaying on the output the
+  process already had open costs coreaudiod real, measurable work, unlike
+  same-device rerouting, where the "reroute" is largely nominal — the output
+  hardware doesn't change. v1 never asks coreaudiod to run two independent
+  output backends at once for one tapped app; cross-device routing does
+  exactly that.
+
+**Limits:** two runs, one device (the dock's USB backend) — EarPods,
+AirPods, and other device classes are untested for CPU, so it's unmeasured
+whether the excess is a fixed per-device-backend cost or scales with the
+destination's own transport. Both runs used `--gain -60` per the established
+CPU-measurement convention (a scalar multiply, shouldn't change the cost by
+gain value). The 3-tapped-app cell wasn't measured — only the 1-app case the
+question asked for. Discord wasn't playing in either run, unlike Phase 5/6's
+noisier baseline, so this number may be an optimistic floor rather than a
+realistic desktop reading.
+
+### Follow-up (2026-09-20): per-device scaling, and a live-edit stall
+
+Two of the three items on *Also unmeasured* below, closed. Same harness, same
+method, same comparison points. `multitap` gained an optional `--render`/
+`--gain` (it was M1's tap-list-edit harness and rendered nothing), so one
+**shared** aggregate can carry two **routed** legs — `TapHAL`'s own shape.
+Default behaviour is unchanged, so M1 still reproduces.
+
+**Confounds, different from the runs above:** PopNotch *was* running this
+time and Discord was live. Neither was quit — they're the owner's apps, and
+every baseline was taken back-to-back with its own cell so steady background
+cancels in the delta, the way Phase 5/6 handled a live Discord. PopNotch
+logged no `Engaged` line for any spike PID (checked in its own `.notice`
+log), so it was not tapping the tones: its saved volumes are keyed
+`local.spike.tone1/2/3` and these tones run as `local.spike.tapspike`.
+
+#### 1. The cost scales per routed DEVICE, not per routed app
+
+Six 60 s cells, each against a same-tone-count untapped baseline taken in the
+same session. Points are our process plus coreaudiod's increase over that
+baseline, exactly as Phase 5/6 compute them.
+
+| Cell | Shape | Our Δ | coreaudiod Δ over baseline | Total | Points |
+|---|---|---|---|---|---|
+| C0 | 1 app → dock | 0.21 s | +1.35 s | 1.56 s | **2.60** |
+| C3 | 1 app → EarPods | 0.19 s | +1.39 s | 1.58 s | **2.63** |
+| C1 | 2 apps → **one shared aggregate** → dock | 0.92 s | −0.04 s | 0.88 s | **1.47** (0.73/app) |
+| C2 | 2 apps → **two aggregates** → dock + EarPods | 0.37 s | +1.36 s | 1.73 s | **2.88** (1.44/app) |
+
+Baselines: 1 tone untapped 6.86 s, 2 tones untapped 9.17 s.
+
+- **Two apps to one device cost 1.47 points for the pair** — not ~2.5, and
+  nowhere near the ~5 that a per-app cost would have produced. By the
+  question's own decision rule, **the feature is viable on this axis.**
+- **Adding a second app to a destination already being driven adds nothing
+  detectable to coreaudiod** (−0.04 s, comfortably inside the ±1.1 s
+  baseline scatter Phase 6 measured — read it as zero, not as a saving).
+  **Adding a second destination adds ~1.36 s**, the same increment one
+  destination costs on its own. The expensive axis is destinations.
+- **C0 reproduces the 1-app figure a third time** (2.60, against 2.50 and
+  2.48 last session) — now with PopNotch and Discord live, so ~2.5–2.6
+  points for one app on one destination is solid.
+- **Resampling is not the driver.** C3's 44.1 kHz EarPods cost the same as
+  C0's 48 kHz dock (2.63 vs 2.60), so the cost is *a second output backend*,
+  not rate conversion.
+- **C1's 0.92 s "our Δ" is a harness artifact and overstates PopNotch.** The
+  spike sums N legs with a per-frame Swift loop, so its render work is O(N)
+  per frame; `TapHAL` does one `vDSP_vsma` per buffer per leg, and Phase 6
+  measured PopNotch's own share flat from one leg to three (0.20 s). With
+  that path C1's total would be ≈0.16 s ≈ **0.27 points for the pair**. The
+  conclusion holds either way.
+
+#### 2. The ~600 ms is the destination device, not a cold start — and it recurs on every join
+
+The warm-up is **not** a cold-start artifact: a live edit onto an
+already-running aggregate pays it again. But it is **specific to
+cross-device routing** — v1's same-device shape pays none of it. Measured in
+one run per shape, 50 ms resolution, mic on the joining tone's own frequency:
+
+| | Same-device (v1's shape) | Cross-device (V2) |
+|---|---|---|
+| Cold start → first real IOProc callback | **52 ms** | **617 ms** |
+| Live edit → new leg's stream in the IOProc | **53 ms** | **667 ms** |
+| IO continuity across the live edit | **no stall**, 0 zero-callback intervals in the whole run | **~616 ms of zero callbacks**, 12 consecutive 50 ms intervals |
+| The already-routed app during the edit | continuous; one 52 ms sample −7.7 dB | **rendering nothing** — the IOProc is not called |
+
+- **Cross-device, acoustically:** the joining app's own output went quiet
+  645 ms after the SET returned, floor by 851 ms — matching the 654 ms the
+  cold start took last session. The mechanism doesn't care how the leg
+  joined.
+- **The stall is the new finding.** On a cross-device aggregate the IOProc
+  stops being called for ~616 ms while the tap list is edited. Nothing else
+  writes to that destination, so **an app already routed there is silent for
+  that window every time another app joins**. That is a per-join dropout,
+  not a one-time startup cost, and it is the more serious of the two.
+- **v1 is unaffected, and M1 stands.** M1 found no stall on a tap-only
+  aggregate; the same-device run here finds none either, with a render
+  attached — 0 zero-callback intervals across the entire run, and the mic
+  showing continuous audio. v1's shipped live-edit path does not have this
+  problem. M1's "callbacks never stalled" was measured at 1 s intervals,
+  which could not have resolved a 616 ms gap, but its configuration genuinely
+  doesn't stall, so the conclusion was right for the shape it tested.
+- **Not isolated:** same-device vs cross-device is confounded with
+  *destination already running* vs *destination idle* — the speakers were
+  driving the tones, the dock was not. Which of the two causes the stall is
+  unmeasured. In practice a routing destination is usually idle, which is
+  the point of routing, so the consequence stands either way.
+
+### What this settles for V2
+
+**The make-or-break question passed:** cross-device muting works,
+mechanically, with today's `TapHAL`/`TapReconciler` shape. Nothing here says
+the mechanism is unavailable, and question 1's result is make-or-break
+exactly as posed — a failure here would have ended the investigation.
+
+**The CPU cost is real but it is per destination device, which decision 8's
+wording does not describe.** One app alone on a destination bears that
+device's whole ~1.35 s of coreaudiod work and comes out at **2.6 points —
+over the 2-point-per-app budget**. Two apps sharing one destination come out
+at **0.73 points each**, comfortably under. Two apps on two destinations:
+1.44 each, also under. So whether V2 "passes" depends entirely on how many
+apps share a destination, and the per-app budget cannot express a per-device
+cost. **That is a decision to make, not a measurement to take** — either the
+budget gains a per-destination clause, or a single routed app is accepted as
+over it. This spike's mandate was measurement; no fix was attempted or
+designed, and the follow-up confirmed there is no per-app blow-up to fix.
+
+**The blocker that did appear is not CPU.** Every live tap-list edit on a
+cross-device aggregate stalls its IOProc for ~616 ms, and nothing else
+writes to that destination — so each time an app joins, **every app already
+routed there goes silent for over half a second**. A mixer whose whole
+purpose is adjusting several apps would hit this constantly. v1 is
+unaffected: its same-device path showed no stall at all.
+
+Because question 1 did not fail, the "stop and report alternative
+mechanisms" instruction never triggered — routing via a differently-targeted
+aggregate is not ruled out. But **V2 output routing should not proceed to a
+build phase on the strength of the CPU result alone.** The join-time dropout
+needs an answer first: whether it can be avoided (a per-destination
+aggregate that is started once and kept alive, so joins never reconfigure a
+cold device), or whether it is inherent to editing a tap list on an idle
+destination. That is the next measurement, and it is cheap.
+
+**Overridden 2026-09-27:** the owner chose to build without that measurement
+and to accept the stall as a known defect. See *V2 Phase 2: built*.
+
+**Also unmeasured, left for whoever picks this up next:** whether the stall
+is caused by *cross-device* or merely by *destination idle* (the two were
+confounded here — see *Follow-up*, item 2); whether keeping a destination's
+aggregate permanently running removes both the 617 ms start and the 616 ms
+join stall; CPU cost at 3 routed apps; CPU against AirPlay (AirPods and a
+USB DAC are now both measured, and agree); and everything v1 itself still
+has open (Discord echo, DAW behaviour, the System Settings revocation path).
+
+---
+
+## V2 Phase 2: per-app output routing — built (2026-09-27)
+
+**Built, tested against fakes, installed as a Debug build, and exercised on
+hardware on 2026-09-28 (see below).** Routing is a parameter on v1's machinery, not a new
+architecture: `TapReconciler` used to take the render device from
+`kAudioProcessPropertyDevices`; it now takes the user's chosen device when
+one is set and connected. One shared aggregate per output device is still
+the model, and owners routed to the same device share its aggregate.
+
+### Decided at the start of the session (owner, 2026-09-27)
+
+The session opened by reporting four conflicts between the build request and
+this doc. The owner's answers:
+
+- **Build now, without the join-stall measurement** V2 Phase 1 asked for
+  first. **The ~616 ms stall is a known, accepted defect:** every time an app
+  is routed to a device another app is already routed to, the first app goes
+  silent for about 0.6 s (V2 Phase 1, *Follow-up*, item 2). Nothing in this
+  build avoids it.
+- **CPU: one app alone on a routed device is knowingly over budget.** V2
+  Phase 1 measured it at ~2.6 points against the 2-point per-app budget. The
+  budget in `CLAUDE.md` is unchanged; this line is the record that a
+  single-app route exceeds it. Two or more apps sharing a destination measured
+  under it (0.73 points each).
+- **Spotify and Music are tapped at unity when routed, and only then.**
+  AppleScript cannot route, so a routed Spotify or Music needs a tap. That tap
+  only moves the audio. The slider still writes the app's own
+  `sound volume`, so decision 3 holds: one volume number, owned by the app,
+  never multiplied by a tap gain.
+- **Built ahead of Phase 7.** The scoping rule wants per-app volume used
+  daily for a week and its battery cost measured before routing is
+  considered. Neither is recorded as done; the owner chose to proceed.
+
+### What was built, by file
+
+- **Settings v10** (`AppSettings.swift`). `appVolume.outputs[ownerKey]`
+  holds a device **UID**, never an `AudioDeviceID`, which a dock reconnect
+  renumbers. Keyed by the same `AudioOwner.key` as `volumes`. System default
+  is stored as absence. Decoding is lenient like `volumes`: a non-string or
+  empty UID loses only its own entry. The migration step from v9 moves
+  nothing, since a missing field is exactly "everything on System default".
+- **`TapReconciler`.** `TapDesire` carries `outputUID`, and
+  `target(chosen:own:device:)` returns the chosen UID when it is set,
+  differs from the app's own device, and `device(forUID:)` finds it.
+  Otherwise it returns the own device. The qualification rule changed from
+  "position < 100" to "position < 100 **or** the target isn't the app's own
+  device". A routed app at 100% is tapped at gain 1, and an app at 100%
+  routed to where it already plays (chosen explicitly, or its choice
+  unplugged) is left alone. The AirPlay, microphone and stereo gates apply
+  to the **target**, the device the IOProc writes, so an app playing on
+  AirPlay can be routed to a USB DAC.
+- **`TapHAL`.** Two additions to the seam:
+  - `outputDevices()`: every non-hidden device with output streams, sorted by
+    name. It leaves out our own private aggregates (the engine's and the
+    visualiser's), identified by the composition's private flag, with a
+    `"PopNotch "` name prefix as a fallback.
+  - `onDevicesChanged`: a `kAudioHardwarePropertyDevices` listener,
+    registered at init beside the `ServiceRestarted` one. It is push-only,
+    with no timer and nothing to suspend (hard rule 9).
+- **`TapEngine`**:
+  - **Device changes.** The engine is the one watcher of the device list.
+    On a change it re-reads `outputDevices()`, publishes it through
+    `onOutputDevicesChange` for the menus, and reconciles, but only when the
+    filtered list really changed. Our own aggregates coming and going also
+    fire the listener, and those events are dropped. An unplugged route
+    falls back and a returning one is routed again, because the planner
+    resolves every target from the live list. The saved UID is never touched.
+  - **Retirement generalised:** hold, then fade, then remove.
+    - A **move** fades the old leg to **silence**. It used to ramp to unity.
+      The new leg's tap keeps the app muted, so the original never comes
+      back on the old device, and a unity ramp would play the app there at
+      full volume for up to 120 ms.
+    - When the new leg renders **away from the app's own device**, the old
+      leg first **holds at its current gain for 1 s**. Such a path delivers
+      nothing for 614–667 ms (V2 Phase 1), and its tap doesn't mute the app
+      until it does. Retiring the old leg sooner would unmute the app on its
+      own device for about half a second.
+    - A **disengage** fades to unity only where the original returns (the
+      leg's device is the app's own), and to silence for a routed leg.
+  - **Fixed along the way.** Flipping a route back inside a handover revived
+    the old leg but left the new one active on the other device, playing the
+    app there until teardown. The revival now retires it. A per-leg
+    `retireToken` makes a stale hold, fade or removal from an earlier
+    retirement do nothing.
+- **`AppVolumeService`.** Its methods are `output(for:)`,
+  `setOutput(_:for:)` (logged at `.notice`) and `route(for:)`. The desires
+  carry the choice. Spotify and Music reach the engine only when routed, at
+  position 100. It keeps a session-only UID → name cache so an unplugged
+  choice can still be named. Three pure functions carry the text, each
+  tested:
+  - `route(chosenUID:devices:knownNames:)`
+  - `routeUnavailableReason(_:)`
+  - `caption(for:scripted:tapsEnabled:route:)`
+- **`AppVolumePageView`**: an `OutputMenu` at every adjustable row's
+  trailing edge. Never-tap rows get none, since they can never be tapped.
+  - **The menu lists:** "System default" first, then the current output
+    devices by name, with the chosen one checked. Devices that can't be a
+    target are listed but disabled, with the reason (AirPlay, has a
+    microphone, not stereo). An unplugged choice stays in the list, checked,
+    disabled and marked *(disconnected)*.
+  - **The row shows** the choice in its caption: *Playing on DAC*,
+    *Not playing · DAC*, or *Disconnected · DAC* in orange. The glyph is
+    `hifispeaker`, filled when routed and orange when unplugged.
+  - **When the menu is disabled:** while taps are off or the capture
+    permission is denied.
+  - **Motion and size:** it is a system menu with no SwiftUI animation, and
+    no row height changes, so nothing resizes the panel (hard rule 8
+    satisfied by having nothing to gate).
+- **`AppDelegate`**: wires `onOutputDevicesChange` to the service and
+  publishes the list once at launch.
+
+### Tests
+
+**655 run: 654 pass, 1 fails, 0 skipped.** Before this phase, 625 passed and
+the same test failed. The failure is
+`SettingsWindowTests.testWindowCannotShrinkBelowTheSidebarFloor`, recorded
+under *Phase 6: built* as belonging to the uncommitted settings-window work.
+There are 29 new cases, all passing, in `OutputRoutingTests.swift` and
+`AppSettingsTests.swift`:
+
+- **Planner (9):** chosen, absent, disconnected, reconnected, a route alone
+  at unity, own device at 100%, and gates applied to the target.
+- **Engine (8), fake HAL, create and destroy:**
+  - two owners on one device share one aggregate by live edit
+  - an unplug falls back and a replug routes again, at <100% and at 100%
+  - the 1 s hold on a cross-device move, and no hold on a same-device one
+  - the flip-back fix
+  - System default fading to silence
+  - the device list published only on real change
+- **Service (9):** Spotify reaching the engine only when routed and at
+  unity, end to end through the fake. Never-tap apps never routed, saved
+  UIDs kept through an unplug, captions and menu reasons.
+- **Settings (3):** v9 → v10 with nothing dropped, round trip, and one
+  malformed output costing only itself.
+
+No test opens a real tap, reads a real device, or writes the real settings.
+
+### Exercised on hardware (2026-09-28, from the `.notice` log)
+
+The owner tested the installed Debug build with Spotify, Firefox, the
+built-in speakers and wired EarPods, with the EarPods unplugged and replugged
+twice. The log shows no error or fault in the window. What it shows:
+
+- **Routing Spotify at unity:** `Output for com.spotify.client -> …EarPods…`,
+  then `Engaged com.spotify.client gain 1.000000 on new aggregate for
+  …EarPods…` 44 ms later. The same happened routing it to
+  `BuiltInSpeakerDevice`.
+- **A route plus a volume:** Firefox at 48% routed to the speakers engaged
+  there at `gain 0.480000`. Choosing the EarPods, where it was already
+  playing, moved it back with an immediate `Ramping out … to silence` and a
+  new leg on the EarPods, with no hold. That is right, because the new leg
+  was on the app's own device.
+- **Choosing the device an app already plays on at 100% builds nothing.**
+  Spotify was routed to the EarPods while it played on them, and no tap
+  appeared.
+- **Unplug and return:** unplugging logged `Output devices (1):
+  BuiltInSpeakerDevice … re-resolving routes`. Replugging logged
+  `re-resolving routes` and then `Engaged com.spotify.client … on …EarPods…`,
+  so the route came back from the saved UID. The returned device's leg came
+  down again within 200 ms (`Ramping out … to unity`, then `torn down`).
+  macOS had switched the default output to the replugged EarPods, which put
+  Spotify there by itself, so no tap was needed any more. The end state is
+  right, but each replug costs a brief extra engage and teardown.
+- **Our own aggregates stayed out of the device list:** it read 2 devices
+  throughout, never the engine's or the visualiser's aggregate.
+
+**Not exercised in this run:** the 1 s cross-device hold (no turned-down app
+was moved to a device other than its own, so no `Holding` line appears) and
+two apps sharing one routed device (the accepted join stall). The log can't
+show how the transitions sounded.
+
+### Not verified: what to listen for
+
+- **The handover by ear.** Moving an app that is already turned down onto a
+  device should keep it on its old device at its level until the new one
+  takes over, then play briefly on both (up to ~0.35 s by the numbers),
+  with no burst at full volume on the laptop speakers. The 1 s hold is
+  derived from V2 Phase 1's numbers, not measured.
+- **Unplugging a routed device.** It should fall back to the app's own
+  output within about a second, without a stretch of silence, and route back
+  when replugged. What Core Audio does to an aggregate whose sub-device
+  vanished is unmeasured. If the tap-list edit on it fails, the engine logs
+  `Tap-list removal failed … rebuilding aggregate` and recovers through the
+  existing path.
+- **The menu inside the notch panel.** This is the first popup menu in the
+  notch. The panel collapses when the pointer is verified outside it 100 ms
+  after an exit, so picking an item that hangs below the panel may collapse
+  it. Also unverified: that the menu opens without taking focus from the
+  front app (hard rule 4), and how the glyph and disabled items look.
+- **A routed app's helper restarting.** The new pid is rebuilt through the
+  same cross-device warm-up, so its first ~0.6 s plays on its own device.
+  Unavoidable with this mechanism.
+- **An app leaving a shared cross-device aggregate.** Whether a *removal*
+  edit stalls the IOProc like a join does is unmeasured.
 
 ---
 

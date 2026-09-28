@@ -26,6 +26,20 @@ struct MixerRow: Equatable {
     var engineState: TapRowState = .notTapped
 }
 
+/// What a row's output choice amounts to right now (V2 routing), for its
+/// caption and its menu.
+enum OutputRoute: Equatable {
+    /// No choice saved: the app plays wherever it plays.
+    case systemDefault
+    /// The chosen device is connected.
+    case device(uid: String, name: String)
+    /// The chosen device is not connected. The app is on its own output
+    /// meanwhile and is routed back when the device returns. `name` is nil
+    /// when the device has not been seen since launch: only its UID is
+    /// saved.
+    case disconnected(uid: String, name: String?)
+}
+
 /// Per-app volume's engine service, owned by AppDelegate rather than being a
 /// NotchModule (docs/FUTURE-audio-mixer.md, *v1 plan*, decision 4).
 /// `AppVolumeModule` is only the Settings toggle and the door; it starts and
@@ -91,6 +105,14 @@ final class AppVolumeService {
     private var livePositions: [String: Int] = [:]
     /// The engine's row states, merged into `mixerRows` as they arrive.
     @ObservationIgnored private var engineStates: [String: TapRowState] = [:]
+
+    /// The devices a row may route to, as the tap engine last published
+    /// them (V2). Observed: the menus list these.
+    private(set) var outputDevices: [TapHALDevice] = []
+    /// Names of every device seen since launch, by UID, so an unplugged
+    /// choice can still be named on its row. Session-only: settings keep
+    /// the UID alone.
+    @ObservationIgnored private var deviceNames: [String: String] = [:]
 
     @ObservationIgnored private let logger: Logger
     @ObservationIgnored private let source: AudioProcessSource
@@ -332,6 +354,84 @@ final class AppVolumeService {
         pushDesires()
     }
 
+    // MARK: - Output routing (V2)
+
+    /// The row's saved output, by device UID. nil is System default.
+    func output(for key: String) -> String? {
+        settingsStore?.settings.appVolume.outputs?[key]
+    }
+
+    /// Saves the choice — System default as absence — and hands the engine
+    /// fresh desires. A choice is kept while its device is unplugged; only
+    /// the user changes it.
+    func setOutput(_ uid: String?, for key: String) {
+        guard output(for: key) != uid else { return }
+        settingsStore?.update {
+            var outputs = $0.appVolume.outputs ?? [:]
+            outputs[key] = uid
+            $0.appVolume.outputs = outputs.isEmpty ? nil : outputs
+        }
+        logger.notice("Output for \(key, privacy: .public) -> \(uid ?? "System default", privacy: .public)")
+        pushDesires()
+    }
+
+    func route(for key: String) -> OutputRoute {
+        Self.route(chosenUID: output(for: key), devices: outputDevices, knownNames: deviceNames)
+    }
+
+    /// Called by AppDelegate with the engine's device-list updates. The
+    /// engine re-resolves routes itself; this only feeds the menus.
+    func applyOutputDevices(_ devices: [TapHALDevice]) {
+        for device in devices { deviceNames[device.uid] = device.name }
+        guard devices != outputDevices else { return }
+        outputDevices = devices
+    }
+
+    nonisolated static func route(chosenUID: String?, devices: [TapHALDevice],
+                                  knownNames: [String: String]) -> OutputRoute {
+        guard let chosenUID else { return .systemDefault }
+        if let device = devices.first(where: { $0.uid == chosenUID }) {
+            return .device(uid: chosenUID, name: device.name)
+        }
+        return .disconnected(uid: chosenUID, name: knownNames[chosenUID])
+    }
+
+    /// Why a device cannot be a route target, in the menu's words, or nil
+    /// when it can. The same gates `TapReconciler` applies to a target.
+    nonisolated static func routeUnavailableReason(_ device: TapHALDevice) -> String? {
+        if device.isAirPlay { return "AirPlay" }
+        if device.hasInputStreams { return "has a microphone" }
+        if !device.isStereoOut { return "not stereo" }
+        return nil
+    }
+
+    /// The row's one-line caption. `scripted` means Spotify or Music with
+    /// the media module handling their volume: their slider always works,
+    /// so taps and engine states only matter to them once they are routed.
+    /// A disconnected choice says so rather than showing the fallback as if
+    /// it were chosen; the state comes first so truncation keeps it.
+    nonisolated static func caption(for row: MixerRow, scripted: Bool, tapsEnabled: Bool,
+                                    route: OutputRoute) -> String {
+        if let reason = row.neverTapReason { return "Not adjustable — \(reason)" }
+        var engineReason: String?
+        if case .inert(let reason) = row.engineState { engineReason = reason }
+        if !scripted {
+            if let engineReason { return "Not adjustable — \(engineReason)" }
+            if !tapsEnabled { return "Taps are off" }
+        } else if route != .systemDefault {
+            if !tapsEnabled { return "Output needs taps on" }
+            if let engineReason { return "Can't route — \(engineReason)" }
+        }
+        switch route {
+        case .systemDefault:
+            return row.isPlaying ? "Playing" : "Not playing"
+        case .device(_, let name):
+            return row.isPlaying ? "Playing on \(name)" : "Not playing · \(name)"
+        case .disconnected(_, let name):
+            return name.map { "Disconnected · \($0)" } ?? "Saved output disconnected"
+        }
+    }
+
     /// Called by AppDelegate with the engine's state updates.
     func applyEngineStates(_ states: [String: TapRowState]) {
         engineStates = states
@@ -352,27 +452,41 @@ final class AppVolumeService {
     }
 
     /// Spotify and Music are adjusted through their own AppleScript volume,
-    /// never a tap (decision 3). This is an identity, not a capability:
-    /// disabling the Media module makes `handlesVolume` false, and that
-    /// must make their rows inert, not reroute them to the tap engine.
+    /// never a tap's gain (decision 3). This is an identity, not a
+    /// capability: disabling the Media module makes `handlesVolume` false,
+    /// and that must make their sliders inert, not reroute them to the tap
+    /// engine. Routing them (V2) taps them at unity; see `desires`.
     nonisolated static let scriptedPlayerKeys: Set<String> = [
         SpotifyAdapter.bundleID, MusicAdapter.bundleID,
     ]
 
     /// Everything the engine needs to decide what exists: one desire per
-    /// row the tap path owns (never scripted players, never the never-tap
-    /// set — the engine must not even see those). Pure and static so the
-    /// filter is a test, not a hardware session.
+    /// row the tap path owns (never the never-tap set — the engine must not
+    /// even see those). Pure and static so the filter is a test, not a
+    /// hardware session.
+    ///
+    /// Spotify and Music reach the engine only when routed, because
+    /// AppleScript cannot route. They arrive at position 100 whatever is
+    /// saved: a tap moves their audio at unity, and their volume stays the
+    /// app's own `sound volume` (decision 3, kept for V2 on 2026-09-27).
     nonisolated static func desires(from rows: [MixerRow],
-                                    position: (String) -> Int) -> [TapDesire] {
+                                    position: (String) -> Int,
+                                    output: (String) -> String? = { _ in nil }) -> [TapDesire] {
         rows.compactMap { row in
-            guard row.neverTapReason == nil,
-                  !scriptedPlayerKeys.contains(row.owner.key) else { return nil }
-            return TapDesire(key: row.owner.key,
-                             position: position(row.owner.key),
+            guard row.neverTapReason == nil else { return nil }
+            let key = row.owner.key
+            let chosen = output(key)
+            if scriptedPlayerKeys.contains(key) {
+                guard let chosen else { return nil }
+                return TapDesire(key: key, position: 100, isPlaying: row.isPlaying,
+                                 pids: row.pids, deviceUIDs: row.deviceUIDs, outputUID: chosen)
+            }
+            return TapDesire(key: key,
+                             position: position(key),
                              isPlaying: row.isPlaying,
                              pids: row.pids,
-                             deviceUIDs: row.deviceUIDs)
+                             deviceUIDs: row.deviceUIDs,
+                             outputUID: chosen)
         }
     }
 
@@ -380,7 +494,8 @@ final class AppVolumeService {
         guard let tapEngine else { return }
         tapEngine.apply(desires: Self.desires(
             from: mixerRows,
-            position: { self.tapPosition(for: $0) }))
+            position: { self.tapPosition(for: $0) },
+            output: { self.output(for: $0) }))
     }
 
     /// At `.notice`, and only when something changed, so the log is a record

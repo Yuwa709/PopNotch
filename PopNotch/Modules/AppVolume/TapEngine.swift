@@ -7,6 +7,18 @@ import os
 /// Spotify or Music, via `.mutedWhenTapped` process taps mixed back to the
 /// owner's own output device through one shared aggregate per device.
 ///
+/// V2 adds per-app output routing on the same machinery: the aggregate's
+/// device is the owner's *chosen* output when one is set and connected
+/// (`TapReconciler.target`). `.mutedWhenTapped` still silences the app's own
+/// output when the aggregate renders elsewhere (V2 Phase 1, question 1).
+/// Owners routed to one device share its aggregate. A routed Spotify or
+/// Music reaches the engine at unity; their volume stays AppleScript's.
+///
+/// **Known and accepted (2026-09-27):** a live tap-list edit on a
+/// cross-device aggregate stalls its IOProc for ~616 ms (V2 Phase 1), so an
+/// app already routed to a device goes silent for that long whenever
+/// another app joins it. Recorded in docs/FUTURE-audio-mixer.md.
+///
 /// Owned by AppDelegate (v1 plan, decision 4). Every Core Audio call runs on
 /// one serial queue, never main — `AudioDeviceStart` blocks while the
 /// permission prompt is up (measured 17 s in the spike). The desired state
@@ -36,6 +48,15 @@ nonisolated final class TapEngine {
     /// does not tear down and rebuild the whole path (carried from the
     /// plan). Cancelled by a resume; the fire re-checks before acting.
     private let graceDelay: TimeInterval
+    /// How long a leg being replaced keeps rendering when its replacement
+    /// renders somewhere other than the app's own device. Such a path
+    /// delivers nothing for 614–667 ms after it starts or joins, and its tap
+    /// does not mute the app until it does (V2 Phase 1, question 2 and the
+    /// follow-up). Retiring the old leg sooner would unmute the app on its
+    /// own device for that half second. 1 s covers the measured worst case
+    /// with margin; the cost is up to ~0.35 s of the app on both devices.
+    /// A one-shot per move, not a timer.
+    private let crossDeviceHandover: TimeInterval
 
     private let hal: TapHAL
     /// nil under test: calls run synchronously in the caller's context.
@@ -56,6 +77,11 @@ nonisolated final class TapEngine {
     /// A leg that is ramping out is still in the list and still muting its
     /// app, so it stays in this set until `remove` takes it out.
     var onTappedProcessesChange: (([pid_t]) -> Void)?
+    /// The devices a mixer row may route to, on `refreshOutputDevices()` and
+    /// whenever the list really changes (our own aggregates are not in it).
+    /// Delivered via `notify`. The engine is the one watcher of the device
+    /// list, so the menu and the routing can never disagree about it.
+    var onOutputDevicesChange: (([TapHALDevice]) -> Void)?
 
     // MARK: - Engine-context state (queue-confined in production)
 
@@ -68,6 +94,11 @@ nonisolated final class TapEngine {
         var gain: Float
         let slot: Int
         var rampingOut = false
+        /// Bumped by every retirement and revival, and carried by the work
+        /// each one schedules, so a stale hold, fade or removal from an
+        /// earlier retirement does nothing. Cancelling a work item is not
+        /// enough on its own: tests schedule synchronously and cannot cancel.
+        var retireToken = 0
         var cancelRetire: (() -> Void)?
         var cancelGrace: (() -> Void)?
 
@@ -118,17 +149,21 @@ nonisolated final class TapEngine {
     private var permission: Permission = .unknown
     private var published: [String: TapRowState] = [:]
     private var publishedTappedPIDs: [pid_t] = []
+    /// nil until the first publish, so the first one always goes out.
+    private var publishedOutputDevices: [TapHALDevice]?
 
     init(hal: TapHAL? = nil,
          queue: DispatchQueue? = DispatchQueue(label: "com.techie.PopNotch.tapengine"),
          rampDelay: TimeInterval = 0.12,
          graceDelay: TimeInterval = 3.0,
+         crossDeviceHandover: TimeInterval = 1.0,
          schedule: ((TimeInterval, @escaping () -> Void) -> () -> Void)? = nil,
          notify: ((@escaping () -> Void) -> Void)? = nil) {
         self.hal = hal ?? CoreAudioTapHAL()
         self.queue = queue
         self.rampDelay = rampDelay
         self.graceDelay = graceDelay
+        self.crossDeviceHandover = crossDeviceHandover
         if let schedule {
             self.schedule = schedule
         } else if let queue {
@@ -147,6 +182,9 @@ nonisolated final class TapEngine {
         }
         self.hal.onDeviceFormatChanged = { [weak self] uid in
             self?.onQueue { self?.handleFormatChanged(uid) }
+        }
+        self.hal.onDevicesChanged = { [weak self] in
+            self?.onQueue { self?.handleDevicesChanged() }
         }
         if queue != nil {
             // One reconcile on wake: rebuild whatever died or moved while
@@ -182,6 +220,12 @@ nonisolated final class TapEngine {
             self.desires = desires
             self.reconcile()
         }
+    }
+
+    /// Publishes the current output devices through `onOutputDevicesChange`.
+    /// Called once at launch; after that the device-list listener drives it.
+    func refreshOutputDevices() {
+        onQueue { self.publishOutputDevices() }
     }
 
     /// Decision 3: the audio-recording prompt belongs to the moment the user
@@ -318,7 +362,7 @@ nonisolated final class TapEngine {
                     self?.graceExpired(key: key)
                 }
             } else {
-                beginRampOut(leg)
+                disengage(leg)
             }
         case .rebuild(let key, let deviceUID, let pids, let gain):
             // A helper restarted under a new pid. The old process is usually
@@ -340,7 +384,7 @@ nonisolated final class TapEngine {
         let stillStopped = !(desires.first { $0.key == key }?.isPlaying ?? false)
         guard stillStopped else { return }
         Self.logger.notice("Grace expired for \(key, privacy: .public)")
-        beginRampOut(leg)
+        disengage(leg)
     }
 
     // MARK: - Legs
@@ -354,8 +398,17 @@ nonisolated final class TapEngine {
         if let aggregate = aggregates[deviceUID],
            let retiring = aggregate.legs.first(where: { $0.key == key && $0.rampingOut }),
            Set(retiring.pids) == Set(pids) {
+            // A route flipped back inside a handover: the leg that replaced
+            // this one is active elsewhere and must retire in its place, or
+            // it would keep rendering the app on that device for good. The
+            // revived leg never left its tap list, so the app stays muted
+            // and there is nothing to wait for.
+            if let current = activeLegs[key], current !== retiring {
+                retire(current, fadeTo: 0, hold: 0)
+            }
             retiring.cancelRetire?()
             retiring.cancelRetire = nil
+            retiring.retireToken &+= 1
             retiring.rampingOut = false
             retiring.gain = gain
             aggregate.render.setTarget(gain, slot: retiring.slot)
@@ -363,9 +416,15 @@ nonisolated final class TapEngine {
             Self.logger.notice("Revived \(key, privacy: .public) mid-rampout at gain \(gain, privacy: .public)")
             return
         }
-        // A leg already active for this key at engage time is a device move:
-        // it retires (make-before-break) while the new leg takes over.
-        if let old = activeLegs.removeValue(forKey: key) { beginRampOut(old) }
+        // A leg already active for this key at engage time is a device move
+        // or a route change: it retires (make-before-break) while the new
+        // leg takes over. It fades to silence, never to unity — the new
+        // leg's tap keeps the app muted, so the original does not come back
+        // on the old leg's device — after holding for the new path's
+        // warm-up when that path renders away from the app's own device.
+        if let old = activeLegs.removeValue(forKey: key) {
+            retire(old, fadeTo: 0, hold: handover(toward: deviceUID, key: key))
+        }
 
         let objects = pids.compactMap { hal.processObject(forPID: $0) }
         guard !objects.isEmpty else {
@@ -444,31 +503,70 @@ nonisolated final class TapEngine {
         Self.logger.notice("Engaged \(key, privacy: .public) gain \(gain, privacy: .public) on new aggregate for \(deviceUID, privacy: .public)")
     }
 
-    /// Disengage step one: ramp to unity so the handover is level-matched
-    /// (disengage measured clean), then remove after the ramp.
-    private func beginRampOut(_ leg: Leg) {
+    /// Taking an owner off the tap path entirely. Where the app's original
+    /// returns on this leg's own device, ramp to unity so the handover is
+    /// level-matched (disengage measured clean). A routed leg's original
+    /// returns somewhere else, so this device fades out instead of jumping
+    /// to full volume just before it goes quiet.
+    private func disengage(_ leg: Leg) {
+        let own = desires.first { $0.key == leg.key }?.deviceUIDs
+        let returnsHere = own == nil || own == [leg.deviceUID]
+        retire(leg, fadeTo: returnsHere ? 1 : 0, hold: 0)
+    }
+
+    /// How long a leg being replaced keeps rendering: nothing when the new
+    /// leg renders where the app itself plays (52 ms warm-up, measured), the
+    /// cross-device handover otherwise.
+    private func handover(toward uid: String, key: String) -> TimeInterval {
+        let own = desires.first { $0.key == key }?.deviceUIDs ?? []
+        return own == [uid] ? 0 : crossDeviceHandover
+    }
+
+    /// Retirement step one: after `hold` at its current gain, ramp to
+    /// `fadeTo`; step two, `remove`, follows the ramp. The leg stays in its
+    /// tap list — and keeps the app muted — until then.
+    private func retire(_ leg: Leg, fadeTo: Float, hold: TimeInterval) {
         guard !leg.rampingOut else { return }
         leg.rampingOut = true
+        leg.retireToken &+= 1
         leg.cancelGrace?()
         leg.cancelGrace = nil
-        activeLegs.removeValue(forKey: leg.key)
-        aggregates[leg.deviceUID]?.render.setTarget(1, slot: leg.slot)
-        Self.logger.notice("Ramping out \(leg.key, privacy: .public)")
-        leg.cancelRetire = schedule(rampDelay) { [weak self] in
-            self?.remove(leg)
+        if activeLegs[leg.key] === leg { activeLegs.removeValue(forKey: leg.key) }
+        guard hold > 0 else {
+            fade(leg, to: fadeTo, token: leg.retireToken)
+            return
+        }
+        let token = leg.retireToken
+        Self.logger.notice("Holding \(leg.key, privacy: .public) on \(leg.deviceUID, privacy: .public) for \(hold, privacy: .public) s while its new path warms up")
+        leg.cancelRetire = schedule(hold) { [weak self] in
+            self?.fade(leg, to: fadeTo, token: token)
         }
     }
 
-    /// Disengage step two: edit the leg out of the live tap list (the
+    private func fade(_ leg: Leg, to gain: Float, token: Int) {
+        // A revival or a later retirement since this was scheduled owns the
+        // leg now.
+        guard leg.rampingOut, leg.retireToken == token else { return }
+        aggregates[leg.deviceUID]?.render.setTarget(gain, slot: leg.slot)
+        Self.logger.notice("Ramping out \(leg.key, privacy: .public) on \(leg.deviceUID, privacy: .public) to \(gain == 0 ? "silence" : "unity", privacy: .public)")
+        leg.cancelRetire = schedule(rampDelay) { [weak self] in
+            self?.remove(leg, token: token)
+        }
+    }
+
+    /// Retirement step two: edit the leg out of the live tap list (the
     /// unmute — mute follows membership, measured), destroy its tap, and
-    /// fold the aggregate when it was the last one.
-    private func remove(_ leg: Leg) {
+    /// fold the aggregate when it was the last one. `token` is nil for the
+    /// immediate removal a pid-change rebuild makes.
+    private func remove(_ leg: Leg, token: Int? = nil) {
         // Whichever way this returns, the leg set may have changed.
         defer { publishTappedProcesses() }
         // A stale retire can fire after a revival cancelled it (cancelling
         // a work item already dequeued does not stop it): a leg that is no
-        // longer ramping out is active again and must stay.
+        // longer ramping out is active again and must stay, and one retired
+        // again since belongs to that newer retirement.
         guard leg.rampingOut else { return }
+        if let token, token != leg.retireToken { return }
         leg.cancelRetire = nil
         leg.cancelGrace?()
         guard let aggregate = aggregates[leg.deviceUID],
@@ -593,6 +691,18 @@ nonisolated final class TapEngine {
         reconcile()
     }
 
+    /// A device came or went. A route whose device was unplugged falls back
+    /// to the app's own output, and one whose device returned is routed
+    /// again — both by re-planning, since the planner resolves every target
+    /// from the live device list. Our own aggregates coming and going fire
+    /// this too; they are not in the published list, so an unchanged list
+    /// means nothing a route could care about happened.
+    private func handleDevicesChanged() {
+        guard publishOutputDevices() else { return }
+        Self.logger.notice("Output devices changed; re-resolving routes")
+        reconcile()
+    }
+
     // MARK: - Publishing
 
     private func publish(_ states: [String: TapRowState]) {
@@ -600,6 +710,18 @@ nonisolated final class TapEngine {
         published = states
         guard let onStatesChange else { return }
         notify { onStatesChange(states) }
+    }
+
+    /// Returns whether the list changed since the last publish.
+    @discardableResult
+    private func publishOutputDevices() -> Bool {
+        let devices = hal.outputDevices()
+        guard devices != publishedOutputDevices else { return false }
+        publishedOutputDevices = devices
+        Self.logger.notice("Output devices (\(devices.count, privacy: .public)): \(devices.map(\.uid).joined(separator: ", "), privacy: .public)")
+        guard let onOutputDevicesChange else { return true }
+        notify { onOutputDevicesChange(devices) }
+        return true
     }
 
     /// Idempotent, so every path that can change a leg calls it without

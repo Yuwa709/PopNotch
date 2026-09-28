@@ -33,10 +33,26 @@ final class FakeTapHAL: TapHAL {
     var watchedFormatUIDs: Set<String> = []
     var onServiceRestarted: (() -> Void)?
     var onDeviceFormatChanged: ((String) -> Void)?
+    var onDevicesChanged: (() -> Void)?
 
     private var nextID: AudioObjectID = 100
     /// The tap-list contents per aggregate, for asserting membership edits.
     private(set) var tapLists: [AudioObjectID: [String]] = [:]
+    /// Each aggregate's gain table, as the engine handed it to its IOProc.
+    private(set) var renders: [AudioObjectID: TapRenderState] = [:]
+
+    /// A device being unplugged, as Core Audio reports it: gone from the
+    /// list, then the list-changed notification.
+    func unplug(_ uid: String) -> TapHALDevice? {
+        let device = devices.removeValue(forKey: uid)
+        onDevicesChanged?()
+        return device
+    }
+
+    func plug(_ device: TapHALDevice) {
+        devices[device.uid] = device
+        onDevicesChanged?()
+    }
 
     func makeTap(processObjects objects: [AudioObjectID]) -> (tap: AudioObjectID, uid: String)? {
         calls.append(.makeTap(pids: objects))
@@ -73,6 +89,7 @@ final class FakeTapHAL: TapHAL {
 
     func installIOProc(onAggregate id: AudioObjectID, render: TapRenderState) -> AudioDeviceIOProcID? {
         calls.append(.installIOProc(id))
+        renders[id] = render
         let proc: AudioDeviceIOProc = { _, _, _, _, _, _, _ in noErr }
         return proc
     }
@@ -92,6 +109,7 @@ final class FakeTapHAL: TapHAL {
 
     func processObject(forPID pid: pid_t) -> AudioObjectID? { processObjects[pid] }
     func device(forUID uid: String) -> TapHALDevice? { devices[uid] }
+    func outputDevices() -> [TapHALDevice] { devices.values.sorted { $0.name < $1.name } }
     func watchDeviceFormats(uids: Set<String>) { watchedFormatUIDs = uids }
 }
 
