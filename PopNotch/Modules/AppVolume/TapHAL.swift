@@ -18,9 +18,20 @@ import os
 /// thread selects the row by the buffer count the HAL actually presents —
 /// measured in the spike (M1, 2026-09-18): stream indices shift on a
 /// tap-list edit, so the count is the only safe key.
-final class TapRenderState {
+nonisolated final class TapRenderState {
 
     static let maxLegs = 8
+    /// Samples the bass stage filters per pass. Any buffer size works: a
+    /// larger buffer is filtered in chunks of this, so scratch never has to
+    /// be sized to the device. Even, so a chunk is whole stereo frames.
+    static let chunkSamples = 2048
+    /// Direct-form-I history per channel for one biquad section: x[n−1],
+    /// x[n−2], y[n−1], y[n−2] (`vDSP_biquad`'s 2·M + 2 for M = 1).
+    static let delayPerChannel = 4
+    static let channelsFiltered = 2
+    /// The limiter's lookahead ceiling in frames: 1 ms at 192 kHz, so the
+    /// per-slot delay lines are sized once for any rate.
+    static let maxLookahead = 192
 
     /// Per-slot target gain, engine-written.
     let targets: UnsafeMutablePointer<Float>
@@ -32,6 +43,60 @@ final class TapRenderState {
     /// Per-frame gain step: full scale in ~40 ms at the aggregate's rate.
     let slewPerFrame: Float
 
+    // MARK: Bass boost (V2 Phase 3)
+    //
+    // Engine-written, like `targets`: the level each slot should play at,
+    // and a generation bumped whenever the slot changes hands. Everything
+    // else below is IO-thread-private. The IO thread never trusts filter
+    // history across a generation: a slot's history belongs to one leg, and
+    // a stale filter carried into the next app would ring that app's bass
+    // with the previous app's audio.
+
+    /// Per-slot bass level, 0 (off) ... 3. Engine-written.
+    let bassLevels: UnsafeMutablePointer<Int32>
+    /// Per-slot generation, bumped by `prepareSlot` and `releaseSlot`.
+    /// Engine-written.
+    let generations: UnsafeMutablePointer<Int32>
+    /// The generation the IO thread last reset each slot's filter for.
+    let seenGenerations: UnsafeMutablePointer<Int32>
+    /// The level each slot's filter is actually running at. Differs from
+    /// `bassLevels` for exactly one callback after a change: that callback
+    /// crossfades from the old curve to the new one.
+    let appliedLevels: UnsafeMutablePointer<Int32>
+    /// `maxLegs × channelsFiltered × delayPerChannel` floats: every slot's
+    /// own history for each channel.
+    let delays: UnsafeMutablePointer<Float>
+    /// History for the outgoing curve during a level-to-level crossfade,
+    /// which runs both curves over the same buffer.
+    let crossfadeDelay: UnsafeMutablePointer<Float>
+    /// Three chunk-sized buffers: the outgoing curve's output, the incoming
+    /// curve's output, and the crossfaded sum. Shared by every slot — the
+    /// callback processes streams one at a time.
+    let scratch: UnsafeMutablePointer<Float>
+    /// Index 1...3: one `vDSP_biquad_Setup` per level at this aggregate's
+    /// sample rate. Built here, off the realtime thread (creating one
+    /// allocates); nil if Accelerate refused, and that level then plays dry.
+    let setups: UnsafeMutablePointer<vDSP_biquad_Setup?>
+
+    // The limiter after the shelf (`BassBoost.Limiter`), IO-thread-private
+    // and reset with the filter: a slot's gain, hold and delayed audio
+    // belong to one leg.
+
+    /// Lookahead in frames at this aggregate's rate; also the gain's block.
+    let limiterLookahead: Int
+    let limiterHoldFrames: Int
+    /// The release time constant in frames.
+    let limiterReleaseFrames: Float
+    /// Per-slot gain at the end of the last block rendered, 1 when idle.
+    let limiterGains: UnsafeMutablePointer<Float>
+    /// Per-slot frames of hold left before the gain may recover.
+    let limiterHolds: UnsafeMutablePointer<Int32>
+    /// `maxLegs × channelsFiltered × maxLookahead` floats: each slot's
+    /// delayed audio, interleaved, each channel in its own lane.
+    let limiterDelays: UnsafeMutablePointer<Float>
+    /// The delay line followed by one chunk: the limiter's working span.
+    let limiterScratch: UnsafeMutablePointer<Float>
+
     init(sampleRate: Double) {
         slewPerFrame = Float(1.0 / (0.040 * max(sampleRate, 8000)))
         targets = .allocate(capacity: Self.maxLegs)
@@ -40,25 +105,100 @@ final class TapRenderState {
         targets.initialize(repeating: 1, count: Self.maxLegs)
         current.initialize(repeating: 1, count: Self.maxLegs)
         mapping.initialize(repeating: -1, count: (Self.maxLegs + 1) * Self.maxLegs)
+
+        let delayCount = Self.maxLegs * Self.channelsFiltered * Self.delayPerChannel
+        bassLevels = .allocate(capacity: Self.maxLegs)
+        generations = .allocate(capacity: Self.maxLegs)
+        seenGenerations = .allocate(capacity: Self.maxLegs)
+        appliedLevels = .allocate(capacity: Self.maxLegs)
+        delays = .allocate(capacity: delayCount)
+        crossfadeDelay = .allocate(capacity: Self.channelsFiltered * Self.delayPerChannel)
+        scratch = .allocate(capacity: 3 * Self.chunkSamples)
+        setups = .allocate(capacity: BassBoost.levels.upperBound + 1)
+        bassLevels.initialize(repeating: 0, count: Self.maxLegs)
+        generations.initialize(repeating: 0, count: Self.maxLegs)
+        seenGenerations.initialize(repeating: 0, count: Self.maxLegs)
+        appliedLevels.initialize(repeating: 0, count: Self.maxLegs)
+        delays.initialize(repeating: 0, count: delayCount)
+        crossfadeDelay.initialize(repeating: 0, count: Self.channelsFiltered * Self.delayPerChannel)
+        scratch.initialize(repeating: 0, count: 3 * Self.chunkSamples)
+        setups.initialize(repeating: nil, count: BassBoost.levels.upperBound + 1)
+
+        let rate = max(sampleRate, 8000)
+        let lineCount = Self.maxLegs * Self.channelsFiltered * Self.maxLookahead
+        let scratchCount = Self.chunkSamples + Self.channelsFiltered * Self.maxLookahead
+        limiterLookahead = max(1, min(Self.maxLookahead,
+                                      Int((BassBoost.Limiter.lookaheadSeconds * rate).rounded())))
+        limiterHoldFrames = Int((BassBoost.Limiter.holdSeconds * rate).rounded())
+        limiterReleaseFrames = Float(BassBoost.Limiter.releaseSeconds * rate)
+        limiterGains = .allocate(capacity: Self.maxLegs)
+        limiterHolds = .allocate(capacity: Self.maxLegs)
+        limiterDelays = .allocate(capacity: lineCount)
+        limiterScratch = .allocate(capacity: scratchCount)
+        limiterGains.initialize(repeating: 1, count: Self.maxLegs)
+        limiterHolds.initialize(repeating: 0, count: Self.maxLegs)
+        limiterDelays.initialize(repeating: 0, count: lineCount)
+        limiterScratch.initialize(repeating: 0, count: scratchCount)
+
+        for level in BassBoost.levels {
+            let coefficients = BassBoost.coefficients(level: level, sampleRate: sampleRate)
+            setups[level] = vDSP_biquad_CreateSetup(coefficients, 1)
+        }
     }
 
     deinit {
         targets.deallocate()
         current.deallocate()
         mapping.deallocate()
+        for level in BassBoost.levels {
+            if let setup = setups[level] { vDSP_biquad_DestroySetup(setup) }
+        }
+        setups.deallocate()
+        bassLevels.deallocate()
+        generations.deallocate()
+        seenGenerations.deallocate()
+        appliedLevels.deallocate()
+        delays.deallocate()
+        crossfadeDelay.deallocate()
+        scratch.deallocate()
+        limiterGains.deallocate()
+        limiterHolds.deallocate()
+        limiterDelays.deallocate()
+        limiterScratch.deallocate()
     }
 
     /// Engine side, before a slot can be mapped: the ramp starts at unity so
-    /// an engaging app is level-matched to the original it just replaced.
-    func prepareSlot(_ slot: Int, targetGain: Float) {
+    /// an engaging app is level-matched to the original it just replaced,
+    /// and the slot's filter starts from silence at its first callback — the
+    /// generation bump is last, so the IO thread sees the new level with it.
+    /// The limiter is reset with the filter, on the same generation.
+    func prepareSlot(_ slot: Int, targetGain: Float, bass: Int = 0) {
         guard slot >= 0, slot < Self.maxLegs else { return }
         current[slot] = 1
         targets[slot] = targetGain
+        bassLevels[slot] = Int32(BassBoost.levels.contains(bass) ? bass : 0)
+        generations[slot] &+= 1
     }
 
     func setTarget(_ gain: Float, slot: Int) {
         guard slot >= 0, slot < Self.maxLegs else { return }
         targets[slot] = gain
+    }
+
+    /// Engine side: the slot's boost level. The IO thread crossfades to it
+    /// over one callback, so a change never clicks.
+    func setBass(_ level: Int, slot: Int) {
+        guard slot >= 0, slot < Self.maxLegs else { return }
+        bassLevels[slot] = Int32(BassBoost.levels.contains(level) ? level : 0)
+    }
+
+    /// Engine side, when a leg leaves the slot: whatever the next callback
+    /// still reads from it (a straggler mapping the old layout) starts from
+    /// clean history, and nothing of this leg survives into the next one.
+    func releaseSlot(_ slot: Int) {
+        guard slot >= 0, slot < Self.maxLegs else { return }
+        bassLevels[slot] = 0
+        generations[slot] &+= 1
     }
 
     /// Engine side: publish which slot each stream feeds when the callback
@@ -264,62 +404,9 @@ nonisolated final class CoreAudioTapHAL: TapHAL {
         // is captured strongly once here, so no retain traffic per callback.
         let status = AudioDeviceCreateIOProcIDWithBlock(&procID, id, nil) {
             _, inputData, _, outputData, _ in
-            let inputs = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
-            let outputs = UnsafeMutableAudioBufferListPointer(outputData)
-            guard let out = outputs.first, let outRaw = out.mData else { return }
-            let outSamples = Int(out.mDataByteSize) / MemoryLayout<Float>.size
-            let outPtr = outRaw.assumingMemoryBound(to: Float.self)
-            vDSP_vclr(outPtr, 1, vDSP_Length(outSamples))
-
-            // The per-sample work is vDSP whenever possible: the app ships
-            // and runs as a Debug build, where a per-frame Swift loop costs
-            // ~50x its Release self (measured 2026-09-19: 3.2 s/60 s of one
-            // core for a single leg, against a 0.19 s Release reference).
-            // vDSP is a library call and pays no such tax. Realtime-safe:
-            // no allocation, no locks.
-            let bufferCount = min(inputs.count, TapRenderState.maxLegs)
-            let row = bufferCount * TapRenderState.maxLegs
-            for (stream, buffer) in inputs.enumerated() where stream < bufferCount {
-                guard let raw = buffer.mData else { continue }
-                let samples = min(Int(buffer.mDataByteSize) / MemoryLayout<Float>.size, outSamples)
-                guard samples > 0 else { continue }
-                let inPtr = raw.assumingMemoryBound(to: Float.self)
-                let slot = Int(render.mapping[row + stream])
-                if slot < 0 || slot >= TapRenderState.maxLegs {
-                    // Unmapped stream: pass through at unity. Safe for the
-                    // one-callback window around a topology edit.
-                    vDSP_vadd(outPtr, 1, inPtr, 1, outPtr, 1, vDSP_Length(samples))
-                    continue
-                }
-                var gain = render.current[slot]
-                let target = render.targets[slot]
-                if gain == target {
-                    // Steady state — the overwhelmingly common case: one
-                    // scaled accumulate over the whole buffer.
-                    if gain != 0 {
-                        vDSP_vsma(inPtr, 1, &gain, outPtr, 1, outPtr, 1, vDSP_Length(samples))
-                    }
-                    continue
-                }
-                // Ramping: a couple of buffers per gain change. Scalar per
-                // frame, clamped to whole frames so no bounds check is
-                // needed inside the channel loop.
-                let slew = render.slewPerFrame
-                let channels = Int(max(1, buffer.mNumberChannels))
-                let whole = (samples / channels) * channels
-                var i = 0
-                while i < whole {
-                    let delta = target - gain
-                    if delta > slew { gain += slew }
-                    else if delta < -slew { gain -= slew }
-                    else { gain = target }
-                    for c in 0..<channels {
-                        outPtr[i + c] += inPtr[i + c] * gain
-                    }
-                    i += channels
-                }
-                render.current[slot] = gain
-            }
+            render.render(
+                inputs: UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData)),
+                outputs: UnsafeMutableAudioBufferListPointer(outputData))
         }
         guard status == noErr, let procID else {
             Self.logger.error("Create IOProc failed (\(status, privacy: .public))")

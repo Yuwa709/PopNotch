@@ -284,6 +284,8 @@ Before any of them is considered:
 
 Only then does EQ or routing get discussed. This is the same discipline the roadmap applies elsewhere: ship the small thing, live with it, then decide.
 
+**Overridden twice by the owner, ahead of Phase 7:** output routing (*V2 Phase 2*, 2026-09-27), and a fixed-level per-app bass boost (*V2 Phase 3*, 2026-09-28) — the owner used FineTune's bass boost often and wants it on every app and every output. The boost is deliberately not EQ: three fixed levels and off, no bands, no presets, no slider. Neither condition above is recorded as met. EQ proper stays out.
+
 ---
 
 ## v1 plan (decided 2026-09-17)
@@ -293,6 +295,7 @@ A plan was proposed, then an interview challenged it question by question. The d
 ### Settled decisions
 
 1. **Purpose and success.** v1 replaces FineTune for its owner, who uses only its volume sliders. **v1 succeeds if FineTune is uninstalled after the week of daily use.** Routing and EQ stay out on usage grounds, not only on cost.
+   - **Corrected 2026-09-28:** not only its volume sliders. The owner also used FineTune's **bass boost** often ("I use it often when I was using finetune"), which is why V2 Phase 3 builds one. The "usage grounds" above held for EQ proper, never for the boost.
 2. **Where the controls live.**
    - **A mixer page in the notch.** A navigated screen composed by the coordinator, the way the stats page is. It is needed because the controls must reach any app that plays audio, not just the current player: Discord never appears on the player screen, because it publishes no now-playing session (PopNotch's logs across a full call showed only Firefox and Chrome sessions).
    - **A volume button on the player.** At the trailing edge of the controls row, opposite the heart. It is a speaker glyph (`speaker.wave.3`, slashed at zero), sized and tinted like the shuffle and repeat buttons rather than the heart. It shows no level; the slider it opens does. Clicking it swaps the transport cluster for a full-width slider until the pointer leaves, and under Reduce Motion the swap is instant (hard rule 8). The player layout is otherwise unchanged. This button is the shortcut for the most frequent moment: music too loud against Discord, several times a day.

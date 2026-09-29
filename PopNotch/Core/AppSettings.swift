@@ -27,7 +27,8 @@ struct AppSettings: Codable, Equatable {
     /// v9: added appVolume.
     /// v10: added appVolume.outputs.
     /// v11: removed spotifyAccountConnected; added spotifyKeychainCleanupPending.
-    static let currentSchemaVersion = 11
+    /// v12: added appVolume.bass.
+    static let currentSchemaVersion = 12
 
     var schemaVersion: Int = AppSettings.currentSchemaVersion
 
@@ -138,6 +139,14 @@ struct AppSettings: Codable, Equatable {
         /// back to its own output meanwhile and is routed again when the
         /// device returns.
         var outputs: [String: String]?
+
+        /// Bass boost level per owner (V2 Phase 3), keyed by the same
+        /// `AudioOwner.key`: 1, 2 or 3, which `BassBoost` maps to +6, +12 and
+        /// +18 dB. Levels, not decibels, so the curve can be retuned without
+        /// a migration. Off is stored as absence, so an app never boosted
+        /// has no entry. Spotify and Music have entries too: boosting them
+        /// taps them at unity, as routing does.
+        var bass: [String: Int]?
     }
 
     // MARK: - Decoding
@@ -272,6 +281,11 @@ struct AppSettings: Codable, Equatable {
             // silent wipe: it cached a fact about the Keychain for a feature
             // that no longer exists, and nothing the user chose is lost.
             fallthrough
+        case 11:
+            // v12 added appVolume.bass; the lenient decoder fills nil for
+            // v11 JSON: no app boosted. Taps, saved volumes and outputs are
+            // untouched. Nothing moves.
+            fallthrough
         default:
             break
         }
@@ -285,18 +299,20 @@ struct AppSettings: Codable, Equatable {
 extension AppSettings.AppVolume: Codable {
 
     private enum CodingKeys: String, CodingKey {
-        case tapsEnabled, volumes, outputs
+        case tapsEnabled, volumes, outputs, bass
     }
 
     /// Lenient the way `AppSettings` is, one level down: a missing or
-    /// malformed field decodes as nil, and a malformed volume or output
-    /// loses only its own entry, never another app's.
+    /// malformed field decodes as nil, and a malformed volume, output or
+    /// bass level loses only its own entry, never another app's.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         tapsEnabled = try? container.decodeIfPresent(Bool.self, forKey: .tapsEnabled)
         volumes = (try? container.decodeIfPresent([String: LenientVolume].self, forKey: .volumes))?
             .compactMapValues(\.value)
         outputs = (try? container.decodeIfPresent([String: LenientUID].self, forKey: .outputs))?
+            .compactMapValues(\.value)
+        bass = (try? container.decodeIfPresent([String: LenientBass].self, forKey: .bass))?
             .compactMapValues(\.value)
     }
 
@@ -317,6 +333,17 @@ extension AppSettings.AppVolume: Codable {
         init(from decoder: Decoder) throws {
             let uid = try? decoder.singleValueContainer().decode(String.self)
             value = uid?.isEmpty == false ? uid : nil
+        }
+    }
+
+    /// One saved bass level, or nil when the stored value is not an integer
+    /// from 1 to 3. Off is absence, so a stored 0 is dropped too.
+    private struct LenientBass: Decodable {
+        let value: Int?
+
+        init(from decoder: Decoder) throws {
+            let level = try? decoder.singleValueContainer().decode(Int.self)
+            value = level.flatMap { BassBoost.levels.contains($0) ? $0 : nil }
         }
     }
 }

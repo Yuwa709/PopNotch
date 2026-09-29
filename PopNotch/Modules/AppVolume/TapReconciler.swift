@@ -13,6 +13,8 @@ struct TapDesire: Equatable {
     /// The user's chosen output (V2 routing), by device UID. nil is System
     /// default: render wherever the owner's own process plays.
     var outputUID: String? = nil
+    /// Bass boost level (V2 Phase 3): 0 is off, 1...3 are +6, +12, +18 dB.
+    var bass: Int = 0
 }
 
 /// One live leg, as the engine holds it.
@@ -21,6 +23,7 @@ struct TapLegFacts: Equatable {
     var deviceUID: String
     var pids: [pid_t]
     var gain: Float
+    var bass: Int = 0
 }
 
 /// The page's per-row engine state.
@@ -41,15 +44,17 @@ enum TapRowState: Equatable {
 
 /// One step of work for the engine to execute, in order.
 enum TapPlanOp: Equatable {
-    case engage(key: String, deviceUID: String, pids: [pid_t], gain: Float)
+    case engage(key: String, deviceUID: String, pids: [pid_t], gain: Float, bass: Int = 0)
     case setGain(key: String, gain: Float)
+    /// The boost level changed on a live leg; the IOProc crossfades to it.
+    case setBass(key: String, level: Int)
     /// Ramp to unity, then remove. `afterGrace` marks the stopped-playing
     /// cause, which the engine defers by its grace period.
     case disengage(key: String, afterGrace: Bool)
     /// The owner's pid set changed (a helper restarted): tear the leg down
     /// and re-engage on the new pids. Measured cheapest as a leg rebuild via
     /// the live tap-list edit (M1).
-    case rebuild(key: String, deviceUID: String, pids: [pid_t], gain: Float)
+    case rebuild(key: String, deviceUID: String, pids: [pid_t], gain: Float, bass: Int = 0)
 }
 
 /// Pure planning: desired rows plus current legs in, ops plus row states
@@ -97,10 +102,13 @@ enum TapReconciler {
 
             guard tapsEnabled else { drop(.notTapped); continue }
             guard !permissionDenied else { drop(.inert(reason: "permission needed")); continue }
-            // A tap exists to turn an app down, or to move it (V2). At 100%
-            // with no chosen output there is nothing for one to do.
+            // A tap exists to turn an app down, to move it (V2), or to boost
+            // its bass (V2 Phase 3). At 100% with no chosen output and no
+            // boost there is nothing for one to do.
             let adjustsVolume = desire.position < 100
-            guard adjustsVolume || desire.outputUID != nil else { drop(.notTapped); continue }
+            let bass = BassBoost.levels.contains(desire.bass) ? desire.bass : 0
+            let processes = adjustsVolume || bass > 0
+            guard processes || desire.outputUID != nil else { drop(.notTapped); continue }
             guard desire.isPlaying || leg != nil else {
                 // Not playing and not tapped: nothing to build. The position
                 // is remembered and applies at the next play (restore path).
@@ -115,8 +123,9 @@ enum TapReconciler {
             }
             let uid = target(chosen: desire.outputUID, own: own, device: device)
             // Routed to where the app already plays (chosen explicitly, or
-            // the chosen device is unplugged) at full volume: nothing to do.
-            guard adjustsVolume || uid != own else { drop(.notTapped); continue }
+            // the chosen device is unplugged) at full volume with no boost:
+            // nothing to do.
+            guard processes || uid != own else { drop(.notTapped); continue }
             // The gates below are about the device the aggregate renders to,
             // which is the target: its layout is what the IOProc writes.
             guard let dev = device(uid) else { drop(.notTapped); continue }
@@ -144,19 +153,24 @@ enum TapReconciler {
                     // since ops are keyed by owner and the engage replaces
                     // the leg.
                     ops.append(.engage(key: desire.key, deviceUID: uid,
-                                       pids: desire.pids, gain: target))
+                                       pids: desire.pids, gain: target, bass: bass))
                 } else if Set(leg.pids) != Set(desire.pids) {
                     ops.append(.rebuild(key: desire.key, deviceUID: uid,
-                                        pids: desire.pids, gain: target))
-                } else if leg.gain != target {
-                    ops.append(.setGain(key: desire.key, gain: target))
+                                        pids: desire.pids, gain: target, bass: bass))
+                } else {
+                    if leg.gain != target {
+                        ops.append(.setGain(key: desire.key, gain: target))
+                    }
+                    if leg.bass != bass {
+                        ops.append(.setBass(key: desire.key, level: bass))
+                    }
                 }
                 states[desire.key] = .engaged
             } else if legsOnDevice(uid) >= TapRenderState.maxLegs {
                 states[desire.key] = .inert(reason: "too many adjusted apps")
             } else {
                 ops.append(.engage(key: desire.key, deviceUID: uid,
-                                   pids: desire.pids, gain: target))
+                                   pids: desire.pids, gain: target, bass: bass))
                 states[desire.key] = .engaged
             }
         }

@@ -14,8 +14,9 @@ import SwiftUI
 /// a working slider (decision 9).
 ///
 /// V2: every adjustable row also carries an output menu at its trailing
-/// edge (`OutputMenu`). It changes no row height, so choosing an output
-/// never resizes the panel.
+/// edge (`OutputMenu`), and V2 Phase 3 a bass boost badge just before it
+/// (`BassBoostButton`). Neither changes the row height, so choosing an
+/// output or a boost never resizes the panel.
 ///
 /// Fixed 420pt content width, the clipboard page's, so the two doors read
 /// as one family. Height follows the row count up to eight rows, then the
@@ -131,6 +132,13 @@ private struct MixerRowView: View {
         return nil
     }
 
+    /// Routing and boost both need a tap, so both need taps on and the
+    /// capture grant. Either control still shows its saved choice while
+    /// disabled.
+    static func tapControlsEnabled(_ row: MixerRow, service: AppVolumeService) -> Bool {
+        service.tapsEnabled && row.engineState != .inert(reason: "permission needed")
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             AppIconView(owner: row.owner)
@@ -162,9 +170,14 @@ private struct MixerRowView: View {
                     .opacity(row.neverTapReason == nil ? Self.inertSliderOpacity : 1)
                     .accessibilityHidden(true)
             }
-            // Never-tap apps are never tapped, so they cannot be routed.
+            // Never-tap apps are never tapped, so they cannot be routed or
+            // boosted.
             if row.neverTapReason == nil {
-                OutputMenu(row: row, service: service, route: route)
+                HStack(spacing: 4) {
+                    BassBoostButton(ownerKey: row.owner.key, service: service,
+                                    isEnabled: Self.tapControlsEnabled(row, service: service))
+                    OutputMenu(row: row, service: service, route: route)
+                }
             }
         }
         .frame(height: AppVolumePageView.rowHeight)
@@ -177,7 +190,8 @@ private struct MixerRowView: View {
 
     private var caption: String {
         AppVolumeService.caption(for: row, scripted: scriptedPlayer != nil,
-                                 tapsEnabled: service.tapsEnabled, route: route)
+                                 tapsEnabled: service.tapsEnabled, route: route,
+                                 boosted: service.bass(for: row.owner.key) > 0)
     }
 
     /// An unplugged choice is the one caption that needs noticing.
@@ -201,10 +215,7 @@ private struct OutputMenu: View {
     let service: AppVolumeService
     let route: OutputRoute
 
-    /// Routing needs a tap, so it needs taps on and the capture grant.
-    private var isEnabled: Bool {
-        service.tapsEnabled && row.engineState != .inert(reason: "permission needed")
-    }
+    private var isEnabled: Bool { MixerRowView.tapControlsEnabled(row, service: service) }
 
     var body: some View {
         Menu {
@@ -259,6 +270,97 @@ private struct OutputMenu: View {
         let key = row.owner.key
         return Binding(get: { service.output(for: key) == uid },
                        set: { isOn in if isOn { service.setOutput(uid, for: key) } })
+    }
+}
+
+/// The row's bass boost (V2 Phase 3), drawn as a sergeant's badge: three
+/// stacked chevrons lit from the bottom up — none for off, one for +6 dB,
+/// two for +12, all three for +18. A click steps up one level and wraps
+/// from +18 to off; a right-click clears to off from any level. There is no
+/// step-down gesture, by the owner's choice.
+///
+/// The stack draws 9.75 × 12 pt of ink, the speaker glyph's own size at
+/// the output menu's 11 pt (measured from the rendered symbol, 2026-09-28),
+/// so the two read as a pair. In a 20×20 frame, the output menu's, so the
+/// row keeps its height. The lighting
+/// change fades briefly, and is instant under Reduce Motion (hard rule 8).
+/// Disabled with the output menu (taps off, no capture grant), but still
+/// showing the saved level.
+private struct BassBoostButton: View {
+    let ownerKey: String
+    let service: AppVolumeService
+    let isEnabled: Bool
+
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    var body: some View {
+        let level = service.bass(for: ownerKey)
+        Button { service.setBass(BassBoost.next(after: level), for: ownerKey) } label: {
+            // Ink: 3 × 2 + 2 × 2.25 + the 1.5 stroke = 12 pt tall, and
+            // 8.25 + 1.5 = 9.75 pt wide.
+            VStack(spacing: 2.25) {
+                ForEach([3, 2, 1], id: \.self) { rank in
+                    Chevron()
+                        .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                        .frame(width: 8.25, height: 2)
+                        .foregroundStyle(.white.opacity(rank <= level ? 0.95 : 0.28))
+                }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: level)
+            .frame(width: 20, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(RightClickCatcher { if isEnabled { service.setBass(0, for: ownerKey) } })
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : MixerRowView.inertSliderOpacity)
+        .accessibilityLabel("Bass boost")
+        .accessibilityValue(level == 0 ? "Off" : "+\(Int(BassBoost.gainDB(level: level))) dB")
+        .accessibilityAction(named: "Turn off") { service.setBass(0, for: ownerKey) }
+    }
+
+    /// One upward chevron filling its frame.
+    private struct Chevron: Shape {
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            return path
+        }
+    }
+}
+
+/// Takes right-clicks and nothing else. SwiftUI has no right-click gesture
+/// on macOS 14, so this view claims a point only while the event being
+/// routed is a right mouse-down; every other event falls through to the
+/// control underneath.
+private struct RightClickCatcher: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> CatcherView {
+        let view = CatcherView()
+        view.action = action
+        return view
+    }
+
+    func updateNSView(_ view: CatcherView, context: Context) {
+        view.action = action
+    }
+
+    final class CatcherView: NSView {
+        var action: (() -> Void)?
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard NSApp.currentEvent?.type == .rightMouseDown else { return nil }
+            return super.hitTest(point)
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            action?()
+        }
     }
 }
 

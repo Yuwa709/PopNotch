@@ -375,6 +375,27 @@ final class AppVolumeService {
         pushDesires()
     }
 
+    // MARK: - Bass boost (V2 Phase 3)
+
+    /// The row's saved boost level: 0 (off), or 1...3 for +6, +12, +18 dB.
+    func bass(for key: String) -> Int {
+        settingsStore?.settings.appVolume.bass?[key] ?? 0
+    }
+
+    /// Saves the level — off as absence — and hands the engine fresh
+    /// desires. One click is one write: there is no drag to thin.
+    func setBass(_ level: Int, for key: String) {
+        let level = BassBoost.levels.contains(level) ? level : 0
+        guard bass(for: key) != level else { return }
+        settingsStore?.update {
+            var levels = $0.appVolume.bass ?? [:]
+            levels[key] = level == 0 ? nil : level
+            $0.appVolume.bass = levels.isEmpty ? nil : levels
+        }
+        logger.notice("Bass for \(key, privacy: .public) -> \(level == 0 ? "off" : "+\(Int(BassBoost.gainDB(level: level))) dB", privacy: .public)")
+        pushDesires()
+    }
+
     func route(for key: String) -> OutputRoute {
         Self.route(chosenUID: output(for: key), devices: outputDevices, knownNames: deviceNames)
     }
@@ -407,11 +428,12 @@ final class AppVolumeService {
 
     /// The row's one-line caption. `scripted` means Spotify or Music with
     /// the media module handling their volume: their slider always works,
-    /// so taps and engine states only matter to them once they are routed.
-    /// A disconnected choice says so rather than showing the fallback as if
-    /// it were chosen; the state comes first so truncation keeps it.
+    /// so taps and engine states only matter to them once they are routed
+    /// or boosted. A disconnected choice says so rather than showing the
+    /// fallback as if it were chosen; the state comes first so truncation
+    /// keeps it.
     nonisolated static func caption(for row: MixerRow, scripted: Bool, tapsEnabled: Bool,
-                                    route: OutputRoute) -> String {
+                                    route: OutputRoute, boosted: Bool = false) -> String {
         if let reason = row.neverTapReason { return "Not adjustable — \(reason)" }
         var engineReason: String?
         if case .inert(let reason) = row.engineState { engineReason = reason }
@@ -421,6 +443,9 @@ final class AppVolumeService {
         } else if route != .systemDefault {
             if !tapsEnabled { return "Output needs taps on" }
             if let engineReason { return "Can't route — \(engineReason)" }
+        } else if boosted {
+            if !tapsEnabled { return "Bass boost needs taps on" }
+            if let engineReason { return "Can't boost — \(engineReason)" }
         }
         switch route {
         case .systemDefault:
@@ -455,7 +480,8 @@ final class AppVolumeService {
     /// never a tap's gain (decision 3). This is an identity, not a
     /// capability: disabling the Media module makes `handlesVolume` false,
     /// and that must make their sliders inert, not reroute them to the tap
-    /// engine. Routing them (V2) taps them at unity; see `desires`.
+    /// engine. Routing or boosting them (V2) taps them at unity; see
+    /// `desires`.
     nonisolated static let scriptedPlayerKeys: Set<String> = [
         SpotifyAdapter.bundleID, MusicAdapter.bundleID,
     ]
@@ -465,28 +491,33 @@ final class AppVolumeService {
     /// even see those). Pure and static so the filter is a test, not a
     /// hardware session.
     ///
-    /// Spotify and Music reach the engine only when routed, because
-    /// AppleScript cannot route. They arrive at position 100 whatever is
-    /// saved: a tap moves their audio at unity, and their volume stays the
-    /// app's own `sound volume` (decision 3, kept for V2 on 2026-09-27).
+    /// Spotify and Music reach the engine only when routed or boosted,
+    /// because AppleScript can do neither. They arrive at position 100
+    /// whatever is saved: a tap moves or filters their audio at unity, and
+    /// their volume stays the app's own `sound volume` (decision 3, kept for
+    /// V2 on 2026-09-27; boost added 2026-09-28).
     nonisolated static func desires(from rows: [MixerRow],
                                     position: (String) -> Int,
-                                    output: (String) -> String? = { _ in nil }) -> [TapDesire] {
+                                    output: (String) -> String? = { _ in nil },
+                                    bass: (String) -> Int = { _ in 0 }) -> [TapDesire] {
         rows.compactMap { row in
             guard row.neverTapReason == nil else { return nil }
             let key = row.owner.key
             let chosen = output(key)
+            let level = bass(key)
             if scriptedPlayerKeys.contains(key) {
-                guard let chosen else { return nil }
+                guard chosen != nil || level > 0 else { return nil }
                 return TapDesire(key: key, position: 100, isPlaying: row.isPlaying,
-                                 pids: row.pids, deviceUIDs: row.deviceUIDs, outputUID: chosen)
+                                 pids: row.pids, deviceUIDs: row.deviceUIDs,
+                                 outputUID: chosen, bass: level)
             }
             return TapDesire(key: key,
                              position: position(key),
                              isPlaying: row.isPlaying,
                              pids: row.pids,
                              deviceUIDs: row.deviceUIDs,
-                             outputUID: chosen)
+                             outputUID: chosen,
+                             bass: level)
         }
     }
 
@@ -495,7 +526,8 @@ final class AppVolumeService {
         tapEngine.apply(desires: Self.desires(
             from: mixerRows,
             position: { self.tapPosition(for: $0) },
-            output: { self.output(for: $0) }))
+            output: { self.output(for: $0) },
+            bass: { self.bass(for: $0) }))
     }
 
     /// At `.notice`, and only when something changed, so the log is a record

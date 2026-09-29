@@ -472,7 +472,7 @@ final class AppSettingsTests: XCTestCase {
         """)
         let settings = store().settings
 
-        XCTAssertEqual(settings.schemaVersion, 11)
+        XCTAssertGreaterThanOrEqual(settings.schemaVersion, 11, "v10 lands at v11 or beyond")
         XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
         XCTAssertEqual(settings.moduleEnablement, ["media": true, "clipboard": false, "app-volume": true])
         XCTAssertEqual(settings.hoverEnterDelay, 0.42, accuracy: 0.0001)
@@ -512,7 +512,7 @@ final class AppSettingsTests: XCTestCase {
         let data = try XCTUnwrap(defaults.data(forKey: SettingsStore.storageKey))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertNil(json["spotifyAccountConnected"], "the removed field must not be persisted")
-        XCTAssertEqual(json["schemaVersion"] as? Int, 11)
+        XCTAssertEqual(json["schemaVersion"] as? Int, AppSettings.currentSchemaVersion)
         XCTAssertEqual(json["spotifyKeychainCleanupPending"] as? Bool, false)
         XCTAssertFalse(store().settings.spotifyKeychainCleanupPending, "cleared survives a reload")
         XCTAssertEqual(store().settings.hoverEnterDelay, 0.5, "and nothing else moved")
@@ -526,5 +526,77 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(store().settings.spotifyKeychainCleanupPending)
         write(#"{"schemaVersion": 11, "spotifyKeychainCleanupPending": true}"#)
         XCTAssertTrue(store().settings.spotifyKeychainCleanupPending, "a pending flag survives a reload")
+    }
+
+    // MARK: - v12: bass boost
+
+    /// CLAUDE.md's rule: real v11 JSON loads with nothing dropped. Every v11
+    /// field holds a non-default value, so one that silently fell back to
+    /// its default would fail here; the new field arrives empty.
+    func testV11JSONMigratesToV12WithNothingDropped() {
+        write("""
+        {"schemaVersion": 11,
+         "moduleEnablement": {"media": true, "clipboard": false, "app-volume": true},
+         "hoverEnterDelay": 0.42,
+         "visualizerEnabled": true,
+         "showMenuBarIcon": false,
+         "preferMusicOverVideo": false,
+         "spotifyKeychainCleanupPending": true,
+         "capybaraThemeEnabled": true,
+         "appVolume": {"tapsEnabled": true,
+                       "volumes": {"com.hnc.Discord": 35, "webkit": 60},
+                       "outputs": {"com.hnc.Discord": "usb-uid"}}}
+        """)
+        let settings = store().settings
+
+        XCTAssertEqual(settings.schemaVersion, 12)
+        XCTAssertEqual(settings.schemaVersion, AppSettings.currentSchemaVersion)
+        XCTAssertEqual(settings.moduleEnablement, ["media": true, "clipboard": false, "app-volume": true])
+        XCTAssertEqual(settings.hoverEnterDelay, 0.42, accuracy: 0.0001)
+        XCTAssertTrue(settings.visualizerEnabled)
+        XCTAssertFalse(settings.showMenuBarIcon)
+        XCTAssertFalse(settings.preferMusicOverVideo)
+        XCTAssertTrue(settings.spotifyKeychainCleanupPending)
+        XCTAssertTrue(settings.capybaraThemeEnabled)
+        XCTAssertEqual(settings.appVolume.tapsEnabled, true)
+        XCTAssertEqual(settings.appVolume.volumes, ["com.hnc.Discord": 35, "webkit": 60])
+        XCTAssertEqual(settings.appVolume.outputs, ["com.hnc.Discord": "usb-uid"])
+        XCTAssertNil(settings.appVolume.bass, "no app arrives boosted")
+        XCTAssertNil(defaults.data(forKey: SettingsStore.salvageKey), "nothing was unreadable")
+    }
+
+    func testBassLevelsRoundTripAndPersistAtV12() throws {
+        let saved = ["com.hnc.Discord": 1, SpotifyAdapter.bundleID: 3]
+        store().update { $0.appVolume.bass = saved }
+        XCTAssertEqual(store().settings.appVolume.bass, saved, "must survive a reload")
+
+        let data = try XCTUnwrap(defaults.data(forKey: SettingsStore.storageKey))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["schemaVersion"] as? Int, 12)
+        let appVolume = try XCTUnwrap(json["appVolume"] as? [String: Any])
+        XCTAssertEqual(appVolume["bass"] as? [String: Int], saved, "stored as levels, not decibels")
+    }
+
+    /// A level that is not an integer from 1 to 3 loses only its own entry.
+    /// 0 is off, which is stored as absence, so a stored 0 is dropped too.
+    func testOneMalformedBassLevelCostsOnlyItself() {
+        write("""
+        {"schemaVersion": 12,
+         "appVolume": {"volumes": {"com.hnc.Discord": 35},
+                       "outputs": {"com.hnc.Discord": "usb"},
+                       "bass": {"com.hnc.Discord": 2, "webkit": 7, "org.chromium": "loud",
+                                "com.apple.Safari": 0, "us.zoom.xos": -1}}}
+        """)
+        let appVolume = store().settings.appVolume
+        XCTAssertEqual(appVolume.bass, ["com.hnc.Discord": 2])
+        XCTAssertEqual(appVolume.volumes, ["com.hnc.Discord": 35], "never the volumes beside it")
+        XCTAssertEqual(appVolume.outputs, ["com.hnc.Discord": "usb"], "nor the outputs")
+    }
+
+    func testBassThatIsNotAnObjectCostsOnlyItself() {
+        write(#"{"schemaVersion": 12, "appVolume": {"tapsEnabled": true, "bass": [1, 2]}}"#)
+        let appVolume = store().settings.appVolume
+        XCTAssertNil(appVolume.bass)
+        XCTAssertEqual(appVolume.tapsEnabled, true)
     }
 }

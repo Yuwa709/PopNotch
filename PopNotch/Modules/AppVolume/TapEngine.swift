@@ -14,6 +14,12 @@ import os
 /// Owners routed to one device share its aggregate. A routed Spotify or
 /// Music reaches the engine at unity; their volume stays AppleScript's.
 ///
+/// V2 Phase 3 adds per-app bass boost in the same render path: a low
+/// shelf per leg per channel, then a linked lookahead limiter per leg
+/// (`BassBoost`, `TapRender`).
+/// A boost is a third reason for a tap, beside turning down and routing, so
+/// a boosted Spotify or Music is tapped at unity too.
+///
 /// **Known and accepted (2026-09-27):** a live tap-list edit on a
 /// cross-device aggregate stalls its IOProc for ~616 ms (V2 Phase 1), so an
 /// app already routed to a device goes silent for that long whenever
@@ -92,6 +98,8 @@ nonisolated final class TapEngine {
         let tapUID: String
         var pids: [pid_t]
         var gain: Float
+        /// Bass boost level, 0 (off) ... 3 (V2 Phase 3).
+        var bass: Int
         let slot: Int
         var rampingOut = false
         /// Bumped by every retirement and revival, and carried by the work
@@ -103,13 +111,14 @@ nonisolated final class TapEngine {
         var cancelGrace: (() -> Void)?
 
         init(key: String, deviceUID: String, tapID: AudioObjectID, tapUID: String,
-             pids: [pid_t], gain: Float, slot: Int) {
+             pids: [pid_t], gain: Float, bass: Int, slot: Int) {
             self.key = key
             self.deviceUID = deviceUID
             self.tapID = tapID
             self.tapUID = tapUID
             self.pids = pids
             self.gain = gain
+            self.bass = bass
             self.slot = slot
         }
     }
@@ -302,7 +311,8 @@ nonisolated final class TapEngine {
             reconcileQueued = false
             engageFailures = []
             let legFacts = activeLegs.values.map {
-                TapLegFacts(key: $0.key, deviceUID: $0.deviceUID, pids: $0.pids, gain: $0.gain)
+                TapLegFacts(key: $0.key, deviceUID: $0.deviceUID, pids: $0.pids,
+                            gain: $0.gain, bass: $0.bass)
             }
             // One lookup per distinct device per pass: `device(forUID:)`
             // enumerates every Core Audio device and reads a UID off each,
@@ -343,8 +353,8 @@ nonisolated final class TapEngine {
 
     private func execute(_ op: TapPlanOp) {
         switch op {
-        case .engage(let key, let deviceUID, let pids, let gain):
-            engage(key: key, deviceUID: deviceUID, pids: pids, gain: gain)
+        case .engage(let key, let deviceUID, let pids, let gain, let bass):
+            engage(key: key, deviceUID: deviceUID, pids: pids, gain: gain, bass: bass)
         case .setGain(let key, let gain):
             guard let leg = activeLegs[key],
                   let aggregate = aggregates[leg.deviceUID] else { return }
@@ -353,6 +363,12 @@ nonisolated final class TapEngine {
             leg.gain = gain
             aggregate.render.setTarget(gain, slot: leg.slot)
             Self.logger.notice("Gain \(key, privacy: .public) -> \(gain, privacy: .public)")
+        case .setBass(let key, let level):
+            guard let leg = activeLegs[key],
+                  let aggregate = aggregates[leg.deviceUID] else { return }
+            leg.bass = level
+            aggregate.render.setBass(level, slot: leg.slot)
+            Self.logger.notice("Bass \(key, privacy: .public) -> \(Self.describe(bass: level), privacy: .public)")
         case .disengage(let key, let afterGrace):
             guard let leg = activeLegs[key], !leg.rampingOut else { return }
             if afterGrace {
@@ -364,7 +380,7 @@ nonisolated final class TapEngine {
             } else {
                 disengage(leg)
             }
-        case .rebuild(let key, let deviceUID, let pids, let gain):
+        case .rebuild(let key, let deviceUID, let pids, let gain, let bass):
             // A helper restarted under a new pid. The old process is usually
             // dead (its stream silent, measured), so no ramp: remove and
             // re-engage in one queue turn.
@@ -373,8 +389,13 @@ nonisolated final class TapEngine {
                 leg.rampingOut = true  // an immediate retirement, no ramp
                 remove(leg)
             }
-            engage(key: key, deviceUID: deviceUID, pids: pids, gain: gain)
+            engage(key: key, deviceUID: deviceUID, pids: pids, gain: gain, bass: bass)
         }
+    }
+
+    /// "off", "+6 dB", ... for the logs.
+    private static func describe(bass level: Int) -> String {
+        level == 0 ? "off" : "+\(Int(BassBoost.gainDB(level: level))) dB"
     }
 
     private func graceExpired(key: String) {
@@ -389,7 +410,7 @@ nonisolated final class TapEngine {
 
     // MARK: - Legs
 
-    private func engage(key: String, deviceUID: String, pids: [pid_t], gain: Float) {
+    private func engage(key: String, deviceUID: String, pids: [pid_t], gain: Float, bass: Int) {
         guard permission != .denied, tapsEnabled else { return }
         // A leg mid-ramp-out on the same device (a slider wiggle through
         // 100, or a resume racing an expired grace) is revived rather than
@@ -411,9 +432,11 @@ nonisolated final class TapEngine {
             retiring.retireToken &+= 1
             retiring.rampingOut = false
             retiring.gain = gain
+            retiring.bass = bass
             aggregate.render.setTarget(gain, slot: retiring.slot)
+            aggregate.render.setBass(bass, slot: retiring.slot)
             activeLegs[key] = retiring
-            Self.logger.notice("Revived \(key, privacy: .public) mid-rampout at gain \(gain, privacy: .public)")
+            Self.logger.notice("Revived \(key, privacy: .public) mid-rampout at gain \(gain, privacy: .public), bass \(Self.describe(bass: bass), privacy: .public)")
             return
         }
         // A leg already active for this key at engage time is a device move
@@ -445,8 +468,8 @@ nonisolated final class TapEngine {
                 return
             }
             let leg = Leg(key: key, deviceUID: deviceUID, tapID: tapID, tapUID: tapUID,
-                          pids: pids, gain: gain, slot: slot)
-            aggregate.render.prepareSlot(slot, targetGain: gain)
+                          pids: pids, gain: gain, bass: bass, slot: slot)
+            aggregate.render.prepareSlot(slot, targetGain: gain, bass: bass)
             let newLegs = aggregate.legs + [leg]
             // Mapping for the grown topology goes in before the edit that
             // makes it real; the IOProc keys rows by buffer count.
@@ -459,7 +482,7 @@ nonisolated final class TapEngine {
             }
             aggregate.legs = newLegs
             activeLegs[key] = leg
-            Self.logger.notice("Engaged \(key, privacy: .public) gain \(gain, privacy: .public) on \(deviceUID, privacy: .public) (slot \(slot, privacy: .public), \(newLegs.count, privacy: .public) legs)")
+            Self.logger.notice("Engaged \(key, privacy: .public) gain \(gain, privacy: .public) bass \(Self.describe(bass: bass), privacy: .public) on \(deviceUID, privacy: .public) (slot \(slot, privacy: .public), \(newLegs.count, privacy: .public) legs)")
             return
         }
 
@@ -471,8 +494,8 @@ nonisolated final class TapEngine {
         }
         let render = TapRenderState(sampleRate: device.sampleRate)
         let leg = Leg(key: key, deviceUID: deviceUID, tapID: tapID, tapUID: tapUID,
-                      pids: pids, gain: gain, slot: 0)
-        render.prepareSlot(0, targetGain: gain)
+                      pids: pids, gain: gain, bass: bass, slot: 0)
+        render.prepareSlot(0, targetGain: gain, bass: bass)
         render.setMapping(bufferCount: 1, slots: [0])
         guard let aggID = hal.makeAggregate(outputDeviceUID: deviceUID, tapUIDs: [tapUID]) else {
             hal.destroyTap(tapID)
@@ -500,7 +523,7 @@ nonisolated final class TapEngine {
         aggregate.legs = [leg]
         aggregates[deviceUID] = aggregate
         activeLegs[key] = leg
-        Self.logger.notice("Engaged \(key, privacy: .public) gain \(gain, privacy: .public) on new aggregate for \(deviceUID, privacy: .public)")
+        Self.logger.notice("Engaged \(key, privacy: .public) gain \(gain, privacy: .public) bass \(Self.describe(bass: bass), privacy: .public) on new aggregate for \(deviceUID, privacy: .public)")
     }
 
     /// Taking an owner off the tap path entirely. Where the app's original
@@ -548,6 +571,15 @@ nonisolated final class TapEngine {
         // leg now.
         guard leg.rampingOut, leg.retireToken == token else { return }
         aggregates[leg.deviceUID]?.render.setTarget(gain, slot: leg.slot)
+        if gain == 1 && leg.bass != 0 {
+            // Handing back to the app's own output, which is unboosted: the
+            // filter crossfades out (one callback) inside the gain ramp, so
+            // by removal the leg is exactly the original and the handover
+            // stays level-matched. A fade to silence keeps its curve — the
+            // app's other leg is boosted too, and nothing returns here.
+            leg.bass = 0
+            aggregates[leg.deviceUID]?.render.setBass(0, slot: leg.slot)
+        }
         Self.logger.notice("Ramping out \(leg.key, privacy: .public) on \(leg.deviceUID, privacy: .public) to \(gain == 0 ? "silence" : "unity", privacy: .public)")
         leg.cancelRetire = schedule(rampDelay) { [weak self] in
             self?.remove(leg, token: token)
@@ -594,6 +626,8 @@ nonisolated final class TapEngine {
             return
         }
         aggregate.legs = remaining
+        // Nothing of this leg's filter may reach whoever takes the slot next.
+        aggregate.render.releaseSlot(leg.slot)
         hal.destroyTap(leg.tapID)
         Self.logger.notice("Removed \(leg.key, privacy: .public); \(remaining.count, privacy: .public) legs remain on \(leg.deviceUID, privacy: .public)")
     }
