@@ -44,11 +44,25 @@ final class MusicAdapter: MediaSource {
     /// pause/resume. Artwork here is raw bytes from the app, not a URL.
     private var artworkCache: (trackID: String, data: Data)?
 
-    var isPlayerRunning: Bool {
-        NSWorkspace.shared.runningApplications.contains {
-            $0.bundleIdentifier == Self.bundleID
-        }
+    /// Every Apple Event this adapter sends goes through `runScript`, and
+    /// "is Music open" through `playerRunning`. Production uses the real
+    /// runner and `NSWorkspace`; tests inject both, so the pull path is
+    /// exercised without driving — or launching — the real Music.app.
+    typealias ScriptRunner = @MainActor (String) -> Result<NSAppleEventDescriptor, AppleScriptRunner.Failure>
+    private let runScript: ScriptRunner
+    private let playerRunning: @MainActor () -> Bool
+
+    init(runScript: @escaping ScriptRunner = { AppleScriptRunner.run($0) },
+         playerRunning: @escaping @MainActor () -> Bool = {
+             NSWorkspace.shared.runningApplications.contains {
+                 $0.bundleIdentifier == MusicAdapter.bundleID
+             }
+         }) {
+        self.runScript = runScript
+        self.playerRunning = playerRunning
     }
+
+    var isPlayerRunning: Bool { playerRunning() }
 
     // MARK: - Observing
 
@@ -105,7 +119,9 @@ final class MusicAdapter: MediaSource {
             end if
     """
 
-    private static let queryScript = """
+    /// Internal, not private, so tests can pin the Up Next derivation's
+    /// shape: the index arithmetic runs inside Music, not in Swift.
+    static let queryScript = """
         tell application "Music"
             if player state is stopped then return "stopped"
             set t to current track
@@ -130,7 +146,7 @@ final class MusicAdapter: MediaSource {
         // No `guard !permissionDenied`, for the same reason as Spotify: a
         // user who grants access in System Settings recovers on their next
         // hover. A real denial returns -1743 without re-prompting.
-        switch AppleScriptRunner.run(Self.queryScript) {
+        switch runScript(Self.queryScript) {
         case .success(let descriptor):
             if permissionDenied {
                 permissionDenied = false
@@ -158,7 +174,22 @@ final class MusicAdapter: MediaSource {
                 permissionDenied = true
                 Self.logger.notice("Automation permission denied for Music; pull path disabled")
             }
+            dropUpNext(afterFailure: failure.code)
         }
+    }
+
+    /// A failed pull says nothing about the queue, and a next track kept
+    /// from before the failure may no longer be next — so the row hides
+    /// rather than risk being wrong. The rest of the snapshot is kept: the
+    /// track the user is hearing has not changed because one read failed.
+    ///
+    /// Republished because the module mirrors `upNext` only inside an
+    /// update; setting it here alone would leave the row on screen.
+    private func dropUpNext(afterFailure code: Int) {
+        guard upNext != nil else { return }
+        upNext = nil
+        Self.logger.notice("Pull failed (\(code, privacy: .public)); Up Next hidden")
+        if let lastSnapshot { onUpdate?(lastSnapshot) }
     }
 
     private func clearState() {
@@ -196,7 +227,7 @@ final class MusicAdapter: MediaSource {
                 return data of artwork 1 of current track
             end tell
             """
-        guard case .success(let descriptor) = AppleScriptRunner.run(script) else { return }
+        guard case .success(let descriptor) = runScript(script) else { return }
         guard let data = descriptor.data as Data?, !data.isEmpty,
               NSImage(data: data) != nil else {
             Self.logger.notice("No usable artwork for track \(trackID, privacy: .public)")
@@ -259,7 +290,7 @@ final class MusicAdapter: MediaSource {
     func seek(to seconds: TimeInterval) {
         guard isPlayerRunning else { return }
         let target = max(0, Int(seconds))
-        if case .failure(let failure) = AppleScriptRunner.run(
+        if case .failure(let failure) = runScript(
             "tell application \"Music\" to set player position to \(target)"
         ) {
             if failure.isPermissionDenied { permissionDenied = true }
@@ -283,7 +314,7 @@ final class MusicAdapter: MediaSource {
         case .nextTrack: verb = "next track"
         case .previousTrack: verb = "previous track"
         }
-        if case .failure(let failure) = AppleScriptRunner.run("tell application \"Music\" to \(verb)") {
+        if case .failure(let failure) = runScript("tell application \"Music\" to \(verb)") {
             if failure.isPermissionDenied { permissionDenied = true }
             return
         }
@@ -333,7 +364,7 @@ final class MusicAdapter: MediaSource {
 
     private func reanchor() {
         guard isPlayerRunning else { return }
-        switch AppleScriptRunner.run(Self.anchorScript) {
+        switch runScript(Self.anchorScript) {
         case .success(let descriptor):
             guard let output = descriptor.stringValue,
                   let anchor = MusicParsing.parseAnchor(output) else { return }
@@ -366,7 +397,7 @@ final class MusicAdapter: MediaSource {
     func setFavorite(_ on: Bool) {
         guard isPlayerRunning, case .editable = favorite else { return }
         favorite = .editable(on)
-        if case .failure(let failure) = AppleScriptRunner.run(
+        if case .failure(let failure) = runScript(
             "tell application \"Music\" to set favorited of current track to \(on)"
         ) {
             if failure.isPermissionDenied { permissionDenied = true }
@@ -385,7 +416,7 @@ final class MusicAdapter: MediaSource {
     func embeddedLyrics() -> String? {
         guard isPlayerRunning, !permissionDenied else { return nil }
         let script = "tell application \"Music\" to get lyrics of current track"
-        guard case .success(let descriptor) = AppleScriptRunner.run(script),
+        guard case .success(let descriptor) = runScript(script),
               let text = descriptor.stringValue, !text.isEmpty
         else {
             Self.logger.notice("No embedded lyrics on current Music track")

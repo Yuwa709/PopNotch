@@ -257,6 +257,13 @@ struct MediaExpandedView: View {
                         MediaProgressBar(module: module)
                     }
                 }
+                // Absent, not empty, when there is nothing to show — so its
+                // arrival changes the panel's height, which is why
+                // `MediaModule.setUpNext` reflows on presence. Only Music
+                // ever answers; see `UpNextTrack`.
+                if let next = module.upNext {
+                    MediaUpNextRow(next: next, accent: module.artworkAccent)
+                }
                 MediaLyricsView(module: module, namespace: lyricsNamespace)
                 MediaControlsRow(module: module, isPlaying: playing.isPlaying)
             }
@@ -424,6 +431,43 @@ private struct MediaControlsRow: View {
 /// Hidden entirely when there is no value to show, which is what a denied
 /// Automation prompt looks like. A greyed-out heart of unknown truth is
 /// worse than no heart.
+/// The next track in the player's queue: one line, title then artist.
+///
+/// Information, not a control — nothing here is clickable. No transition or
+/// animation of its own: appearing or leaving reflows the panel through the
+/// coordinator, which already applies the Reduce Motion rule (hard rule 8).
+private struct MediaUpNextRow: View {
+    let next: UpNextTrack
+    let accent: Color?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("UP NEXT")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle((accent ?? .mediaAccent).opacity(0.9))
+            Text(next.title)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+                // The artist truncates first; the title is the answer.
+                .layoutPriority(1)
+            // Music may leave the artist blank; the title alone still stands.
+            if !next.artist.isEmpty {
+                Text(next.artist)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+            }
+        }
+        // Bounded, like the titles above: a long name truncates rather than
+        // widening the panel.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(next.artist.isEmpty
+                            ? "Up next: \(next.title)"
+                            : "Up next: \(next.title) by \(next.artist)")
+    }
+}
+
 /// Shuffle or repeat, as a two-state toggle.
 ///
 /// Two states only. Spotify's `repeating` is a Boolean in its scripting

@@ -275,7 +275,7 @@ Written after reviewing a feature analysis of Sapphire. That analysis stays out 
 |---|---|
 | Now-playing, artwork, transport, scrubbing | Shipped (Spotify) |
 | Lyrics in the notch | Shipped, timed, with a full-page takeover |
-| Up Next / recommended | Removed with the Spotify Web API (2026-09-28) |
+| Up Next / recommended | Music only, restored 2026-09-28 (playlist `index + 1`, hidden under shuffle). Spotify's went with the Web API the same day; its dictionary has no queue |
 | CPU, memory, disk, GPU, battery monitoring | Shipped. **Absent from Sapphire's public material** — the clearest differentiator PopNotch has, and it already exists |
 
 ### Already scheduled
